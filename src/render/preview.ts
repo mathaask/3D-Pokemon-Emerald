@@ -74,7 +74,7 @@ export class PreviewApp {
     };
     this.view.renderAtlas(this.webgl);
     const t0 = performance.now();
-    this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0));
+    this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset);
     this.buildMs = performance.now() - t0;
 
     const hour = parseFloat(params.get('hour') ?? '11');

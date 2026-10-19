@@ -2,6 +2,7 @@
 // tileset sheets, and statistics used to tune the 3D reconstruction heuristics.
 //
 // Usage: npx tsx tools/map-atlas.ts [--only <substring>] [--no-maps] [--no-sheets] [--all-debug]
+//          [--sheet-only <tileset name substring>] [--sheet-scale <px per pixel, 3>] [--sheet-chunk <metatiles, 128>]
 // Output: out/atlas/<group>_<num>_<name>.png            full map, rendered like the game
 //         out/atlas/debug/<group>_<num>_<name>_{collision,elevation,layer,behavior}.png
 //         out/atlas/tilesets/<Tileset>_<first id>.png   metatile sheets (both layers | top only)
@@ -26,6 +27,10 @@ const only = argVal('--only');
 const doMaps = !args.includes('--no-maps');
 const doSheets = !args.includes('--no-sheets');
 const allDebug = args.includes('--all-debug');
+/** Tileset sheets: pixel scale, metatiles per sheet, and only tilesets whose name contains this. */
+const sheetScale = Number(argVal('--sheet-scale') ?? 3);
+const sheetChunk = Number(argVal('--sheet-chunk') ?? 128);
+const sheetOnly = argVal('--sheet-only');
 
 /** Maps that get collision/elevation/layer/behavior debug renders. */
 const CURATED = [
@@ -226,10 +231,10 @@ function renderDebug(m: MapInfo, base: Canvas, kind: 'collision' | 'elevation' |
   return c;
 }
 
-/** Metatile sheet: 8 per row, each cell = [both layers | top layer only] at 3x, with labels. */
+/** Metatile sheet: 8 per row, each cell = [both layers | top layer only] at `sheetScale`x, with labels. */
 function renderSheet(primary: Tileset, secondary: Tileset | null, first: number, count: number): Canvas {
   const pair = tilesetPair(primary, secondary);
-  const K = 3;
+  const K = sheetScale;
   const cellW = 16 * K * 2 + 6;
   const cellH = 16 * K + 26;
   const rows = Math.ceil(count / 8);
@@ -283,18 +288,21 @@ if (doSheets) {
     if (!pairs.has(p)) pairs.set(p, s);
     if (s && !pairs.has(s)) pairs.set(s, p);
   }
+  let sheeted = 0;
   for (const [addr, partner] of pairs) {
+    if (sheetOnly && !tilesetName(addr).includes(sheetOnly)) continue;
+    sheeted++;
     const ts = getTileset(addr)!;
     const primary = ts.isSecondary ? getTileset(partner)! : ts;
     const secondary = ts.isSecondary ? ts : getTileset(partner);
     const base = ts.isSecondary ? 512 : 0;
-    for (let first = 0; first < ts.numMetatiles; first += 128) {
-      renderSheet(primary, secondary, base + first, Math.min(128, ts.numMetatiles - first)).png(
+    for (let first = 0; first < ts.numMetatiles; first += sheetChunk) {
+      renderSheet(primary, secondary, base + first, Math.min(sheetChunk, ts.numMetatiles - first)).png(
         path.join(outDir, 'tilesets', `${tilesetName(addr)}_${hex(base + first, 3)}.png`),
       );
     }
   }
-  console.log(`wrote tileset sheets for ${pairs.size} tilesets`);
+  console.log(`wrote tileset sheets for ${sheeted} tilesets`);
 }
 
 // ---------------------------------------------------------------------------------------------

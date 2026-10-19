@@ -95,6 +95,15 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   load-bearing (≈ 28k cells on Dive maps), so it stays. Buildings draw non-rectangular corners with the ground's own
   8×8 tiles in any quarter (the Slateport tent's bottom = grass 0x001's top half). Stern's Shipyard's back row is an
   elevation-1 pier the height solver lifts to 4 (top of the building's face): it floats behind the 3D roof.
+- Task 14: gTileset_General holds signs (0x003 metal, 0x01b wooden), the grey post fence and the white rail (with
+  corners and N-S runs drawn on one side of the cell: `GENERAL_FENCE_SHAPES`), boulders and 2x2 cone rocks, but no
+  lamps, mailboxes, bushes or bollards: a house's "mailbox" is the 0x003 sign beside its door, and Rustboro's lamps
+  are its own tileset's (post 0x21a, lantern overhang 0x212/0x213 above) — `tables/secondary.ts`, keyed by the
+  secondary tileset's address (`ClassifyOptions.secondaryTileset`). NARROW_TREE holds fence posts (0x132/0x133/0x139)
+  and the cone rock's top (0x083/0x084); the props take them. The height solver reads any blocked row between two
+  walkable areas as a one-level face (Route 110's islet: sign + secret-base tree): props and pines skip such steps.
+  Brown rock standing in the sea (0x172–0x17f, 0x182, 0x184) stays out of `GENERAL_ROCK` (the cliffs made square
+  blocks with water-coloured tops of it).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

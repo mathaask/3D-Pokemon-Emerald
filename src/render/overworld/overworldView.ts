@@ -183,7 +183,8 @@ export class OverworldView {
     if (grid && (key !== this.gridKey || tsChanged || this.gridChanged(grid))) {
       const mapChanged = key !== this.gridKey;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
-      this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state));
+      this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state),
+        state.layout.secondaryTileset);
       this.lastGrid = grid.cells;
       this.gridKey = key;
       this.haveWorld = true;
@@ -193,7 +194,8 @@ export class OverworldView {
   }
 
   /** Classifies a grid and rebuilds the world mesh (shared by live play and the map preview). */
-  buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number, events: GridEvents = NO_EVENTS): void {
+  buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number, events: GridEvents = NO_EVENTS,
+    secondaryTileset = 0): void {
     const info = analyzeMetatiles(bus, this.atlas.entries, this.atlas.attributes, this.charBase, bgPalette);
     this.world.build(grid, {
       info,
@@ -201,6 +203,7 @@ export class OverworldView {
       indoor: this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
+      secondaryTileset,
     }, { style: this.worldStyle, events, quality: this.quality });
     this.haveWorld = true;
   }

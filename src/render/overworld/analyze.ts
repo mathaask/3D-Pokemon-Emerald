@@ -19,6 +19,9 @@ export interface ClassifyOptions {
   underground: boolean;
   /** Dive map (map type 5). Read only by the kit: its seabed is drawn in water colours. */
   underwater: boolean;
+  /** ROM address of the secondary tileset (0 / absent: unknown). Read only by the kit: it picks the
+   *  curated tables of that tileset's ids (512+). */
+  secondaryTileset?: number;
   margin: number;
 }
 
