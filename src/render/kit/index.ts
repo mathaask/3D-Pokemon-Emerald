@@ -3,7 +3,9 @@
 
 import type { Family } from './semantics';
 import { terrainFamily } from './terrain';
+import { waterFamily } from './water';
 
 export const FAMILIES: readonly Family<unknown>[] = [
+  waterFamily,
   terrainFamily,
 ];

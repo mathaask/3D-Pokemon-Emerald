@@ -32,6 +32,12 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   layer (bridge planks are top-layer); SHALLOW_WATER → Sand. Terrain casts shadows (as legacy floors did). Until the
   water family claims water, shore banks are drawn by both terrain and the legacy connectors (coplanar; no visible
   z-fight in regress shots).
+- Task 7: every outdoor map's water sits at one level (-0.3; the analysis floods the minimum through connected water),
+  so there are no water-to-water steps and waterfalls are flat streaked cells. Water cells keep legacy art when they
+  carry an overhang (`hasTop`: bridge decks, roof eaves, canopy over water) or are blocked non-water cells with
+  top-layer art (boats, bank edges); the General 2x2 sea rock (bottom row 0x158|0x16c, 0x159|0x16d) becomes a boulder.
+  SHALLOW_WATER metatile 0x1ae (Mossdeep/Lilycove) is terrain sand tinted deep blue (Task 6 cellLook) — reads as blue
+  blotches next to the new water.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

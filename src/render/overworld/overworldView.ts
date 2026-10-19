@@ -380,6 +380,7 @@ export class OverworldView {
     this.sun.color.copy(sunColor);
     this.sun.intensity = sunI;
     this.hemi.color.copy(skyColor);
+    this.kitUniforms.uSky.value.copy(skyColor).multiplyScalar(hemiI * 0.6);
     this.hemi.groundColor.copy(groundColor);
     this.hemi.intensity = hemiI;
     const fogObj = this.scene.fog as THREE.Fog;
