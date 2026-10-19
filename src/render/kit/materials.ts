@@ -71,13 +71,13 @@ export interface KitMaterialOptions {
   fragEmissive?: string;
   /** GLSL after <begin_vertex>: may change `transformed` (object space). */
   vertTransform?: string;
-  /** Required with hooks: distinguishes the compiled program. */
+  /** Optional label in the program cache key (the hook source is hashed into it anyway). */
   hookKey?: string;
 }
 
 export interface KitMaterial {
   material: THREE.MeshStandardMaterial;
-  /** Matching shadow-depth material for deforming (wind) materials, else null. */
+  /** Matching shadow-depth material for deforming (wind / vertTransform) materials, else null. */
   depth: THREE.MeshDepthMaterial | null;
 }
 
@@ -120,9 +120,17 @@ vec4 mvPosition = vec4(transformed, 1.0);
   #endif
 }
 #endif
-vKitWorld = (modelMatrix * mvPosition).xyz;
+vec4 kitWorldPos = modelMatrix * mvPosition;
+vKitWorld = kitWorldPos.xyz;
 mvPosition = modelViewMatrix * mvPosition;
 gl_Position = projectionMatrix * mvPosition;
+`;
+
+// Replaces <worldpos_vertex> (same guard) so shadow coordinates and env lookups use the swayed position.
+const WORLDPOS_VERTEX = /* glsl */ `
+#if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
+vec4 worldPosition = kitWorldPos;
+#endif
 `;
 
 const FRAG_PRELUDE = /* glsl */ `
@@ -178,6 +186,13 @@ totalEmissiveRadiance += vec3(1.0, 0.72, 0.38) * uNight * uGlow;
 
 type Local = Record<'uWindAmp' | 'uWindHeight' | 'uGlow', { value: number }>;
 
+/** FNV-1a 32-bit hash, base 36 (compact program-cache-key component). */
+function hashString(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+}
+
 function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, local: Local, o: KitMaterialOptions, full: boolean): void {
   Object.assign(s.uniforms, {
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
@@ -185,7 +200,8 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
   });
   s.vertexShader = VERT_PRELUDE + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
-    .replace('#include <project_vertex>', PROJECT_VERTEX);
+    .replace('#include <project_vertex>', PROJECT_VERTEX)
+    .replace('#include <worldpos_vertex>', WORLDPOS_VERTEX);
   if (!full) return;
   s.fragmentShader = FRAG_PRELUDE + (o.fragHead ?? '') + s.fragmentShader
     .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n' + FADE)
@@ -219,13 +235,18 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
     uWindHeight: { value: o.windHeight ?? 1 },
     uGlow: { value: o.glow ?? 0 },
   };
-  const key = 'kit:' + Object.keys(defines).sort().join(',') + ':' + (o.hookKey ?? '');
+  // three's program cache key omits onBeforeCompile output, so the hook source must be part of it.
+  const hooks = [o.fragHead, o.fragColor, o.fragNormal, o.fragEmissive, o.vertTransform].map((h) => h ?? '').join('|');
+  const key = 'kit:' + Object.keys(defines).sort().join(',') + ':' + (o.hookKey ?? '') + ':' + hashString(hooks);
   material.onBeforeCompile = (s) => patchKit(s, u, local, o, true);
   material.customProgramCacheKey = () => key;
   let depth: THREE.MeshDepthMaterial | null = null;
-  if (o.wind) {
+  if (o.wind || o.vertTransform) {
     depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-    depth.defines = o.bend ? { KIT_WIND: '', KIT_BEND: '' } : { KIT_WIND: '' };
+    const depthDefines: Record<string, string> = {};
+    if (defines.KIT_WIND !== undefined) depthDefines.KIT_WIND = '';
+    if (defines.KIT_BEND !== undefined) depthDefines.KIT_BEND = '';
+    depth.defines = depthDefines;
     depth.onBeforeCompile = (s) => patchKit(s, u, local, o, false);
     depth.customProgramCacheKey = () => key + ':depth';
   }

@@ -18,4 +18,16 @@ describe('kitMaterial', () => {
     expect(a.defines).toHaveProperty('KIT_PATTERN_ROOF');
     expect(a.customProgramCacheKey()).not.toBe(b.customProgramCacheKey());
   });
+  it('different GLSL hooks get different program keys without a hookKey', () => {
+    const a = kitMaterial(u, { fade: true, fragColor: 'diffuseColor.rgb *= 0.5;' }).material;
+    const b = kitMaterial(u, { fade: true, fragColor: 'diffuseColor.rgb *= 0.7;' }).material;
+    const a2 = kitMaterial(u, { fade: true, fragColor: 'diffuseColor.rgb *= 0.5;' }).material;
+    expect(a.customProgramCacheKey()).not.toBe(b.customProgramCacheKey());
+    expect(a.customProgramCacheKey()).toBe(a2.customProgramCacheKey());
+  });
+  it('vertTransform alone adds a depth material', () => {
+    const k = kitMaterial(u, { vertTransform: 'transformed.y += 0.1;' });
+    expect(k.depth).not.toBeNull();
+    expect(k.depth!.defines).not.toHaveProperty('KIT_WIND');
+  });
 });

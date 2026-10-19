@@ -19,8 +19,9 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   PostFX uses). Live map events: `OverworldView.liveEvents()` (ROM events table, +MAP_OFFSET); preview uses offset 0.
 - Task 4: kit shaders verified in Chrome/ANGLE via a temporary probe in `preview.ts` — check
   `renderer.info.programs` entries whose `cacheKey` contains `kit:` (+ any `diagnostics`). `kitMaterial` replaces
-  `<project_vertex>` wholesale, so `USE_BATCHING` (BatchedMesh) is unsupported, and `worldpos_vertex` still uses the
-  rest pose (wind-swayed meshes receive shadows at their un-swayed position — negligible).
+  `<project_vertex>` wholesale, so `USE_BATCHING` (BatchedMesh) is unsupported. It also replaces `<worldpos_vertex>`
+  so shadows/env use the swayed pose; the hook GLSL is hashed into the program key (`hookKey` optional); a depth twin
+  exists for `wind` or `vertTransform`. Kit materials must not be `clone()`d (onBeforeCompile/key are not copied).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
