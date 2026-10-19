@@ -12,6 +12,9 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
   max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
   NOTE: route119's legacy build already exceeds the 150 ms budget before Phase 1 (see ledger ruling).
+- Task 2: `tests/smoke/golden.test.ts` pins legacy `classify()` output (hash per regression map). Regress PNGs
+  are not byte-stable everywhere: littleroot reproduces exactly, slateport's water (right side, ~2–5 % px) differs
+  between two runs of the same code — compare such maps by eye + stats, not bytes.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
