@@ -26,6 +26,7 @@ export class PreviewApp {
   private yaw = 0;
   private pitch = 0;
   private zoom = 0;
+  private buildMs = 0;
   readonly name: string;
 
   constructor(canvas: HTMLCanvasElement, rom: Uint8Array, group: number, num: number, params: URLSearchParams) {
@@ -35,6 +36,7 @@ export class PreviewApp {
     this.webgl.shadowMap.type = THREE.PCFShadowMap;
     this.webgl.toneMapping = THREE.NeutralToneMapping;
     this.webgl.outputColorSpace = THREE.SRGBColorSpace;
+    this.webgl.info.autoReset = false;
 
     const reader = new RomReader(rom);
     const map = loadMap(reader, group, num);
@@ -68,7 +70,9 @@ export class PreviewApp {
       borderPhase: 0,
     };
     this.view.renderAtlas(this.webgl);
+    const t0 = performance.now();
     this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset);
+    this.buildMs = performance.now() - t0;
 
     const hour = parseFloat(params.get('hour') ?? '11');
     this.fakeState = {
@@ -112,7 +116,14 @@ export class PreviewApp {
     this.view.resize(window.innerWidth / window.innerHeight);
   }
 
+  /** Render statistics of the last frame (all passes) and the last world build time. */
+  stats(): { calls: number; triangles: number; buildMs: number } {
+    const r = this.webgl.info.render;
+    return { calls: r.calls, triangles: r.triangles, buildMs: Math.round(this.buildMs) };
+  }
+
   private frame(): void {
+    this.webgl.info.reset();
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;

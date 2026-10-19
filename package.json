@@ -10,7 +10,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "symbols": "tsx tools/gen-symbols.ts",
-    "headless": "tsx tools/headless.ts"
+    "headless": "tsx tools/headless.ts",
+    "regress": "tsx tools/regress.ts"
   },
   "dependencies": {
     "three": "^0.186.1"

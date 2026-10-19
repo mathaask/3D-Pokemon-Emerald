@@ -8,6 +8,8 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - Git repo initialised; baseline commit `667c190`.
 - Phase 1 plan written: `docs/superpowers/plans/2026-10-19-phase1-outdoor.md` (17 tasks) —
   **awaiting user review + choice of execution method**.
+- Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
+  max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
 
 ## Next step
 - Execute Phase 1 plan from Task 1. Tick tasks off below as they are committed.
