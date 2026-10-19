@@ -9,6 +9,7 @@ export interface ClaimsSnapshot {
   bits: Uint8Array;
   groundY: Float32Array;
   groundMt: Int16Array;
+  surfaceY: Float32Array;
 }
 
 export class Claims {
@@ -17,11 +18,16 @@ export class Claims {
   readonly groundY: Float32Array;
   /** Metatile whose look the ground under a claimed object takes (-1 = analysis groundOf). */
   readonly groundMt: Int16Array;
+  /** Height of the walkable surface a family draws on a cell it claimed CLAIM_SURFACE (NaN = the
+   *  analysis height): the characters walking on the cell stand on it (World.heightAt). Like the
+   *  other overrides it only counts while its claim does (a family whose build fails loses it). */
+  readonly surfaceY: Float32Array;
 
   constructor(n: number) {
     this.bits = new Uint8Array(n);
     this.groundY = new Float32Array(n).fill(NaN);
     this.groundMt = new Int16Array(n).fill(-1);
+    this.surfaceY = new Float32Array(n).fill(NaN);
   }
 
   has(i: number, bit: number): boolean {
@@ -33,12 +39,13 @@ export class Claims {
   }
 
   snapshot(): ClaimsSnapshot {
-    return { bits: this.bits.slice(), groundY: this.groundY.slice(), groundMt: this.groundMt.slice() };
+    return { bits: this.bits.slice(), groundY: this.groundY.slice(), groundMt: this.groundMt.slice(), surfaceY: this.surfaceY.slice() };
   }
 
   restore(s: ClaimsSnapshot): void {
     this.bits.set(s.bits);
     this.groundY.set(s.groundY);
     this.groundMt.set(s.groundMt);
+    this.surfaceY.set(s.surfaceY);
   }
 }

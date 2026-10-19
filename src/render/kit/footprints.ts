@@ -28,11 +28,9 @@ export interface Footprint {
   dest: string | null;
   /** Ground level the building stands on (the cell before its door; never below 0). */
   base: number;
-  /** Columns whose bottom-row cell is walkable (the building's front steps, a walk-in door): the
-   *  game lets the player stand there, so the model's front stands back over them. */
-  steps: number[];
-  /** Per column from x0: how many rows its front stands back from the bottom row's front edge
-   *  (0, 1 over the steps or a walk-in door, 2 over a walk-in door behind a walkable landing). */
+  /** Per column from x0: how many rows its front stands back from the bottom row's front edge: 0,
+   *  1 over the building's walkable front steps or a walk-in door (the game lets the player stand
+   *  there) or a bush before it, 2 over a walk-in door behind a walkable landing. */
   recess: number[];
   /** Columns of a walk-in door (a walkable door cell the player steps onto, on row `doorY`), or
    *  none for a door the player walks into from the cell before it. */
@@ -313,15 +311,14 @@ function computeLayout(a: MapAnalysis, events: GridEvents): BuildingLayout {
       // (terrain inside it: a doorway cut into a cliff, as below the Trainer Hill)
       for (let y = top; y <= B; y++) for (let x = x0; x <= x1; x++) if (L.blocked(x, y) && isTerrain(mt[idx(x, y)])) return;
     }
-    const steps: number[] = [], recess: number[] = [];
+    const recess: number[] = [];
     for (let x = x0; x <= x1; x++) {
       let r = bush(x) ? 1 : 0;
       while (r < B - top && L.open(idx(x, B - r)) && !L.enclosed(x, B - r)) r++;
       recess.push(r);
-      if (L.open(idx(x, B))) steps.push(x);
     }
     const fp = footprints.push({
-      x0, x1, top, bottom: B, doorX, dest, base, steps, recess, walkIn: walkIn ? xs.filter((x) => x >= x0 && x <= x1) : [], doorY: dy,
+      x0, x1, top, bottom: B, doorX, dest, base, recess, walkIn: walkIn ? xs.filter((x) => x >= x0 && x <= x1) : [], doorY: dy,
     });
     for (let x = x0; x <= x1; x++) {
       for (let y = top; y <= B; y++) {

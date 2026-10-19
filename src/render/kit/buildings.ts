@@ -27,10 +27,8 @@ export interface BuildingPlacement {
   wall: RGB;
   windows: number[];
   chimneyX: number | null;
-  /** Columns whose bottom-row cell is walkable (the building's front steps, a walk-in door). */
-  steps: number[];
   /** Per column from x0: how many rows its front stands back from the bottom row's front edge (1
-   *  over the front steps or a walk-in door, 2 over a walk-in door behind its landing). */
+   *  over the walkable front steps or a walk-in door, 2 over a walk-in door behind its landing). */
   recess: number[];
   /** Columns of a walk-in door: its cell, before the wall in its recess, is the player's to step on. */
   walkIn: number[];
@@ -200,7 +198,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       for (let y = top; y <= bottom; y++) for (let x = x0; x <= x1; x++) if (mine(x, y) && claims.has(a.idx(x, y), CLAIM_OBJECT)) return;
       const rows = bottom - top + 1;
       const wallRows = rows >= 9 ? 4 : rows >= 7 ? 3 : 2;
-      const { base, steps, recess, walkIn } = fp;
+      const { base, recess, walkIn } = fp;
       const kind = buildingKind(fp.dest, x1 - x0 + 1);
       const roofMts: number[] = [], wallMts: number[] = [];
       for (let y = top; y <= bottom; y++) {
@@ -231,8 +229,13 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       const ground = below >= 0 && a.kind[below] === K.Floor ? a.mt[below] : -1;
       // A walk-in door's cell stays the player's (walkable, nothing of the model on it), but its
       // floor is the building's threshold at the building's level: the game may draw the doorway
-      // at a lower level than the street before it (the Game Corner's sits two below it).
-      for (const x of walkIn) claims.claim(a.idx(x, fp.doorY), CLAIM_SURFACE);
+      // at a lower level than the street before it (the Game Corner's sits two below it). The
+      // player stands on the threshold (not under it), the last step in and the first step out.
+      for (const x of walkIn) {
+        const i = a.idx(x, fp.doorY);
+        claims.claim(i, CLAIM_SURFACE);
+        claims.surfaceY[i] = base;
+      }
       for (let y = top - 1; y <= bottom; y++) {
         for (let x = x0; x <= x1; x++) {
           if (!a.inside(x, y)) continue;
@@ -248,7 +251,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       }
       out.push({
         kind, x0, x1, top, bottom, base, wallRows, doorX,
-        roof: soften(roof), wall: soften(wall), windows, chimneyX, steps, recess, walkIn,
+        roof: soften(roof), wall: soften(wall), windows, chimneyX, recess, walkIn,
         facade: kind === 'special' ? facadePixels(a, x0, recess.map((r) => bottom - Math.max(0, r - 1)), wallRows, (grounds ??= mapGrounds(a))) : null,
       });
     });

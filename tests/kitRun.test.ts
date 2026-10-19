@@ -74,6 +74,47 @@ describe('semantic core', () => {
     expect(parent.children).toHaveLength(0);
   });
 
+  it("places characters on the walkable surface a family draws, else on the analysis' ground", () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // the cell (2, 2) is walkable ground at height 0; the family lays its own floor there at 1.5
+    const grid = fakeGrid(['....', '.#..', '....']);
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const a = fakeAnalysis(['....', '.#..', '....'], { margin: 14 });
+    const floor = (fail?: 'extract' | 'build'): Family<number> => ({
+      name: 'floor',
+      extract(_c, claims) {
+        const i = a.idx(2, 2);
+        claims.claim(i, CLAIM_SURFACE);
+        claims.surfaceY[i] = 1.5;
+        if (fail === 'extract') throw new Error('boom');
+        return i;
+      },
+      build() {
+        if (fail === 'build') throw new Error('boom');
+        return new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+      },
+    });
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const mats = createWorldMaterials(atlas.target.texture, u);
+    const modern = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
+    const world = new World(atlas, mats, u, [floor()]);
+    world.build(grid, opts, modern);
+    expect(world.heightAt(2.5, 2.5)).toBe(1.5);
+    expect(world.heightAt(2.9, 2.1)).toBe(1.5); // (the whole cell)
+    expect(world.heightAt(1.5, 2.5)).toBe(a.height[a.idx(1, 2)]); // other cells: the analysis
+    expect(world.heightAt(3.5, 0.5)).toBe(a.height[a.idx(3, 0)]);
+    // Retro, and a family whose extract or build fails: the analysis height, as before
+    world.build(grid, opts, { ...modern, style: 'retro' });
+    expect(world.heightAt(2.5, 2.5)).toBe(a.height[a.idx(2, 2)]);
+    for (const fail of ['extract', 'build'] as const) {
+      const w = new World(atlas, mats, u, [floor(fail)]);
+      w.build(grid, opts, modern);
+      expect(w.heightAt(2.5, 2.5)).toBe(a.height[a.idx(2, 2)]);
+    }
+    warn.mockRestore();
+  });
+
   it('rebuilding a World leaves exactly one kit group', () => {
     const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
     const u = createKitUniforms();

@@ -171,7 +171,7 @@ describe('building footprints', () => {
     const events = ev([[4, 3, 'PetalburgCity_Gym']], [[5, 3]]);
     const { out, claims } = run(a, events);
     expect(box(out[0])).toEqual([1, 6, 1, 3]);
-    expect(out[0].steps).toEqual([1, 6]);
+    expect(out[0].recess).toEqual([1, 0, 0, 0, 0, 1]);
     // the steps stay walkable ground: not under the model (the walls stand behind them)
     for (const x of [1, 6]) expect(claims.has(a.idx(x, 3), CLAIM_OBJECT)).toBe(false);
     for (const x of [1, 6]) expect(claims.has(a.idx(x, 2), CLAIM_OBJECT)).toBe(true);
@@ -501,7 +501,8 @@ function digest(root: THREE.Object3D): string {
 
 describe('blocked-door buildings (pinned before walk-in doors)', () => {
   // Recorded with Task 13's code (6e32091): the footprints, claims and models of the buildings whose
-  // doors the player walks into from the cell before them must not change.
+  // doors the player walks into from the cell before them must not change. (`steps`: Task 13's
+  // columns standing back over the walkable front steps, now the columns with a recess.)
   const cases: [string, string[], [number, number, string][], object][] = [
     ['gym with front steps', ['..........', '.RRRRRR...', '.WWWWWW...', '.sWWDWs...', '..........'],
       [[4, 3, 'PetalburgCity_Gym']], {
@@ -547,7 +548,8 @@ describe('blocked-door buildings (pinned before walk-in doors)', () => {
         return s.join(' ');
       };
       const got = {
-        footprints: layout.footprints.map(({ x0, x1, top, bottom, doorX, dest, base, steps }) => ({ x0, x1, top, bottom, doorX, dest, base, steps })),
+        footprints: layout.footprints.map(({ x0, x1, top, bottom, doorX, dest, base, recess }) =>
+          ({ x0, x1, top, bottom, doorX, dest, base, steps: recess.flatMap((r, k) => (r ? [x0 + k] : [])) })),
         owner: cells((i) => layout.owner[i] > 0), stray: cells((i) => layout.stray[i] > 0),
         object: cells((i) => claims.has(i, CLAIM_OBJECT)), top: cells((i) => claims.has(i, CLAIM_TOP)),
         surface: cells((i) => claims.has(i, CLAIM_SURFACE)),
@@ -567,10 +569,12 @@ describe('walk-in doors', () => {
     const events = ev([[3, 3, 'SlateportCity_OceanicMuseum_1F']]);
     const { out, claims } = run(a, events);
     expect(out.map(box)).toEqual([[1, 6, 1, 3]]);
-    expect(out[0]).toMatchObject({ kind: 'special', doorX: 3, steps: [3], recess: [0, 0, 1, 0, 0, 0], walkIn: [3] });
+    expect(out[0]).toMatchObject({ kind: 'special', doorX: 3, recess: [0, 0, 1, 0, 0, 0], walkIn: [3] });
     const door = a.idx(3, 3);
     expect(claims.has(door, CLAIM_OBJECT)).toBe(false); // walkable: nothing of the model on it
-    expect(claims.has(door, CLAIM_SURFACE)).toBe(true); // (its floor is the building's threshold)
+    expect(claims.has(door, CLAIM_SURFACE)).toBe(true); // (its floor is the building's threshold...)
+    expect(claims.surfaceY[door]).toBe(out[0].base); // (...the player stands on, at the building's level)
+    for (let i = 0; i < a.N; i++) if (i !== door) expect(claims.surfaceY[i]).toBeNaN();
     for (const [x, y] of [[1, 3], [2, 3], [4, 3], [6, 3], [3, 2], [3, 1]]) expect(claims.has(a.idx(x, y), CLAIM_OBJECT)).toBe(true);
     const root = buildingFamily.build(out, { a, events, quality: 'medium' }, kitCtx())!;
     // walking north at chest height: the wall over the door is the door cell's back edge (z = 3),
@@ -606,6 +610,8 @@ describe('walk-in doors', () => {
     expect(out[0]).toMatchObject({ recess: [0, 0, 0, 2, 2, 0, 0, 0], walkIn: [4, 5] });
     for (const x of [4, 5]) {
       expect(claims.has(a.idx(x, 2), CLAIM_SURFACE)).toBe(true); // the door: the threshold
+      expect(claims.surfaceY[a.idx(x, 2)]).toBe(out[0].base);
+      expect(claims.surfaceY[a.idx(x, 3)]).toBeNaN(); // the landing: the analysis' ground
       expect(claims.has(a.idx(x, 3), CLAIM_OBJECT) || claims.has(a.idx(x, 3), CLAIM_SURFACE)).toBe(false); // the landing: ground
     }
     for (const y of [4, 5]) expect(claims.has(a.idx(3, y), CLAIM_OBJECT)).toBe(false); // the balustrade below stays legacy art

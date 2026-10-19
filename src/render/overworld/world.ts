@@ -14,7 +14,7 @@ import { runKit, disposeKit, type Family, type KitContext, type FamilyReport } f
 import { FAMILIES } from '../kit/index';
 import { analyze, queries } from './analyze';
 import { emitLegacy } from './legacyQuads';
-import type { Claims } from './claims';
+import { CLAIM_SURFACE, type Claims } from './claims';
 import type { CellModel, ClassifyOptions } from './classify';
 import { TreeCards, type TreeRow } from './treeCards';
 
@@ -82,6 +82,10 @@ export class World {
   private kitGroup: THREE.Group | null = null;
   /** Per-family outcome of the last build (empty when the kit did not run). */
   kitReport: FamilyReport[] = [];
+  /** Walkable surface heights the kit draws instead of the analysis' (per grid cell, NaN = none;
+   *  null: Retro, or the kit did not run). */
+  private surfaceY: Float32Array | null = null;
+  private cellOf: ((x: number, y: number) => number) | null = null;
 
   private base = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
@@ -133,6 +137,11 @@ export class World {
       }
     }
     const model: CellModel = { ...queries(a), ...emitLegacy(a, claims) };
+    this.surfaceY = claims ? surfaceHeights(claims) : null;
+    this.cellOf = (x, y) => {
+      const xi = Math.floor(x), yi = Math.floor(y);
+      return a.inside(xi, yi) ? a.idx(xi, yi) : -1;
+    };
     this.atlas.setGroundRefs(model.groundRefs);
     this.model = model;
     const opaque = newBatch();
@@ -199,8 +208,24 @@ export class World {
     this.meshes.push(mesh);
   }
 
-  /** Ground height (world Y) at grid cell (x, y); used to place sprites. */
+  /** Ground height (world Y) at grid cell (x, y); used to place sprites. Where the kit draws a
+   *  walkable cell's surface at its own height (a walk-in door's threshold), that height. */
   heightAt(x: number, y: number): number {
-    return this.model ? this.model.heightAt(x, y) : 0;
+    if (!this.model) return 0;
+    const i = this.surfaceY && this.cellOf ? this.cellOf(x, y) : -1;
+    if (i >= 0 && !Number.isNaN(this.surfaceY![i])) return this.surfaceY![i];
+    return this.model.heightAt(x, y);
   }
+}
+
+/** The surface heights still claimed after the kit's build (a family whose build failed lost its
+ *  CLAIM_SURFACE cells: the legacy art draws them at the analysis height again). */
+function surfaceHeights(claims: Claims): Float32Array | null {
+  let out: Float32Array | null = null;
+  for (let i = 0; i < claims.surfaceY.length; i++) {
+    if (Number.isNaN(claims.surfaceY[i]) || !claims.has(i, CLAIM_SURFACE)) continue;
+    out ??= new Float32Array(claims.surfaceY.length).fill(NaN);
+    out[i] = claims.surfaceY[i];
+  }
+  return out;
 }

@@ -21,6 +21,20 @@ const isConnector = (q: Quad) => q.tv0 === 0.8;
 /** South-facing solid (non-cutout) faces: blocked-run fronts. */
 const isFace = (q: Quad) => q.normal[2] === 1 && q.normal[1] === 0 && !q.cutout && !isConnector(q);
 
+describe('Claims', () => {
+  it('snapshot and restore cover every override, the walkable surface heights too', () => {
+    const c = new Claims(4);
+    c.claim(1, CLAIM_SURFACE); c.surfaceY[1] = 2; c.groundY[2] = 1; c.groundMt[2] = 7;
+    const snap = c.snapshot();
+    c.claim(3, CLAIM_OBJECT); c.surfaceY[1] = 5; c.surfaceY[3] = 4; c.groundY[2] = 3; c.groundMt[2] = 9;
+    c.restore(snap);
+    expect([...c.bits]).toEqual([0, CLAIM_SURFACE, 0, 0]);
+    expect([...c.surfaceY]).toEqual([NaN, 2, NaN, NaN]);
+    expect([c.groundY[2], c.groundMt[2]]).toEqual([1, 7]);
+    expect([...new Claims(2).surfaceY]).toEqual([NaN, NaN]); // (none by default)
+  });
+});
+
 describe('emitLegacy claim guards', () => {
   const a = fakeAnalysis(MAP);
   const at = (x: number, y: number) => a.idx(x, y);
@@ -37,6 +51,12 @@ describe('emitLegacy claim guards', () => {
     expect([a.height[at(0, 0)], a.height[at(0, 1)], a.height[at(0, 2)]]).toEqual([1, 0.5, 0]);
     // No claims and a null Claims are the same thing.
     expect(emitLegacy(a, new Claims(a.N))).toEqual(emitLegacy(a, null));
+  });
+
+  it('ignores the walkable surface heights the kit publishes (they only place characters)', () => {
+    const c = new Claims(a.N);
+    c.surfaceY.fill(3);
+    expect(emitLegacy(a, c)).toEqual(emitLegacy(a, null));
   });
 
   it('CLAIM_SURFACE on every cell drops the floor pass (one floor per cell)', () => {
