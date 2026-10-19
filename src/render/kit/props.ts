@@ -159,11 +159,17 @@ export const propFamily: Family<PropPlacement[]> = {
      *  stand below them (a fence coming down to a wall: the wall keeps the ground in front of it; a
      *  railing along a cliff's top stays the cliff's). Props below anything else stay its art (a sign
      *  at the foot of a cliff: the cliff stands on its row). */
+    const rockTiles = new Map<number, boolean>();
+    const rock = (m: number) => {
+      let v = rockTiles.get(m);
+      if (v === undefined) { v = isRocky(a, m); rockTiles.set(m, v); }
+      return v;
+    };
     const freeProp = (x: number, y: number) => {
       const [t, b] = blockRun(a, x, y, isB);
       let p = t;
       while (p <= b && isProp(idx(x, p))) p++;
-      for (let r = p; r <= b; r++) if (isProp(idx(x, r)) || isRocky(a, mt[idx(x, r)])) return false;
+      for (let r = p; r <= b; r++) if (isProp(idx(x, r)) || rock(mt[idx(x, r)])) return false;
       return y < p && b - p < 2;
     };
     const land = (j: number) => j >= 0 && (kind[j] === K.Floor || kind[j] === K.Stairs || kind[j] === K.Ledge) &&
