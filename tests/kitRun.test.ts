@@ -57,6 +57,11 @@ describe('semantic core', () => {
     shared.userData.shared = true;
     const m1 = new THREE.MeshBasicMaterial();
     root.add(new THREE.Mesh(g1, m1), new THREE.Mesh(shared, m1));
+    // Instanced meshes over shared geometry: their own instance buffers must still be freed.
+    const inst = new THREE.InstancedMesh(shared, m1, 4);
+    const instDisposed = vi.fn();
+    inst.addEventListener('dispose', instDisposed);
+    root.add(inst);
     const tex = { dispose: vi.fn() };
     k.disposables.push(tex);
     const sg = vi.spyOn(g1, 'dispose');
@@ -64,6 +69,7 @@ describe('semantic core', () => {
     disposeKit(root, k);
     expect(sg).toHaveBeenCalled();
     expect(ss).not.toHaveBeenCalled();
+    expect(instDisposed).toHaveBeenCalledOnce();
     expect(tex.dispose).toHaveBeenCalled();
     expect(parent.children).toHaveLength(0);
   });

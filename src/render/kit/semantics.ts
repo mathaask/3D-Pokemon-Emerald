@@ -97,6 +97,8 @@ export function disposeKit(root: THREE.Object3D, kit: KitContext): void {
     const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
     for (const mat of mats) mat.dispose();
     m.customDepthMaterial?.dispose();
+    // Frees the instance buffers / VAOs (the renderer only releases them on the object's 'dispose').
+    if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
   });
   for (const d of kit.disposables) d.dispose();
   kit.disposables.length = 0;
