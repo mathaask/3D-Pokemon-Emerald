@@ -17,6 +17,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   between two runs of the same code — compare such maps by eye + stats, not bytes.
 - Task 3: `OverworldView.quality` comes from `Renderer.quality` *after* the `?quality=` URL override (same value
   PostFX uses). Live map events: `OverworldView.liveEvents()` (ROM events table, +MAP_OFFSET); preview uses offset 0.
+- Task 4: kit shaders verified in Chrome/ANGLE via a temporary probe in `preview.ts` — check
+  `renderer.info.programs` entries whose `cacheKey` contains `kit:` (+ any `diagnostics`). `kitMaterial` replaces
+  `<project_vertex>` wholesale, so `USE_BATCHING` (BatchedMesh) is unsupported, and `worldpos_vertex` still uses the
+  rest pose (wind-swayed meshes receive shadows at their un-swayed position — negligible).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
