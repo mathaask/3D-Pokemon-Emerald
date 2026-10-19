@@ -277,6 +277,29 @@ describe('props build', () => {
     const plain = propFamily.build(list.filter((p) => p.kind !== 'lamp'), ctx, kit())!;
     expect(plain.children).toHaveLength(1);
   });
+
+  it('winds every face outward (front faces only are drawn)', () => {
+    for (const p of [
+      { kind: 'rock', x0: 0, x1: 1, y: 3, h: 0, color: [0.5, 0.4, 0.3], rows: 1 },
+      { kind: 'mailbox', x0: 0, x1: 0, y: 3, h: 0, color: [0.5, 0.5, 0.5] },
+      { kind: 'fenceMetal', x0: 0, x1: 3, y: 3, h: 0, color: [0.5, 0.5, 0.5], h1: 1 },
+    ] as PropPlacement[]) {
+      const mesh = propFamily.build([p], ctx, kit())!.children[0] as THREE.Mesh;
+      const pos = mesh.geometry.getAttribute('position');
+      const centre = new THREE.Box3().setFromBufferAttribute(pos as THREE.BufferAttribute).getCenter(new THREE.Vector3());
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+      let inward = 0, faces = 0;
+      for (let i = 0; i < pos.count; i += 3) {
+        a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+        n.subVectors(b, a).cross(c.clone().sub(a));
+        if (n.lengthSq() < 1e-10) continue; // (a degenerate half of a triangle written as a quad)
+        faces++;
+        if (p.kind === 'rock' && n.dot(a.clone().add(b).add(c).divideScalar(3).sub(centre)) < 0) inward++;
+      }
+      expect(faces).toBeGreaterThan(10);
+      expect(inward).toBe(0);
+    }
+  });
 });
 
 describe('General tables', () => {

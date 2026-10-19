@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { bgr555ToSrgb, dominantColor, luma, mix, saturation, soften, toLinear, scale, type RGB } from './palette';
-import { MeshBuilder, hashCell, noise3, type V3 } from './geom';
+import { QuadWriter, hashCell, noise3, type V3 } from './geom';
 import { kitMaterial } from './materials';
 import { blobCrown } from './trees';
 import { isRocky } from './cliffs';
@@ -336,27 +336,21 @@ export const propFamily: Family<PropPlacement[]> = {
 
   build(list: PropPlacement[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!list.length) return null;
-    const mb = new MeshBuilder();
-    const glow = new MeshBuilder();
+    // Flat-shaded quads in typed arrays (thousands of fence posts: MeshBuilder's per-vertex pushes
+    // cost more than the geometry); lanterns in a glowing mesh of their own.
+    const qw = new QuadWriter();
+    const glow = new QuadWriter();
     /** Axis-aligned box centred at (cx, cy, cz). */
-    const box = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, c: RGB, into = mb) => {
-      const x0 = cx - sx / 2, x1 = cx + sx / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, z0 = cz - sz / 2, z1 = cz + sz / 2;
-      const q = (p: V3[], n: V3) => into.quad(p[0], p[1], p[2], p[3], n, c);
-      q([[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], [0, 1, 0]);
-      q([[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0]], [0, -1, 0]);
-      q([[x0, y1, z1], [x1, y1, z1], [x1, y0, z1], [x0, y0, z1]], [0, 0, 1]);
-      q([[x1, y1, z0], [x0, y1, z0], [x0, y0, z0], [x1, y0, z0]], [0, 0, -1]);
-      q([[x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [x0, y0, z0]], [-1, 0, 0]);
-      q([[x1, y1, z1], [x1, y1, z0], [x1, y0, z0], [x1, y0, z1]], [1, 0, 0]);
-    };
-    /** Upright octagonal post of radius r from y0 to y1. */
+    const box = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, c: RGB, into = qw) =>
+      into.box(cx - sx / 2, cx + sx / 2, cy - sy / 2, cy + sy / 2, cz - sz / 2, cz + sz / 2, c);
+    /** Upright hexagonal post of radius r from y0 to y1, a low cone for its cap. */
     const post = (cx: number, y0: number, y1: number, cz: number, r: number, c: RGB, top: RGB = c) => {
-      const n = 8;
+      const n = 6, peak: V3 = [cx, y1 + r * 0.5, cz];
       for (let k = 0; k < n; k++) {
         const a0 = (k / n) * Math.PI * 2, a1 = ((k + 1) / n) * Math.PI * 2, am = (a0 + a1) / 2;
         const p0: V3 = [cx + Math.cos(a0) * r, y1, cz + Math.sin(a0) * r], p1: V3 = [cx + Math.cos(a1) * r, y1, cz + Math.sin(a1) * r];
-        mb.quad(p0, p1, [p1[0], y0, p1[2]], [p0[0], y0, p0[2]], [Math.cos(am), 0, Math.sin(am)], c);
-        mb.quad([cx, y1 + r * 0.4, cz], [cx, y1 + r * 0.4, cz], p1, p0, [0, 1, 0], top); // (a low cone cap)
+        qw.quad(p0, p1, [p1[0], y0, p1[2]], [p0[0], y0, p0[2]], [Math.cos(am), 0, Math.sin(am)], c);
+        qw.quad(peak, peak, p1, p0, [Math.cos(am), 1, Math.sin(am)], top);
       }
     };
     /** A rail of section w (across, level) x t (up) whose centre line runs from p to q. */
@@ -368,17 +362,32 @@ export const propFamily: Family<PropPlacement[]> = {
       const uv = _u.crossVectors(sv, d).normalize();
       const C = (o: V3, i: number, j: number): V3 => [
         o[0] + sv.x * i * w / 2 + uv.x * j * t / 2, o[1] + sv.y * i * w / 2 + uv.y * j * t / 2, o[2] + sv.z * i * w / 2 + uv.z * j * t / 2];
-      const side = (i0: number, j0: number, i1: number, j1: number, n: V3) => mb.quad(C(p, i0, j0), C(q, i0, j0), C(q, i1, j1), C(p, i1, j1), n, c);
+      const side = (i0: number, j0: number, i1: number, j1: number, n: V3) => qw.quad(C(p, i0, j0), C(q, i0, j0), C(q, i1, j1), C(p, i1, j1), n, c);
       side(-1, 1, 1, 1, [uv.x, uv.y, uv.z]);
       side(-1, -1, 1, -1, [-uv.x, -uv.y, -uv.z]);
       side(1, -1, 1, 1, [sv.x, sv.y, sv.z]);
       side(-1, -1, -1, 1, [-sv.x, -sv.y, -sv.z]);
-      for (const [o, k] of [[p, -1], [q, 1]] as [V3, number][]) mb.quad(C(o, -1, -1), C(o, 1, -1), C(o, 1, 1), C(o, -1, 1), [d.x * k, d.y * k, d.z * k], c);
+      for (const [o, k] of [[p, -1], [q, 1]] as [V3, number][]) qw.quad(C(o, -1, -1), C(o, 1, -1), C(o, 1, 1), C(o, -1, 1), [d.x * k, d.y * k, d.z * k], c);
+    };
+    /** The triangles of `g` (indexed or not), moved by (tx, ty, tz), tinted by `c` × its own colours. */
+    const mesh = (g: THREE.BufferGeometry, tx: number, ty: number, tz: number, c: RGB) => {
+      const pos = g.getAttribute('position'), col = g.getAttribute('color'), index = g.index;
+      const n = index ? index.count : pos.count;
+      const P = (k: number): V3 => { const v = index ? index.getX(k) : k; return [pos.getX(v) + tx, pos.getY(v) + ty, pos.getZ(v) + tz]; };
+      for (let k = 0; k + 2 < n; k += 3) {
+        const a = P(k), b = P(k + 1), cc = P(k + 2);
+        const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = cc[0] - a[0], vy = cc[1] - a[1], vz = cc[2] - a[2];
+        const v0 = index ? index.getX(k) : k;
+        const tint: RGB = col ? [c[0] * col.getX(v0), c[1] * col.getY(v0), c[2] * col.getZ(v0)] : c;
+        qw.quad(a, b, cc, cc, [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx], tint);
+      }
     };
     const lin = new Map<RGB, RGB>();
     const L = (c: RGB) => { let v = lin.get(c); if (!v) { v = toLinear(c); lin.set(c, v); } return v; };
     const POST: RGB = toLinear([0.42, 0.3, 0.2]);
     const DARK: RGB = toLinear([0.25, 0.27, 0.3]);
+    const RED: RGB = toLinear([0.85, 0.22, 0.2]);
+    const GLASS: RGB = toLinear([1, 0.95, 0.82]);
     const posts = new Set<string>(); // fence posts already standing (corners shared by two runs)
     for (const p of list) {
       const c = L(p.color), trim = L(p.trim ?? p.color);
@@ -401,14 +410,16 @@ export const propFamily: Family<PropPlacement[]> = {
           const top = h + 0.74, r = 0.16, d = 0.46;
           box(cx, h + 0.63, z, 2 * r, 0.22, d, c);
           for (let k = 0; k < 6; k++) {
-            const a0 = (k / 6) * Math.PI, a1 = ((k + 1) / 6) * Math.PI;
-            const p0: V3 = [cx + Math.cos(a0) * r, top + Math.sin(a0) * r * 0.8, z], p1: V3 = [cx + Math.cos(a1) * r, top + Math.sin(a1) * r * 0.8, z];
-            const am = (a0 + a1) / 2;
-            mb.quad([p0[0], p0[1], z - d / 2], [p1[0], p1[1], z - d / 2], [p1[0], p1[1], z + d / 2], [p0[0], p0[1], z + d / 2], [Math.cos(am), Math.sin(am), 0], c);
-            for (const e of [-1, 1]) mb.quad([cx, top, z + (e * d) / 2], [cx, top, z + (e * d) / 2], [p1[0], p1[1], z + (e * d) / 2], [p0[0], p0[1], z + (e * d) / 2], [0, 0, e], c);
+            const a0 = (k / 6) * Math.PI, a1 = ((k + 1) / 6) * Math.PI, am = (a0 + a1) / 2;
+            const x0 = cx + Math.cos(a0) * r, y0 = top + Math.sin(a0) * r * 0.8, x1 = cx + Math.cos(a1) * r, y1 = top + Math.sin(a1) * r * 0.8;
+            qw.quad([x0, y0, z - d / 2], [x1, y1, z - d / 2], [x1, y1, z + d / 2], [x0, y0, z + d / 2], [Math.cos(am), Math.sin(am), 0], c);
+            for (const e of [-1, 1]) {
+              const ze = z + (e * d) / 2;
+              qw.quad([cx, top, ze], [cx, top, ze], [x1, y1, ze], [x0, y0, ze], [0, 0, e], c);
+            }
           }
-          box(cx + r + 0.02, h + 0.8, z - 0.06, 0.03, 0.24, 0.05, toLinear([0.85, 0.22, 0.2])); // flag
-          box(cx + r + 0.02, h + 0.9, z - 0.01, 0.03, 0.08, 0.14, toLinear([0.85, 0.22, 0.2]));
+          box(cx + r + 0.02, h + 0.8, z - 0.06, 0.03, 0.24, 0.05, RED); // flag
+          box(cx + r + 0.02, h + 0.9, z - 0.01, 0.03, 0.08, 0.14, RED);
           box(cx, h + 0.7, z + d / 2 + 0.004, 0.16, 0.05, 0.01, trim); // slot
           break;
         }
@@ -416,7 +427,7 @@ export const propFamily: Family<PropPlacement[]> = {
           // a dark post, a lantern (its glass glows at night) under a cap
           post(cx, h, h + 1.14, z, 0.045, DARK);
           box(cx, h + 1.14, z, 0.2, 0.04, 0.2, DARK);
-          box(cx, h + 1.3, z, 0.18, 0.28, 0.18, toLinear([1, 0.95, 0.82]), glow);
+          box(cx, h + 1.3, z, 0.18, 0.28, 0.18, GLASS, glow);
           for (const [dx, dz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) box(cx + dx * 0.095, h + 1.3, z + dz * 0.095, 0.03, 0.28, 0.03, DARK);
           box(cx, h + 1.47, z, 0.3, 0.06, 0.3, DARK);
           box(cx, h + 1.53, z, 0.16, 0.06, 0.16, DARK);
@@ -433,15 +444,13 @@ export const propFamily: Family<PropPlacement[]> = {
             const taper = big ? 1 - 0.6 * THREE.MathUtils.clamp(vy / 0.95, 0, 1) : 1;
             pos.setXYZ(i, vx * k * taper, Math.max(vy * k * (big ? 1.15 : 0.75), big ? -0.25 : -0.12), vz * k * taper * (big ? 0.8 : 1));
           }
-          g.computeVertexNormals();
-          const zc = big ? p.y + h + 0.1 : z;
-          mb.add(g, c, new THREE.Matrix4().makeTranslation(cx, h + (big ? 0.25 : 0.12), zc));
+          mesh(g, cx, h + (big ? 0.25 : 0.12), big ? p.y + h + 0.1 : z, c);
           g.dispose();
           break;
         }
         case 'bush': {
           const g = blobCrown(hashCell(p.x0, p.y), 4, 0.2, 0.22, 0.3, 0.3, 0.1, 1);
-          mb.add(g, c, new THREE.Matrix4().makeTranslation(cx, h, z));
+          mesh(g, cx, h, z, c);
           g.dispose();
           break;
         }
@@ -479,11 +488,11 @@ export const propFamily: Family<PropPlacement[]> = {
       }
     }
     const root = new THREE.Group();
-    const body = new THREE.Mesh(mb.build(), kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.85, flatShading: true, fade: true }).material);
+    const body = new THREE.Mesh(qw.geometry(), kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.85, flatShading: true, fade: true }).material);
     body.castShadow = true;
     body.receiveShadow = true;
     root.add(body);
-    if (!glow.empty) root.add(new THREE.Mesh(glow.build(), kitMaterial(kit.uniforms, { vertexColors: true, glow: 2.5, fade: true }).material));
+    if (!glow.empty) root.add(new THREE.Mesh(glow.geometry(), kitMaterial(kit.uniforms, { vertexColors: true, glow: 2.5, fade: true }).material));
     return root;
   },
 };
