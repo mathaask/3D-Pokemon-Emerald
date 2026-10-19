@@ -86,6 +86,10 @@ export class Renderer {
     this.post?.setSize(size.x, size.y);
     this.hud.resize(this.width, this.height);
     this.overworld.resize(this.width / this.height);
+    // The scene is drawn into the composer's target, which EffectComposer scales by the pixel
+    // ratio once more — size the occlusion fade from that target, not the drawing buffer.
+    const rt = this.post.composer.renderTarget1;
+    this.overworld.setBufferSize(rt.width, rt.height);
     this.battle.resize(this.width / this.height);
   }
 

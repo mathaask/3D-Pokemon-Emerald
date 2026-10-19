@@ -12,7 +12,7 @@ export interface KitUniforms {
   uNight: { value: number };
   /** Wind direction × strength (world XZ). */
   uWind: { value: THREE.Vector2 };
-  /** Player position in drawing-buffer pixels. */
+  /** Player position in pixels of the render target the scene is drawn into. */
   uFocusPx: { value: THREE.Vector2 };
   /** Player distance along the view axis. */
   uFocusDepth: { value: number };
@@ -35,6 +35,22 @@ export function createKitUniforms(): KitUniforms {
     uActors: { value: Array.from({ length: MAX_ACTORS }, () => new THREE.Vector3(1e4, 0, 1e4)) },
     uSky: { value: new THREE.Color(0.75, 0.88, 1.0) },
   };
+}
+
+/**
+ * Aims the occlusion fade at a character standing at `feet` (world space), seen by `camera`
+ * in a `w`×`h`-pixel render target; `null` disables the fade. The camera's matrices must be current.
+ */
+export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: THREE.Camera, w: number, h: number): void {
+  if (!feet) {
+    u.uFadeRadius.value = 0;
+    return;
+  }
+  const chest = new THREE.Vector3(feet.x, feet.y + 0.7, feet.z);
+  const ndc = chest.clone().project(camera);
+  u.uFocusPx.value.set((ndc.x * 0.5 + 0.5) * w, (ndc.y * 0.5 + 0.5) * h);
+  u.uFocusDepth.value = -chest.applyMatrix4(camera.matrixWorldInverse).z;
+  u.uFadeRadius.value = 0.11 * h;
 }
 
 export type KitPattern = 'none' | 'roofTiles' | 'planks' | 'stone';

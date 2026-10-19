@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest';
-import { kitMaterial, createKitUniforms } from '../src/render/kit/materials';
+import * as THREE from 'three';
+import { kitMaterial, createKitUniforms, setKitFocus } from '../src/render/kit/materials';
+
+describe('setKitFocus', () => {
+  // Looks straight down -Z from (0, 0.7, 10): a point at the camera's height projects to the centre.
+  const camera = new THREE.PerspectiveCamera(90, 2, 0.1, 100);
+  camera.position.set(0, 0.7, 10);
+  camera.lookAt(0, 0.7, 0);
+  camera.updateMatrixWorld();
+
+  it('centres on the chest (feet + 0.7) in target pixels, depth along the view axis', () => {
+    const u = createKitUniforms();
+    setKitFocus(u, new THREE.Vector3(0, 0, 4), camera, 800, 400);
+    expect(u.uFocusPx.value.x).toBeCloseTo(400);
+    expect(u.uFocusPx.value.y).toBeCloseTo(200);
+    expect(u.uFocusDepth.value).toBeCloseTo(6);
+    expect(u.uFadeRadius.value).toBeCloseTo(44);
+  });
+  it('maps off-centre points with y up (gl_FragCoord convention)', () => {
+    const u = createKitUniforms();
+    // fov 90 at depth 5: the top edge is 5 units above the axis, the right edge 10 units right
+    // (aspect 2); the chest lands half-way to both.
+    setKitFocus(u, new THREE.Vector3(5, 2.5, 5), camera, 800, 400);
+    expect(u.uFocusPx.value.x).toBeCloseTo(600);
+    expect(u.uFocusPx.value.y).toBeCloseTo(300);
+  });
+  it('null disables the fade', () => {
+    const u = createKitUniforms();
+    setKitFocus(u, new THREE.Vector3(0, 0, 4), camera, 800, 400);
+    setKitFocus(u, null, camera, 800, 400);
+    expect(u.uFadeRadius.value).toBe(0);
+  });
+});
 
 describe('kitMaterial', () => {
   const u = createKitUniforms();

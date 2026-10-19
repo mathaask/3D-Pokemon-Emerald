@@ -58,6 +58,11 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   tiles (a foliage border = the forest); part of that forest is K.Building (the analysis' flood fill from the Glass
   Workshop door) and stays legacy. Tree counts (margin 14): woods 1176, route119 4146 (interior thinned), fortree
   1515, littleroot 491; regress woods ≈ 193k triangles, max 401k (fortree h21), max 64 calls.
+- Task 10: `PostFX.setSize` passes drawing-buffer pixels to `EffectComposer.setSize`, which multiplies by the pixel
+  ratio again — at DPR 2 the scene renders into a 4× drawing-buffer target (5120×3200 for a 2560×1600 buffer). The
+  occlusion fade therefore takes its pixel size from `post.composer.renderTarget1`, not the drawing buffer; shot3d
+  runs at DPR 1 and can't show the difference. `out/littleroot.state` is indoors (Brendan's house cutscene) —
+  live fade checks use `out/r101.state` (e.g. `--keys "LEFT:1100,DOWN:700"` puts the player against a treeline).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

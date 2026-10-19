@@ -86,6 +86,7 @@ export class PreviewApp {
     const cy = parseFloat(params.get('y') ?? String(map.layout.height / 2));
     this.target.set(cx, 0, cy);
     this.view.overrideTarget = this.target;
+    if (params.has('focus')) this.view.focusOverride = this.target;
     this.yaw = parseFloat(params.get('yaw') ?? '0');
     this.zoom = parseFloat(params.get('zoom') ?? '0');
     if (params.has('preset')) this.view.presetIndex = parseInt(params.get('preset')!, 10);
@@ -117,6 +118,9 @@ export class PreviewApp {
     const size = this.webgl.getDrawingBufferSize(new THREE.Vector2());
     this.post.setSize(size.x, size.y);
     this.view.resize(window.innerWidth / window.innerHeight);
+    // Fade pixels = the composer's scene target (EffectComposer applies the pixel ratio again).
+    const rt = this.post.composer.renderTarget1;
+    this.view.setBufferSize(rt.width, rt.height);
   }
 
   /** Render statistics of the last frame (all passes) and the last world build time. */

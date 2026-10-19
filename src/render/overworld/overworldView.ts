@@ -19,7 +19,7 @@ import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
-import { createKitUniforms, type KitUniforms } from '../kit/materials';
+import { createKitUniforms, setKitFocus, type KitUniforms } from '../kit/materials';
 
 export interface CameraPreset {
   name: string;
@@ -80,6 +80,10 @@ export class OverworldView {
   private cameraRight = new THREE.Vector3(1, 0, 0);
   /** When set (map preview), the camera follows this point instead of the player. */
   overrideTarget: THREE.Vector3 | null = null;
+  /** When set (map preview `&focus=1`), the occlusion fade centres on this point instead of the player. */
+  focusOverride: THREE.Vector3 | null = null;
+  private bufferW = 1;
+  private bufferH = 1;
   /** Sprite classifier (set once the ROM tables are readable). */
   classifier: SpriteClassifier | null = null;
   /** 0..1 progress of the battle-entry effect (pushes the camera in and twists it). */
@@ -448,6 +452,10 @@ export class OverworldView {
     this.camera.fov = preset.fov;
     this.camera.lookAt(look);
     this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+    // Occlusion fade (Modern only): trees/roofs between the camera and the player dither out.
+    const focus = this.focusOverride ?? (this.overrideTarget ? null : this.playerWorld(state));
+    setKitFocus(this.kitUniforms, this.worldStyle === 'modern' ? focus : null, this.camera, this.bufferW, this.bufferH);
     this.cameraRight.set(Math.cos(yawFx), 0, -Math.sin(yawFx));
 
     this.updateLighting(state);
@@ -461,6 +469,12 @@ export class OverworldView {
   resize(aspect: number): void {
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Size in pixels of the render target the scene is drawn into (the occlusion fade works in its pixels). */
+  setBufferSize(w: number, h: number): void {
+    this.bufferW = w;
+    this.bufferH = h;
   }
 
   render(r: THREE.WebGLRenderer): void {
