@@ -249,12 +249,14 @@ export const waterFamily: Family<WaterPlacement> = {
     const cells: WaterCell[] = [];
     const rocks: number[] = [];
     // Sea rocks: found by their bottom-left metatile, centred on its north-east corner; their four
-    // cells become water under the boulder.
+    // cells become water under the boulder. A rock is taken only if all four cells can be claimed
+    // (water, no overhang, unclaimed); otherwise its cells follow the rules below like any other.
+    const claimable = (j: number) => a.kind[j] === K.Water && !a.hasTop(j) && !claims.has(j, CLAIM_SURFACE);
     const rockCell = new Uint8Array(a.N);
     for (let i = W; i < a.N - 1; i++) {
       const m = a.mt[i];
-      if (a.kind[i] !== K.Water || !a.isGeneralId(m) || !ROCK_BL.has(m) || (i + 1) % W === 0) continue;
-      if (a.kind[i + 1] !== K.Water || !ROCK_BR.has(a.mt[i + 1])) continue;
+      if (!a.isGeneralId(m) || !ROCK_BL.has(m) || (i + 1) % W === 0 || !ROCK_BR.has(a.mt[i + 1])) continue;
+      if (!claimable(i) || !claimable(i + 1) || !claimable(i - W) || !claimable(i + 1 - W)) continue;
       rocks.push(a.cellX(i) + 1, a.cellY(i), a.height[i]);
       rockCell[i] = rockCell[i + 1] = rockCell[i - W] = rockCell[i + 1 - W] = 1;
     }
@@ -269,12 +271,6 @@ export const waterFamily: Family<WaterPlacement> = {
       cells.push({ i, level: a.height[i], fall: a.beh[i] === MB.WATERFALL });
       counts[m]++;
       claims.claim(i, CLAIM_SURFACE);
-      if (rockCell[i]) rockCell[i] = 2;
-    }
-    // a rock with a cell left to legacy (e.g. an overhang) keeps its legacy art: no boulder
-    for (let r = rocks.length - 3; r >= 0; r -= 3) {
-      const i = a.idx(rocks[r] - 1, rocks[r + 1]); // bottom-left cell
-      if (rockCell[i] + rockCell[i + 1] + rockCell[i - W] + rockCell[i + 1 - W] !== 8) rocks.splice(r, 3);
     }
     let common = -1, best = 0;
     for (let m = 0; m < counts.length; m++) if (counts[m] > best) { best = counts[m]; common = m; }
@@ -345,6 +341,10 @@ export const waterFamily: Family<WaterPlacement> = {
       vertTransform: VERT_SWELL,
       hookKey: 'water',
     });
+    // One non-overlapping sheet drawn after every opaque object (seabed, rocks, legacy cells test
+    // against it as usual), so it need not write depth; if it did, the swell (up to +0.05) would hide
+    // blob shadows and decals lying just above the water level.
+    km.material.depthWrite = false;
     const water = new THREE.Mesh(upGeometry(surf, bounds), km.material);
     water.receiveShadow = true;
     // First among transparent objects: blob shadows, weather and effects draw over the water.

@@ -75,6 +75,24 @@ describe('water extract', () => {
     for (const [x, y] of [[1, 1], [2, 1], [1, 2], [2, 2]]) expect(claims.has(a.idx(x, y), CLAIM_SURFACE)).toBe(true);
   });
 
+  it('leaves a rock with an overhang cell to the legacy art, all four cells of it', () => {
+    const a = sea(['wwwww', 'woUww', 'wBNww', 'wwwww']); // top-left rock cell carries an overhang
+    const claims = new Claims(a.N);
+    const p = waterFamily.extract(ctx(a), claims);
+    expect(p.rocks).toEqual([]);
+    for (const [x, y] of [[1, 1], [2, 1], [1, 2], [2, 2]]) expect(claims.has(a.idx(x, y), CLAIM_SURFACE)).toBe(false);
+    expect(claims.has(a.idx(0, 1), CLAIM_SURFACE)).toBe(true);
+  });
+
+  it('leaves a rock to the legacy art when an earlier family claimed one of its cells', () => {
+    const a = sea(['wwwww', 'wTUww', 'wBNww', 'wwwww']);
+    const claims = new Claims(a.N);
+    claims.claim(a.idx(2, 1), CLAIM_SURFACE);
+    const p = waterFamily.extract(ctx(a), claims);
+    expect(p.rocks).toEqual([]);
+    for (const [x, y] of [[1, 1], [1, 2], [2, 2]]) expect(claims.has(a.idx(x, y), CLAIM_SURFACE)).toBe(false);
+  });
+
   it('builds surface, seabed and rocks, and hands its texture to the kit', () => {
     const a = sea(['.wwwww', '.wTUww', '.wBNww', '.wwwww']);
     const claims = new Claims(a.N);
@@ -86,6 +104,8 @@ describe('water extract', () => {
     expect(surface.geometry.getAttribute('position').count).toBe(p.cells.length * 6);
     const shallow = p.cells.filter((c) => p.dist[c.i] <= 2).length;
     expect(bed.geometry.getAttribute('position').count).toBe(shallow * 6);
+    // No depth write: blob shadows and decals on the water stay visible when the swell rises past them.
+    expect((surface.material as THREE.Material).depthWrite).toBe(false);
     expect(kit.disposables.length).toBe(1);
     const tex = kit.disposables[0] as THREE.DataTexture;
     expect((tex.image.data as Uint8Array)[a.idx(3, 2) * 4 + 3]).toBe(255); // rock flag on the corner's SE cell
