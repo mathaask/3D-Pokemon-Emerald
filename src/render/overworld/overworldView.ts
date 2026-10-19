@@ -1,13 +1,17 @@
 // The 3D overworld: world mesh, sprite billboards, sky, sun/moon lighting, camera rig.
 
 import * as THREE from 'three';
-import type { GameState, SpriteSnap } from '../../game/state';
+import { MAP_OFFSET, type GameState, type SpriteSnap } from '../../game/state';
 import type { Mem } from '../../game/mem';
 import type { Bus } from '../../gba/bus';
+import { readEvents } from '../../game/rom/maps';
+import { RomReader } from '../../game/rom/reader';
 import type { GbaTextures } from '../gbaTextures';
 import type { SpriteAtlas } from '../spriteAtlas';
+import type { Quality } from '../post';
+import { gridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
-import { World, type GridData } from './world';
+import { World, type GridData, type WorldStyle } from './world';
 import { Billboards, BlobShadows, type BillboardSpec } from './billboards';
 import { analyzeMetatiles } from './tileInfo';
 import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
@@ -55,6 +59,10 @@ export class OverworldView {
   private gridKey = '';
   private lastGrid: Uint16Array | null = null;
   private haveWorld = false;
+  worldStyle: WorldStyle = 'modern';
+  quality: Quality = 'medium';
+  private romReader: RomReader | null = null;
+  private eventsCache: { addr: number; events: GridEvents } = { addr: -1, events: NO_EVENTS };
 
   // camera rig state
   presetIndex = 0;
@@ -112,6 +120,23 @@ export class OverworldView {
     this.zoom = 1;
   }
 
+  /** Switches Modern/Retro; the world is rebuilt on the next sync. */
+  setWorldStyle(s: WorldStyle): void {
+    if (s === this.worldStyle) return;
+    this.worldStyle = s;
+    this.gridKey = '';
+  }
+
+  /** Warps and signs of the current map in backup-grid coordinates (cached per events table). */
+  private liveEvents(state: GameState): GridEvents {
+    const addr = state.header?.events ?? 0;
+    if (addr !== this.eventsCache.addr) {
+      this.romReader ??= new RomReader(state.mem.bus.rom);
+      this.eventsCache = { addr, events: gridEvents(readEvents(this.romReader, addr), MAP_OFFSET) };
+    }
+    return this.eventsCache.events;
+  }
+
   /** Builds the GridData for the current backup map. */
   private readGrid(state: GameState): GridData | null {
     if (!state.layout || state.backupWidth <= 0 || state.backupHeight <= 0) return null;
@@ -153,7 +178,7 @@ export class OverworldView {
     if (grid && (key !== this.gridKey || tsChanged || this.gridChanged(grid))) {
       const mapChanged = key !== this.gridKey;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
-      this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset);
+      this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state));
       this.lastGrid = grid.cells;
       this.gridKey = key;
       this.haveWorld = true;
@@ -163,14 +188,14 @@ export class OverworldView {
   }
 
   /** Classifies a grid and rebuilds the world mesh (shared by live play and the map preview). */
-  buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number): void {
+  buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number, events: GridEvents = NO_EVENTS): void {
     const info = analyzeMetatiles(bus, this.atlas.entries, this.atlas.attributes, this.charBase, bgPalette);
     this.world.build(grid, {
       info,
       generalPrimary: primaryTileset === SYM.gTileset_General,
       indoor: this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
-    });
+    }, { style: this.worldStyle, events, quality: this.quality });
     this.haveWorld = true;
   }
 

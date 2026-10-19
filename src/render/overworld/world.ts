@@ -7,8 +7,21 @@
 
 import * as THREE from 'three';
 import type { MetatileAtlas } from './metatileAtlas';
-import { classify, type CellModel, type ClassifyOptions } from './classify';
+import type { Quality } from '../post';
+import type { GridEvents } from '../kit/events';
+import { analyze, queries } from './analyze';
+import { emitLegacy } from './legacyQuads';
+import type { Claims } from './claims';
+import type { CellModel, ClassifyOptions } from './classify';
 import { TreeCards, type TreeRow } from './treeCards';
+
+export type WorldStyle = 'modern' | 'retro';
+
+export interface WorldBuildContext {
+  style: WorldStyle;
+  events: GridEvents;
+  quality: Quality;
+}
 
 export interface GridData {
   width: number;
@@ -86,9 +99,12 @@ export class World {
     }
   }
 
-  build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>): void {
+  build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
     this.dispose();
-    const model = classify(grid, { ...opts, margin: this.margin });
+    const a = analyze(grid, { ...opts, margin: this.margin });
+    const claims: Claims | null = null; // filled by the kit (Task 5)
+    void ctx;
+    const model: CellModel = { ...queries(a), ...emitLegacy(a, claims) };
     this.atlas.setGroundRefs(model.groundRefs);
     this.model = model;
     const opaque = newBatch();

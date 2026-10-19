@@ -14,6 +14,7 @@ import { SpriteAtlas } from './spriteAtlas';
 import { OverworldView } from './overworld/overworldView';
 import { PostFX, type Quality } from './post';
 import type { GridData } from './overworld/world';
+import { gridEvents } from './kit/events';
 
 export class PreviewApp {
   readonly webgl: THREE.WebGLRenderer;
@@ -58,6 +59,8 @@ export class PreviewApp {
 
     const quality = (params.get('quality') as Quality) ?? 'medium';
     this.view = new OverworldView(tex, new SpriteAtlas(tex), this.webgl.capabilities.getMaxAnisotropy());
+    this.view.quality = quality;
+    this.view.worldStyle = params.get('style') === 'retro' ? 'retro' : 'modern';
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
     const grid: GridData = {
@@ -71,7 +74,7 @@ export class PreviewApp {
     };
     this.view.renderAtlas(this.webgl);
     const t0 = performance.now();
-    this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset);
+    this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0));
     this.buildMs = performance.now() - t0;
 
     const hour = parseFloat(params.get('hour') ?? '11');

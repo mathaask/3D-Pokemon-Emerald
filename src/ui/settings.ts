@@ -2,6 +2,7 @@
 
 export interface Settings {
   view: 'auto' | 'classic';
+  worldStyle: 'modern' | 'retro';
   quality: 'low' | 'medium' | 'high';
   tiltShift: boolean;
   bloom: boolean;
@@ -12,7 +13,7 @@ export interface Settings {
 const KEY = 'emerald3d.settings';
 
 export function loadSettings(): Settings {
-  const defaults: Settings = { view: 'auto', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0 };
+  const defaults: Settings = { view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0 };
   try {
     return { ...defaults, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
   } catch {
@@ -44,6 +45,8 @@ export class SettingsPanel {
       <h3>SETTINGS</h3>
       <label>View
         <select data-k="view"><option value="auto">3D</option><option value="classic">Classic 2D</option></select></label>
+      <label>World style
+        <select data-k="worldStyle"><option value="modern">Modern 3D</option><option value="retro">Retro 3D (pixel art)</option></select></label>
       <label>Camera
         <select data-k="camera"><option value="0">Classic</option><option value="1">Close</option><option value="2">Wide</option><option value="3">Low</option></select></label>
       <label>Graphics quality

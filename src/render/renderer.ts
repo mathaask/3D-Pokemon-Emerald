@@ -69,6 +69,7 @@ export class Renderer {
     this.hud = new Hud(gba.ppu.overlay, this.spriteAtlas);
     const q = new URLSearchParams(location.search).get('quality') ?? quality;
     this.quality = q === 'low' || q === 'high' ? q : 'medium';
+    this.overworld.quality = this.quality;
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
     this.fade.frustumCulled = false;
     this.fadeScene.add(this.fade);
