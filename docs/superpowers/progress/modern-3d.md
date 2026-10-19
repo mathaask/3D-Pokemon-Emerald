@@ -70,6 +70,15 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   grass). Ash grass (MB.ASHGRASS, Route 113) is grass. Flowers need ≥ 2 small petal blobs outlined in foliage —
   petal counts alone also take roof eaves, signs, paving edges and Fortree's speckled grass; on the regression
   maps only General 0x004 (and Route 110's copy 0x206) are flowers.
+- Task 12: the analysis' door flood fill is no footprint — it swallows lamp posts, fences, gardens, crater rock and
+  Route 113's ash forest, joins neighbours (Mauville House2 + Mart) and can hand a building's upper half to the
+  neighbour flooded first (Lavaridge's Mart region holds the PC's roof). `buildingLayout` (buildings.ts, memoised per
+  analysis) grows footprints from each door instead; region cells outside them (`stray`) are blocks again for
+  trees, `doorStructures` and the legacy emitter. Pokémon Center/Mart "signs" are bg events on their *wall* cells,
+  PC/Mart/lab doors are 2 cells wide with a warp on one, tents have 2-row doors, and Mart/PC/gym walls use the same
+  pale blues as house windows (glass is judged against the wall colour). Fortree's treehouse side posts run 1–2 rows
+  past the door row: `doorStructures` now keeps such short posts. At margin 14 Lilycove's Department Store tiles
+  read as water (blue blocks beside the map-edge sea): no building there.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

@@ -15,6 +15,7 @@ import { MB } from '../../game/behaviors';
 import { attrBehavior } from '../../game/rom/tileset';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
+import { buildingLayout } from './buildings';
 import { doorStructures } from './cliffs';
 import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';
@@ -97,10 +98,10 @@ const GRASS = new Set<number>([MB.TALL_GRASS, MB.LONG_GRASS, MB.LONG_GRASS_SOUTH
  * (secondary-tileset trees not green enough for its tree test: Route 113's ash trees). Null when
  * the border is anything else.
  */
-function borderForest(a: MapAnalysis): Set<number> | null {
+function borderForest(a: MapAnalysis, stray: Uint8Array): Set<number> | null {
   if (a.opts.margin < 2) return null;
   const cells = [a.idx(a.minX, a.minY), a.idx(a.minX + 1, a.minY), a.idx(a.minX, a.minY + 1), a.idx(a.minX + 1, a.minY + 1)];
-  if (cells.some((i) => a.kind[i] !== K.Block || a.isGeneralId(a.mt[i]))) return null;
+  if (cells.some((i) => (a.kind[i] !== K.Block && !stray[i]) || a.isGeneralId(a.mt[i]))) return null;
   if (!cells.some((i) => a.info.green[a.mt[i]] >= 0.2)) return null;
   const pal = new Set<number>();
   for (const i of cells) {
@@ -404,7 +405,9 @@ export const treeFamily: Family<TreePlacement[]> = {
       return s;
     };
     const structure = doorStructures(a, events);
-    const secondaryBlock = (i: number) => kind[i] === K.Block && !a.isGeneralId(mt[i]) && !structure[i] && !claims.has(i, CLAIM_OBJECT);
+    // (a building flood fill's cells outside every building are blocks: Route 113's ash forest)
+    const { stray } = buildingLayout(a, events);
+    const secondaryBlock = (i: number) => (kind[i] === K.Block || stray[i] === 1) && !a.isGeneralId(mt[i]) && !structure[i] && !claims.has(i, CLAIM_OBJECT);
 
     // Tree cells: the analysis' trees, a border forest's blocks, and the trunk rows of 2-wide trees.
     const tree = new Uint8Array(a.N);
@@ -412,7 +415,7 @@ export const treeFamily: Family<TreePlacement[]> = {
     for (let i = 0; i < a.N; i++) {
       if (kind[i] === K.Tree && !claims.has(i, CLAIM_OBJECT)) { tree[i] = 1; round[i] = a.roundTree[i]; }
     }
-    const forest = borderForest(a);
+    const forest = borderForest(a, stray);
     if (forest) {
       // Blocks mostly in the border trees' leaf colours, then the trunk-and-ground tiles at the
       // forest's edge (leaf and bark) beside them.

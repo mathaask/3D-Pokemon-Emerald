@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { blobCrown, pairRoundTrees, treeFamily, type TreePlacement } from '../src/render/kit/trees';
 import { Claims, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
+import { doorStructures } from '../src/render/kit/cliffs';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { disposeKit } from '../src/render/kit/semantics';
 import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
@@ -201,6 +202,23 @@ describe('tree extract', () => {
     const a = map(['.....', '.TT..', '.LJ#.', '.LJ#.', '.....', '.T.T.', '.BBL.', '.....']);
     const { claims } = extract(a);
     for (const [x, y] of [[1, 2], [2, 2], [1, 6], [2, 6], [3, 6]]) expect(claims.has(a.idx(x, y), CLAIM_OBJECT)).toBe(false);
+  });
+
+  it("leaves a treehouse's corner post beside a tree to the legacy art (Fortree)", () => {
+    // a hut on a door structure (walkable door, warp at (2, 2)); its left post runs one row past
+    // the door row onto the deck: a leafy right-half tile beside a tree
+    const a = map(['.....', 'TJ##.', 'TJ.#.', 'TJ...', '.....']);
+    const events = { warps: [{ x: 2, y: 2, dest: 'FortreeCity_House5' }], signs: [] };
+    const structure = doorStructures(a, events);
+    for (const y of [1, 2, 3]) expect(structure[a.idx(1, y)]).toBe(1);
+    const claims = new Claims(a.N);
+    treeFamily.extract({ a, events, quality: 'medium' }, claims);
+    expect(claims.has(a.idx(1, 3), CLAIM_OBJECT)).toBe(false);
+    // without the door, the post's foot reads as the right half of a 2-wide tree
+    expect(extract(a).claims.has(a.idx(1, 3), CLAIM_OBJECT)).toBe(true);
+    // a cliff beside a door, running on far past the door row, stays out of the structure
+    const b = map(['.....', 'TJ##.', 'TJ.#.', 'TJ...', 'TJ...', 'TJ...', '.....']);
+    expect(doorStructures(b, events)[b.idx(1, 1)]).toBe(0);
   });
 
   it('turns a border forest the analysis left as blocks (ash trees) into round trees', () => {

@@ -9,8 +9,9 @@
 import { describe, it, expect } from 'vitest';
 import { emitLegacy, type Quad } from '../src/render/overworld/legacyQuads';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../src/render/overworld/claims';
-import { K } from '../src/render/overworld/analyze';
-import { fakeAnalysis } from './helpers/fakeMap';
+import { analyze, K } from '../src/render/overworld/analyze';
+import { MB } from '../src/game/behaviors';
+import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
 
 const MAP = ['....', '.##.', '....'];
 
@@ -71,5 +72,38 @@ describe('emitLegacy claim guards', () => {
     expect(col0(claimsWith([at(0, 0), at(0, 1), at(0, 2)], CLAIM_SURFACE))).toBe(0);
     // Other claim bits never remove connectors.
     expect(total(claimsWith(all, CLAIM_OBJECT | CLAIM_TOP))).toBe(4);
+  });
+});
+
+describe('emitLegacy and a building the kit modelled', () => {
+  // A door (2, 2) whose flood fill takes the house (rows 1-2) and a post on its roof (2, 0).
+  const info = fakeInfo();
+  info.attributes[4] = MB.ANIMATED_DOOR;
+  const grid = fakeGrid(['..#..', '.###.', '.###.', '.....']);
+  grid.cells[2 * 5 + 2] = 4 | 0x0400;
+  const a = analyze(grid, { info, generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 1 });
+  const at = (x: number, y: number) => a.idx(x, y);
+  const xs = (qs: Quad[], x: number) => qs.filter((q) => Math.min(q.a[0], q.b[0], q.c[0], q.d[0]) === x && Math.max(q.a[0], q.b[0], q.c[0], q.d[0]) === x + 1);
+  /** The kit's model: the house rows, standing on the ground (0). */
+  const model = () => {
+    const c = new Claims(a.N);
+    for (let y = 1; y <= 2; y++) for (let x = 1; x <= 3; x++) { c.claim(at(x, y), CLAIM_OBJECT); c.groundY[at(x, y)] = 0; }
+    return c;
+  };
+
+  it('the synthetic map has the shape these tests rely on', () => {
+    expect(a.buildings).toHaveLength(1);
+    expect(a.kind[at(2, 0)]).toBe(K.Building);
+  });
+
+  it('draws the cells of the fill outside the model as blocks standing on the modelled ground', () => {
+    const solo = emitLegacy(a, model()).quads;
+    // the post: a standing quad (not a flat tile painted on the ground behind the model)
+    const post = xs(solo, 2).filter((q) => q.a[2] <= 1 + 1e-6 && q.normal[1] === 0);
+    expect(post.length).toBeGreaterThan(0);
+    // the legacy building shell (its walls glow at night) is gone; without claims it is drawn
+    expect(solo.some((q) => q.glow)).toBe(false);
+    expect(emitLegacy(a, null).quads.some((q) => q.glow)).toBe(true);
+    expect(emitLegacy(a, null)).toEqual(emitLegacy(a, new Claims(a.N)));
   });
 });

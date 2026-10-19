@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
+import { buildingLayout } from './buildings';
 import type { GridEvents } from './events';
 import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, QuadWriter, type V3 } from './geom';
@@ -46,18 +47,34 @@ export function isRocky(a: MapAnalysis, m: number, dom = litDominant(a, m)): boo
  * block cell north of it, no door behaviour): Devon Corp, Fortree's treehouses, the Game Corner,
  * cave mouths. Their columns (block runs through the row above the door that end by the door's
  * row, contiguous with the door, up to 14 rows tall and 9 columns either side) are buildings,
- * never cliffs. A wall running on past the door's row (a cliff beside the building) is not.
+ * never cliffs. A wall running on past the door's row (a cliff beside the building) is not, but
+ * the post closing either end of a structure is: a column running on one or two rows past the
+ * door's row and stopping there (the trunk-side walls of Fortree's treehouses, standing on the
+ * deck in front of the door).
  */
 export function doorStructures(a: MapAnalysis, events: GridEvents): Uint8Array {
   const out = new Uint8Array(a.N);
-  const block = (x: number, y: number) => a.inside(x, y) && a.kind[a.idx(x, y)] === K.Block;
+  // (a building flood fill's cells outside every building are blocks: the treehouse beside
+  // Fortree's Pokémon Center)
+  const { stray } = buildingLayout(a, events);
+  const block = (x: number, y: number) => a.inside(x, y) && (a.kind[a.idx(x, y)] === K.Block || stray[a.idx(x, y)] === 1);
   for (const w of events.warps) {
     const y = w.y - 1;
     if (!a.inside(w.x, w.y) || block(w.x, w.y) || !block(w.x, y)) continue;
     for (const dir of [-1, 1]) {
-      for (let x = dir < 0 ? w.x : w.x + 1; Math.abs(x - w.x) <= 9 && block(x, y) && !block(x, w.y + 1); x += dir) {
+      const x0 = dir < 0 ? w.x : w.x + 1;
+      let x = x0;
+      for (; Math.abs(x - w.x) <= 9 && block(x, y) && !block(x, w.y + 1); x += dir) {
         for (let r = block(x, w.y) ? w.y : y; r > y - 14 && block(x, r); r--) out[a.idx(x, r)] = 1;
       }
+      if (x === x0 || Math.abs(x - w.x) > 9 || !block(x, y)) continue;
+      // (at most four rows, no higher than the structure beside it: a cliff beside a cave mouth runs on)
+      let e = w.y + 1, t = y, top = y;
+      while (block(x, e + 1)) e++;
+      while (block(x, t - 1)) t--;
+      while (out[a.idx(x - dir, top - 1)]) top--;
+      if (e > w.y + 2 || t < top || e - t > 3) continue;
+      for (let r = t; r <= e; r++) out[a.idx(x, r)] = 1;
     }
   }
   return out;

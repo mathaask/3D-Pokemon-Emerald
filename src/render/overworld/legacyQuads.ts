@@ -30,12 +30,19 @@ export interface TreeQuad {
 
 /** Today's pixel-textured reconstruction, skipping whatever the kit claimed. */
 export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quads: Quad[]; trees: TreeQuad[] } {
-  const { opts, info, minX, minY, maxX, maxY, idx, inside, mt, kind, roundTree, buildings,
+  const { opts, info, minX, minY, maxX, maxY, idx, inside, mt, kind, roundTree, building, buildings,
     height, groundOf, groundH, hasTop, GW, N } = a;
   const claimed = (i: number, bit: number) => claims !== null && (claims.bits[i] & bit) !== 0;
+  // Buildings the kit modelled: the cells of their door flood fill outside the model (art the fill
+  // swallowed: fences, lamp posts, rock) are plain blocks again.
+  const modelled = new Uint8Array(buildings.length);
+  if (claims) buildings.forEach((b, id) => { modelled[id] = b.cells.some((c) => claimed(c, CLAIM_OBJECT)) ? 1 : 0; });
   /** Kind as the legacy emitter sees it: objects claimed by the kit no longer exist here. */
-  const kindL = (i: number) => (claimed(i, CLAIM_OBJECT) &&
-    (kind[i] === K.Block || kind[i] === K.Tree || kind[i] === K.Building) ? K.Floor : kind[i]);
+  const kindL = (i: number) => {
+    const k = kind[i];
+    if (claimed(i, CLAIM_OBJECT) && (k === K.Block || k === K.Tree || k === K.Building)) return K.Floor;
+    return k === K.Building && modelled[building[i]] ? K.Block : k;
+  };
 
   const quads: Quad[] = [];
   const trees: TreeQuad[] = [];
@@ -209,8 +216,11 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       const bi = e + 1 < maxY ? idx(x, e + 1) : -1;
       const ai = y > minY ? idx(x, y - 1) : -1;
       const walk = (i: number) => i >= 0 && (kind[i] === K.Floor || kind[i] === K.Stairs || kind[i] === K.Water || kind[i] === K.Ledge);
-      const hB = walk(bi) ? Math.max(height[bi], 0) : NaN;
-      const hA = walk(ai) ? Math.max(height[ai], 0) : NaN;
+      /** Ground level beside the run (a modelled building's cell: the ground the model stands on). */
+      const groundAt = (i: number) => (walk(i) ? Math.max(height[i], 0)
+        : i >= 0 && kind[i] === K.Building && claimed(i, CLAIM_OBJECT) ? claims!.groundY[i] : NaN);
+      const hB = groundAt(bi);
+      const hA = groundAt(ai);
       if (Number.isNaN(hB)) {
         // Nothing in front: a flat top at the level behind (or ground level).
         const top = Number.isNaN(hA) ? groundH[idx(x, e)] : hA;
