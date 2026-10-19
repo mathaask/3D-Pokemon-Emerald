@@ -8,7 +8,7 @@ import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import type { GridEvents } from './events';
 import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation, soften, toLinear, type RGB } from './palette';
-import { hashCell, type V3 } from './geom';
+import { hashCell, noise2, QuadWriter, type V3 } from './geom';
 import { kitMaterial } from './materials';
 import { cellLook, GroundMat, type CellLook } from './terrain';
 import type { Family, KitContext, SemanticContext } from './semantics';
@@ -72,83 +72,8 @@ const LEDGE_DIR: Record<number, LedgeLip['dir']> = {
   [MB.JUMP_EAST]: 'E', [MB.JUMP_WEST]: 'W',
 };
 
-/** Smooth 2D value noise in [-1, 1] (cheaper than noise3: the cliff build samples it ~10k times). */
-function noise2(x: number, y: number, salt: number): number {
-  const ix = Math.floor(x), iy = Math.floor(y);
-  let fx = x - ix, fy = y - iy;
-  fx = fx * fx * (3 - 2 * fx);
-  fy = fy * fy * (3 - 2 * fy);
-  const a = hashCell(ix, iy, salt), b = hashCell(ix + 1, iy, salt), c = hashCell(ix, iy + 1, salt), d = hashCell(ix + 1, iy + 1, salt);
-  const top = a + (b - a) * fx, bot = c + (d - c) * fx;
-  return ((top + (bot - top) * fy) / 4294967296) * 2 - 1;
-}
-
 /** Hash of a lattice point in [-1, 1]. */
 const jitter = (x: number, y: number) => (hashCell(x, y, 0x5c1) / 4294967296) * 2 - 1;
-
-const grow = (src: Float32Array) => { const t = new Float32Array(src.length * 2); t.set(src); return t; };
-
-/**
- * Flat-coloured quads written straight into growable typed arrays: the cliff mesh has thousands
- * of quads and MeshBuilder's per-vertex array pushes cost more than the geometry. Same winding
- * rule as MeshBuilder.quad (a-b-c-d turned to face `n`); colours are linear RGB.
- */
-class QuadWriter {
-  private pos = new Float32Array(18 * 512);
-  private nor = new Float32Array(18 * 512);
-  private col = new Float32Array(18 * 512);
-  private o = 0;
-  /** Bounds of the quad corners written so far (a sphere around them saves a pass over the vertices). */
-  private lo = [Infinity, Infinity, Infinity];
-  private hi = [-Infinity, -Infinity, -Infinity];
-
-  /** Quad a-b-c-d facing `n`, coloured `rgb` x `k`. */
-  quad(a: V3, b: V3, c: V3, d: V3, n: V3, rgb: RGB, k = 1): void {
-    if (this.o + 18 > this.pos.length) {
-      this.pos = grow(this.pos); this.nor = grow(this.nor); this.col = grow(this.col);
-    }
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
-    const flip = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2] < 0;
-    const l = Math.hypot(n[0], n[1], n[2]) || 1;
-    const nx = n[0] / l, ny = n[1] / l, nz = n[2] / l, r = rgb[0] * k, g = rgb[1] * k, b2 = rgb[2] * k;
-    for (let o = this.o, e = o + 18; o < e; o += 3) {
-      this.nor[o] = nx; this.nor[o + 1] = ny; this.nor[o + 2] = nz;
-      this.col[o] = r; this.col[o + 1] = g; this.col[o + 2] = b2;
-    }
-    if (flip) { this.put(a); this.put(c); this.put(b); this.put(a); this.put(d); this.put(c); }
-    else { this.put(a); this.put(b); this.put(c); this.put(a); this.put(c); this.put(d); }
-  }
-
-  private put(p: V3): void {
-    const o = this.o;
-    this.pos[o] = p[0]; this.pos[o + 1] = p[1]; this.pos[o + 2] = p[2];
-    this.o = o + 3;
-    for (let i = 0; i < 3; i++) {
-      if (p[i] < this.lo[i]) this.lo[i] = p[i];
-      if (p[i] > this.hi[i]) this.hi[i] = p[i];
-    }
-  }
-
-  /** Axis-aligned box [x0,x1] x [y0,y1] x [z0,z1]. */
-  box(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, rgb: RGB): void {
-    this.quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], [0, 1, 0], rgb);
-    this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], rgb);
-    this.quad([x0, y1, z1], [x1, y1, z1], [x1, y0, z1], [x0, y0, z1], [0, 0, 1], rgb);
-    this.quad([x0, y1, z0], [x1, y1, z0], [x1, y0, z0], [x0, y0, z0], [0, 0, -1], rgb);
-    this.quad([x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [x0, y0, z0], [-1, 0, 0], rgb);
-    this.quad([x1, y1, z0], [x1, y1, z1], [x1, y0, z1], [x1, y0, z0], [1, 0, 0], rgb);
-  }
-
-  geometry(): THREE.BufferGeometry {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, this.o), 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(this.nor.slice(0, this.o), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, this.o), 3));
-    const [x0, y0, z0] = this.lo, [x1, y1, z1] = this.hi;
-    g.boundingSphere = new THREE.Sphere(new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2);
-    return g;
-  }
-}
 
 const FACE_N: V3 = [0, 0, 1], EAST_N: V3 = [1, 0, 0], WEST_N: V3 = [-1, 0, 0];
 
@@ -186,7 +111,8 @@ export const cliffFamily: Family<CliffPlacement> = {
 
   extract({ a, events }: SemanticContext, claims: Claims): CliffPlacement {
     const out: CliffPlacement = { runs: [], sides: [], ledges: [] };
-    if (a.opts.indoor || a.opts.underground) return out;
+    // (a Dive map's rock is the seabed, under water that is not drawn either)
+    if (a.opts.indoor || a.opts.underground || a.opts.underwater) return out;
     const { idx, inside, kind, height } = a;
     const looks = new Map<number, CellLook>();
     const rocky = new Map<number, boolean>();
@@ -225,7 +151,7 @@ export const cliffFamily: Family<CliffPlacement> = {
     }
     const isGround = (c: RGB | null) =>
       !!c && ground.some((g) => Math.max(Math.abs(c[0] - g[0]), Math.abs(c[1] - g[1]), Math.abs(c[2] - g[2])) < 0.04);
-    const rockFace = (m: number) => rock(m) && !isGround(dom(m));
+    const rockFace = (m: number) => (a.isGeneralId(m) && rockIds(m)) || (rock(m) && !isGround(dom(m)));
     /** Most rows of column x from y to e have rock beside them (a mass, not a 1-wide strip). */
     const wide = (x: number, y: number, e: number) => {
       let n = 0;
@@ -408,18 +334,22 @@ export const cliffFamily: Family<CliffPlacement> = {
     // both functions of the world position, so neighbouring columns share their edges.
     const disp = (X: number, Y: number) =>
       Math.max(0, 0.09 + 0.07 * noise2(X * 1.7, Y * 1.7, 5) + 0.03 * jitter(Math.round(X * 16), Math.round(Y * 16)));
-    // Faces by column and wall line, to skip side wedges hidden by an equal or taller neighbour.
-    const faceTop = new Map<string, number>();
-    for (const r of p.runs) faceTop.set(`${r.x},${r.zf}`, r.topH);
-    const NX = 4;
+    // Faces by column and wall line, to skip side wedges hidden by a neighbour as tall and as deep.
+    const faces = new Map<string, CliffRun>();
+    for (const r of p.runs) faces.set(`${r.x},${r.zf}`, r);
+    const NX = 4, ROWS = 4;
     for (const r of p.runs) {
       const tint = toLinear(r.tint);
-      const H = r.topH - r.hB;
-      const ny = Math.max(2, Math.round(H * 4));
+      // Vertex rows on the world lattice (every 1/ROWS of height) plus the foot and the top, so
+      // walls side by side share their edge vertices whatever their feet and tops.
+      const ys = [r.hB];
+      for (let k = Math.floor(r.hB * ROWS + 1e-6) + 1; k / ROWS < r.topH - 1e-6; k++) if (k / ROWS > r.hB + 1e-6) ys.push(k / ROWS);
+      ys.push(r.topH);
+      const ny = ys.length - 1;
       // vertex grid (NX + 1) x (ny + 1), row-major from the foot up
       const grid: V3[] = [];
       for (let v = 0; v <= ny; v++) {
-        const Y = r.hB + (v / ny) * H;
+        const Y = ys[v];
         for (let u = 0; u <= NX; u++) {
           const X = r.x + u / NX;
           grid.push([X, Y, r.zf + (v === ny ? 0 : disp(X, Y))]);
@@ -427,15 +357,15 @@ export const cliffFamily: Family<CliffPlacement> = {
       }
       const P = (u: number, v: number) => grid[v * (NX + 1) + u];
       for (let v = 0; v < ny; v++) {
-        const cy = r.hB + ((v + 0.5) / ny) * H;
+        const cy = (ys[v] + ys[v + 1]) / 2;
         const k = base(cy - r.hB) * strata(r.x + 0.5, cy); // one band per row and column
         for (let u = 0; u < NX; u++) quads.quad(P(u, v + 1), P(u + 1, v + 1), P(u + 1, v), P(u, v), FACE_N, tint, k);
       }
       // Side wedges: from the face's (displaced) edge back along the 45° slant under the plateau,
       // closing the wall where the neighbouring column is lower.
       for (const side of [0, 1]) {
-        const nTop = faceTop.get(`${r.x + (side ? 1 : -1)},${r.zf}`);
-        if (nTop !== undefined && nTop >= r.topH - 0.01) continue;
+        const n = faces.get(`${r.x + (side ? 1 : -1)},${r.zf}`);
+        if (n && n.topH >= r.topH - 0.01 && n.hB <= r.hB + 0.01) continue;
         const X = r.x + side;
         for (let v = 0; v < ny; v++) {
           const f0 = P(side * NX, v), f1 = P(side * NX, v + 1);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { cliffFamily, isRocky, type CliffPlacement } from '../src/render/kit/cliffs';
+import { cliffFamily, isRocky, setRockIds, type CliffPlacement, type CliffRun } from '../src/render/kit/cliffs';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
 import { NO_EVENTS, type GridEvents } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
@@ -45,7 +45,8 @@ const ROCK = px(22, 14, 10), ROCK2 = px(16, 10, 8), ASH = px(21, 21, 17), LEAF =
  * trunk on ash (5), 's' sign post (6), 'v' ledge jumping south (7), 'T' a tree (8). `paint`
  * colours the tiles.
  */
-function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void = () => {}, indoor = false): MapAnalysis {
+function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void = () => {},
+  opts: { indoor?: boolean; underwater?: boolean; general?: boolean } = {}): MapAnalysis {
   const info = fakeInfo();
   const fill = (m: number, c: number, n = 256) => { info.both.fill(c, m * 256, m * 256 + n); info.bottom.fill(c, m * 256, m * 256 + n); };
   fill(2, ROCK);
@@ -61,7 +62,7 @@ function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void 
   const cells = new Uint16Array(w * h);
   rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch]; }));
   return analyze({ width: w, height: h, cells, border: [1, 1, 1, 1], borderW: 2, borderH: 2, borderPhase: 0 },
-    { info, generalPrimary: false, indoor, underground: false, underwater: false, margin: 0 });
+    { info, generalPrimary: opts.general ?? false, indoor: opts.indoor ?? false, underground: false, underwater: opts.underwater ?? false, margin: 0 });
 }
 
 const extract = (a: MapAnalysis, events: GridEvents = NO_EVENTS) => {
@@ -160,14 +161,78 @@ describe('cliff rules', () => {
   });
 
   it('does nothing indoors', () => {
-    const { p, claims } = extract(map(['PPPP', 'PPPP', '####', '####', '....'], () => {}, true));
+    const { p, claims } = extract(map(['PPPP', 'PPPP', '####', '####', '....'], () => {}, { indoor: true }));
     expect(p).toEqual({ runs: [], sides: [], ledges: [] });
     expect(claims.bits.every((b) => b === 0)).toBe(true);
+  });
+
+  it('does nothing on a Dive map (its rock is the seabed)', () => {
+    const rows = ['PPPP', 'PPPP', '####', '####', '....', '....'];
+    expect(extract(map(rows)).p.runs.length).toBe(4);
+    const { p, claims } = extract(map(rows, () => {}, { underwater: true }));
+    expect(p).toEqual({ runs: [], sides: [], ledges: [] });
+    expect(claims.bits.every((b) => b === 0)).toBe(true);
+  });
+
+  it('takes curated rock ids even in the colour of the ground', () => {
+    // the face tiles share the ash ground's colour: not rock by colour, rock by the General table
+    const ash = (info: ReturnType<typeof fakeInfo>) => {
+      for (const m of [1, 2]) { info.both.fill(ASH, m * 256, (m + 1) * 256); info.bottom.fill(ASH, m * 256, (m + 1) * 256); }
+    };
+    const rows = ['PPPP', 'PPPP', '####', '####', '....', '....'];
+    expect(extract(map(rows, ash, { general: true })).p.runs).toEqual([]);
+    setRockIds((m) => m === 2);
+    try {
+      expect(extract(map(rows, ash, { general: true })).p.runs.length).toBe(4);
+    } finally {
+      setRockIds(() => false);
+    }
   });
 });
 
 describe('cliff build', () => {
   const kit = () => ({ uniforms: createKitUniforms(), quality: 'medium' as const, disposables: [] as { dispose(): void }[] });
+  const build = (p: CliffPlacement) => cliffFamily.build(p, { a: map(['..']), events: NO_EVENTS, quality: 'medium' }, kit()) as THREE.Mesh;
+  const run = (x: number, hB: number, topH: number, lip: CliffRun['lip'] = null): CliffRun => ({ x, zf: 6, hB, topH, tint: [0.6, 0.5, 0.4], lip });
+
+  it('turns every triangle the way its normal says (no inward wedge tips, caps or lips)', () => {
+    const p: CliffPlacement = {
+      runs: [run(3, 0, 2, [0.4, 0.7, 0.4]), run(4, 0, 1), run(8, -0.3, 1)],
+      sides: [
+        { px: 6, dir: -1, zt: 4, zb: 5, y0: 0, y1: 2, tint: [0.6, 0.5, 0.4] },
+        { px: 7, dir: 1, zt: 4, zb: 5, y0: 0, y1: 2, tint: [0.6, 0.5, 0.4] },
+      ],
+      ledges: (['S', 'N', 'E', 'W'] as const).map((dir, k) => ({ x: 10 + 2 * k, y: 3, h: 0, dir, grass: [0.4, 0.7, 0.4] as [number, number, number] })),
+    };
+    const g = build(p).geometry;
+    const pos = g.getAttribute('position'), nor = g.getAttribute('normal');
+    const v = (k: number) => new THREE.Vector3().fromBufferAttribute(pos, k);
+    let checked = 0;
+    for (let t = 0; t < pos.count; t += 3) {
+      const geo = v(t + 1).sub(v(t)).cross(v(t + 2).sub(v(t)));
+      if (geo.length() < 1e-9) continue;
+      expect(geo.dot(new THREE.Vector3().fromBufferAttribute(nor, t))).toBeGreaterThan(0);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('gives side-by-side walls the same vertices along their shared edge, whatever their feet', () => {
+    // the same wall line and top; one stands in water (foot at the water level), one on the ground
+    const edge = (r: CliffRun) => {
+      const g = build({ runs: [r], sides: [], ledges: [] }).geometry;
+      const pos = g.getAttribute('position'), nor = g.getAttribute('normal');
+      const out = new Map<string, number>();
+      for (let k = 0; k < pos.count; k++) {
+        if (nor.getZ(k) !== 1 || Math.abs(pos.getX(k) - 4) > 1e-6 || pos.getY(k) < -1e-6) continue;
+        out.set(pos.getY(k).toFixed(4), pos.getZ(k));
+      }
+      return out;
+    };
+    const west = edge(run(3, -0.3, 2)), east = edge(run(4, 0, 2));
+    expect(east.size).toBeGreaterThan(4);
+    for (const [y, z] of east) expect(west.get(y)).toBe(z);
+  });
   it('builds walls that stand out from their line and meet the plateau at the top edge', () => {
     const p: CliffPlacement = { runs: [{ x: 3, zf: 6, hB: 0, topH: 2, tint: [0.6, 0.5, 0.4], lip: null }], sides: [], ledges: [] };
     const a = map(['..']);
