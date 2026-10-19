@@ -32,7 +32,7 @@ describe('shoreDistance', () => {
 const OVERHANG = 4, BOAT = 5, PLAIN = 6;
 const ROCK = { T: 0x150, U: 0x151, B: 0x158, N: 0x159 } as const;
 
-function sea(rows: string[]): MapAnalysis {
+function sea(rows: string[], underwater = false): MapAnalysis {
   const info = fakeInfo();
   info.attributes[3] = MB.OCEAN_WATER;
   info.attributes[OVERHANG] = MB.OCEAN_WATER; // layer 0: top layer drawn over the player
@@ -47,7 +47,7 @@ function sea(rows: string[]): MapAnalysis {
   for (const [k, m] of Object.entries(ROCK)) code[k] = m | 0x1400;
   rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch] ?? 1 | 0x3000; }));
   return analyze({ width: w, height: h, cells, border: [3, 3, 3, 3], borderW: 2, borderH: 2, borderPhase: 0 },
-    { info, generalPrimary: true, indoor: false, underground: false, underwater: false, margin: 0 });
+    { info, generalPrimary: true, indoor: false, underground: false, underwater, margin: 0 });
 }
 
 const ctx = (a: MapAnalysis) => ({ a, events: NO_EVENTS, quality: 'medium' as const });
@@ -91,6 +91,17 @@ describe('water extract', () => {
     const p = waterFamily.extract(ctx(a), claims);
     expect(p.rocks).toEqual([]);
     for (const [x, y] of [[1, 1], [1, 2], [2, 2]]) expect(claims.has(a.idx(x, y), CLAIM_SURFACE)).toBe(false);
+  });
+
+  it('draws no surface water on a Dive map (its water cells are the seabed, left to the legacy art)', () => {
+    const a = sea(['.wwww', '.wTUw', '.wBNw'], true);
+    const claims = new Claims(a.N);
+    const p = waterFamily.extract(ctx(a), claims);
+    expect(p.cells).toEqual([]);
+    expect(p.rocks).toEqual([]);
+    expect(claims.bits.every((b) => b === 0)).toBe(true);
+    const kit = { uniforms: createKitUniforms(), quality: 'medium' as const, disposables: [] as { dispose(): void }[] };
+    expect(waterFamily.build(p, ctx(a), kit)).toBeNull();
   });
 
   it('builds surface, seabed and rocks, and hands its texture to the kit', () => {

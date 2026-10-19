@@ -155,6 +155,9 @@ const BED_DEPTH = 0.25;
 const BED_PAD = 0.12;
 /** Rock size (half extents) and its offset south of the 2x2 block centre (matches the art). */
 const ROCK_R = 0.42, ROCK_H = 0.4, ROCK_DZ = 0.15;
+/** Fallback sRGB colours of the water and its rocks. */
+const WATER_TINT: RGB = [0.32, 0.42, 0.84];
+const ROCK_TINT: RGB = [0.6, 0.6, 0.62];
 
 /** Writes an upward-facing quad [x0,x1] x [z0,z1] at height h as two CCW triangles. */
 function upQuad(pos: Float32Array, o: number, x0: number, x1: number, z0: number, z1: number, h: number): number {
@@ -248,6 +251,9 @@ export const waterFamily: Family<WaterPlacement> = {
     const W = a.GW;
     const cells: WaterCell[] = [];
     const rocks: number[] = [];
+    // A Dive map is all underwater: its "water" cells are the seabed, so it has no surface to draw
+    // (they keep their legacy art).
+    if (a.opts.underwater) return { cells, dist: new Uint8Array(0), tint: WATER_TINT, rocks, rockTint: ROCK_TINT };
     // Sea rocks: found by their bottom-left metatile, centred on its north-east corner; their four
     // cells become water under the boulder. A rock is taken only if all four cells can be claimed
     // (water, no overhang, unclaimed); otherwise its cells follow the rules below like any other.
@@ -274,8 +280,8 @@ export const waterFamily: Family<WaterPlacement> = {
     }
     let common = -1, best = 0;
     for (let m = 0; m < counts.length; m++) if (counts[m] > best) { best = counts[m]; common = m; }
-    const tint = (common >= 0 ? dominantColor(a.info.bottom, [common]) : null) ?? [0.32, 0.42, 0.84];
-    let rockTint: RGB = [0.6, 0.6, 0.62];
+    const tint = (common >= 0 ? dominantColor(a.info.bottom, [common]) : null) ?? WATER_TINT;
+    let rockTint = ROCK_TINT;
     if (rocks.length) {
       const stone = (c: RGB) => c[2] < c[0] + 0.15 && luma(c) >= 0.45; // the lit stone, not water or shade
       rockTint = dominantColor(a.info.both, [...ROCK_BL, ...ROCK_BR], stone) ?? rockTint;
