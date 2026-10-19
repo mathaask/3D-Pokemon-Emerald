@@ -16,7 +16,7 @@ import { attrBehavior } from '../../game/rom/tileset';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { doorStructures } from './cliffs';
-import { luma, mix, soften, toLinear, type RGB } from './palette';
+import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';
 import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
 import type { Family, KitContext, SemanticContext } from './semantics';
@@ -82,17 +82,6 @@ function tileStats(px: Uint16Array, m: number): TileStats {
 
 /** Horizontal centre of a tile's leaf pixels (0..15; 7.5 = centred). */
 const leafCx = (s: TileStats) => (s[LEAF_N] ? s[LEAF_CX] / s[LEAF_N] : 7.5);
-
-const _hsl = { h: 0, s: 0, l: 0 }, _rgb = { r: 0, g: 0, b: 0 }, _c = new THREE.Color();
-/** Art direction for foliage: a little greener and softer than the tile's mean (yellow-greens
- *  move a fifth of the way towards leaf green; ash and jungle tones stay apart; saturation is
- *  capped because the post grade boosts it again). sRGB. */
-function lush(c: RGB): RGB {
-  _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
-  if (_hsl.h > 0.12 && _hsl.h < 0.45) _hsl.h += (0.34 - _hsl.h) * 0.2;
-  _c.setHSL(_hsl.h, Math.min(0.42, _hsl.s * 0.92), _hsl.l, THREE.SRGBColorSpace).getRGB(_rgb, THREE.SRGBColorSpace);
-  return [_rgb.r, _rgb.g, _rgb.b];
-}
 
 const LEAF_FALLBACK: RGB = [0.36, 0.62, 0.3];
 const BARK_FALLBACK: RGB = [0.45, 0.31, 0.22];

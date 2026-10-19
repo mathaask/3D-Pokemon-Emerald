@@ -9,6 +9,7 @@ import { attrBehavior, attrLayerType, LayerType } from '../../game/rom/tileset';
 import { DOOR_BEHAVIORS, K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
+import { bladeColor, GRASS_BEHAVIORS } from './grass';
 import { kitMaterial } from './materials';
 import type { Family, SemanticContext, KitContext } from './semantics';
 
@@ -65,6 +66,9 @@ export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>
     let tint = mat === GroundMat.Deck ? dominantColor(both, [m], ground) ?? dominantColor(both, [m], lit) ?? c : c;
     // Still water all over on land (puddles, hot springs, the sea behind an overhang): wet ground.
     if (land && isWater(tint)) tint = wetGround(tint);
+    // Under tall grass the ground is the grass's own colour (the blades' roots), not the bare
+    // ground the GBA shows between its drawn blades: a patch reads as one dense mass.
+    if (GRASS_BEHAVIORS.has(attrBehavior(attributes[m]))) tint = bladeColor(both, m);
     e = { mat, tint };
     cache.set(m, e);
   }

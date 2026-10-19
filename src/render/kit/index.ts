@@ -2,6 +2,8 @@
 // under every object the earlier families claimed).
 
 import { cliffFamily } from './cliffs';
+import { flowerFamily } from './flowers';
+import { grassFamily } from './grass';
 import type { Family } from './semantics';
 import { terrainFamily } from './terrain';
 import { treeFamily } from './trees';
@@ -10,6 +12,8 @@ import { waterFamily } from './water';
 export const FAMILIES: readonly Family<unknown>[] = [
   treeFamily,
   cliffFamily,
+  grassFamily,
+  flowerFamily,
   waterFamily,
   terrainFamily,
 ];

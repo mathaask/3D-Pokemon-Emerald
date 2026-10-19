@@ -53,6 +53,20 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
   u.uFadeRadius.value = 0.11 * h;
 }
 
+/**
+ * Feet (world space) of the characters that bend the grass: the MAX_ACTORS nearest `target` (the
+ * camera's focus) fill the slots, unused slots go far away.
+ */
+export function setKitActors(u: KitUniforms, feet: readonly { x: number; y: number; z: number }[], target: THREE.Vector3): void {
+  const d2 = (p: { x: number; y: number; z: number }) => (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2;
+  const near = [...feet].sort((p, q) => d2(p) - d2(q));
+  const slots = u.uActors.value;
+  for (let k = 0; k < slots.length; k++) {
+    if (k < near.length) slots[k].set(near[k].x, near[k].y, near[k].z);
+    else slots[k].set(1e4, 0, 1e4);
+  }
+}
+
 export type KitPattern = 'none' | 'roofTiles' | 'planks' | 'stone';
 
 export interface KitMaterialOptions {
@@ -68,7 +82,7 @@ export interface KitMaterialOptions {
   wind?: number;
   /** Height above the instance origin at which flex reaches 1. */
   windHeight?: number;
-  /** Bend away from actors (grass); needs `wind`. */
+  /** Part around actors, leaning in front of their legs as the camera sees them (grass, flowers); needs `wind`. */
   bend?: boolean;
   /** Dither out when between the camera and the player. */
   fade?: boolean;
@@ -125,12 +139,23 @@ vec4 mvPosition = vec4(transformed, 1.0);
   mvPosition.xz += uWind * gust * flex * uWindAmp;
   #ifdef KIT_BEND
   {
+    // Blades part around a character's feet: beside and behind it (as the camera sees it) they
+    // lean away; in front of it they lean in against the legs (never past them), so they hide the
+    // legs as the GBA's grass overlay sprite did.
     vec3 wp = (modelMatrix * mvPosition).xyz;
+    vec2 view = normalize(wp.xz - cameraPosition.xz + vec2(1e-4));
+    vec2 across = vec2(-view.y, view.x);
+    float pivot = sqrt(flex); // pressed blades turn about their roots
     for (int k = 0; k < ${MAX_ACTORS}; k++) {
       vec3 d = wp - uActors[k];
-      float push = (1.0 - smoothstep(0.2, 0.8, length(d.xz))) * (1.0 - step(1.6, abs(d.y)));
-      mvPosition.xz += normalize(d.xz + vec2(1e-4)) * push * flex * 0.32;
-      mvPosition.y -= push * flex * 0.14;
+      vec2 away = normalize(d.xz + vec2(1e-4));
+      float front = max(0.0, -dot(away, view));
+      float depth = max(0.0, -dot(d.xz, view)); // how far in front of the character
+      float near = (1.0 - step(1.6, abs(d.y))) * pivot;
+      float part = (1.0 - smoothstep(0.15, 0.75, length(d.xz))) * (1.0 - front) * near;
+      float lean = (1.0 - smoothstep(0.25, 0.6, abs(dot(d.xz, across)))) * (1.0 - smoothstep(0.6, 1.4, depth)) * front * near;
+      mvPosition.xz += away * (0.3 * part) + view * (min(depth * 0.9, 0.45) * lean);
+      mvPosition.y -= part * 0.1;
     }
   }
   #endif

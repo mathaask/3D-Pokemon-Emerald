@@ -1,6 +1,8 @@
 // Colour sampling from the live tiles, and the art-direction adjustments that make ROM colours
 // read well under physically based lighting. All colours are sRGB in 0..1 unless noted.
 
+import * as THREE from 'three';
+
 export type RGB = [number, number, number];
 
 export function bgr555ToSrgb(c: number): RGB {
@@ -76,6 +78,17 @@ export function soften(c: RGB, k = 0.12): RGB {
     const v = c[i] + (l - c[i]) * desat;
     return v * (1 - lift) + lift;
   }) as RGB;
+}
+
+const _hsl = { h: 0, s: 0, l: 0 }, _rgb = { r: 0, g: 0, b: 0 }, _c = new THREE.Color();
+/** Art direction for foliage: a little greener and softer than the tile's colour (yellow-greens
+ *  move a fifth of the way towards leaf green; ash and jungle tones stay apart; saturation is
+ *  capped at `maxSat` because the post grade boosts it again). sRGB. */
+export function lush(c: RGB, maxSat = 0.42): RGB {
+  _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
+  if (_hsl.h > 0.12 && _hsl.h < 0.45) _hsl.h += (0.34 - _hsl.h) * 0.2;
+  _c.setHSL(_hsl.h, Math.min(maxSat, _hsl.s * 0.92), _hsl.l, THREE.SRGBColorSpace).getRGB(_rgb, THREE.SRGBColorSpace);
+  return [_rgb.r, _rgb.g, _rgb.b];
 }
 
 /** Water is blue by more than this over red (and above green): see classifyGroundColor. */

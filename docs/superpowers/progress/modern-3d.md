@@ -63,6 +63,13 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   occlusion fade therefore takes its pixel size from `post.composer.renderTarget1`, not the drawing buffer; shot3d
   runs at DPR 1 and can't show the difference. `out/littleroot.state` is indoors (Brendan's house cutscene) —
   live fade checks use `out/r101.state` (e.g. `--keys "LEFT:1100,DOWN:700"` puts the player against a treeline).
+- Task 11: at the Classic camera (pitch ≈ 47°) a blade of height h standing d in front of a billboard hides it
+  only up to h − 1.07·d, so radially pushed grass bares the legs: KIT_BEND now parts blades beside/behind an
+  actor and leans the ones in front *in* towards the legs (uses `cameraPosition`; `--keys "LEFT:1800,DOWN:300"`
+  on `out/r101.state` stands the player inside a patch). Terrain under grass takes the blade colour (gaps read as
+  grass). Ash grass (MB.ASHGRASS, Route 113) is grass. Flowers need ≥ 2 small petal blobs outlined in foliage —
+  petal counts alone also take roof eaves, signs, paving edges and Fortree's speckled grass; on the regression
+  maps only General 0x004 (and Route 110's copy 0x206) are flowers.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

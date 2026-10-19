@@ -19,7 +19,7 @@ import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
-import { createKitUniforms, setKitFocus, type KitUniforms } from '../kit/materials';
+import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
 
 export interface CameraPreset {
   name: string;
@@ -249,6 +249,8 @@ export class OverworldView {
       if (!s.coordOffset || s.invisible) continue;
       const kind = this.classifier ? this.classifier.kind(s) : SpriteKind.Upright;
       if (kind === SpriteKind.Hidden) continue;
+      // Modern: 3D grass blades (kit/grass.ts) hide the legs and part around them.
+      if (kind === SpriteKind.Grass && this.worldStyle === 'modern') continue;
       const slot = this.spriteAtlas.slots.get(s.index);
       if (!slot) continue;
       const fx = s.worldX / 16;
@@ -459,7 +461,11 @@ export class OverworldView {
     this.cameraRight.set(Math.cos(yawFx), 0, -Math.sin(yawFx));
 
     this.updateLighting(state);
-    this.billboards.set(this.buildBillboards(state), this.cameraRight, this.charLight);
+    const specs = this.buildBillboards(state);
+    this.billboards.set(specs, this.cameraRight, this.charLight);
+    // The feet of the upright sprites (characters, objects) bend the kit's grass.
+    const feet = specs.filter((b) => !b.flat).map((b) => ({ x: b.footX, y: b.footY, z: b.footZ }));
+    setKitActors(this.kitUniforms, feet, this.target);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;
     this.weather.update(state.weather, indoorish, dt, this.target, this.cameraRight);
