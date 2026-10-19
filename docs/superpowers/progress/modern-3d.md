@@ -26,6 +26,12 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   flanked W+E by blocks become Stairs and a `'#'` row lifts the floor north of it to height 1 (see the header of
   `tests/legacyClaims.test.ts`). `disposeKit` disposes every material under the kit group (only geometries can opt
   out, via `userData.shared`); textures a family creates go in `kit.disposables`.
+- Task 6: terrain skips walkable *structure* cells (NON_ANIMATED_DOOR, LADDER, NO_RUNNING = Fortree treehouse
+  walkways/ladders, DOOR_BEHAVIORS, Acro Bike rails 0xd3–0xd6) — they stay legacy pixel art. `cellLook` ignores pixels with luma < 0.33
+  (outlines/shadows, e.g. Fortree bridge canopy, Route 119 long-grass edges) and takes Deck tints from the composite
+  layer (bridge planks are top-layer); SHALLOW_WATER → Sand. Terrain casts shadows (as legacy floors did). Until the
+  water family claims water, shore banks are drawn by both terrain and the legacy connectors (coplanar; no visible
+  z-fight in regress shots).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

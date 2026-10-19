@@ -2,5 +2,8 @@
 // under every object the earlier families claimed).
 
 import type { Family } from './semantics';
+import { terrainFamily } from './terrain';
 
-export const FAMILIES: readonly Family<unknown>[] = [];
+export const FAMILIES: readonly Family<unknown>[] = [
+  terrainFamily,
+];

@@ -11,6 +11,7 @@ describe('classifyGroundColor', () => {
     [[0.87, 0.81, 0.52], 'sand'],
     [[0.58, 0.55, 0.45], 'gravel'],
     [[0.68, 0.68, 0.55], 'gravel'],
+    [[0.74, 0.74, 0.61], 'paving'], // Lilycove's patterned plaza (lighter than Route 113 ash)
     [[0.74, 0.58, 0.55], 'dirt'],
     [[0.87, 0.71, 0.65], 'dirt'],
     [[0.32, 0.42, 0.84], 'water'],

@@ -89,7 +89,9 @@ export function classifyGroundColor(c: RGB): GroundClass {
   if (b > r + 0.2 && b > g + 0.05) return 'water';
   if (g > r + 0.15 && s > 0.25) return 'grass';
   if (r > 0.75 && g > 0.65 && b < g - 0.12) return 'sand';
-  if (Math.abs(r - g) < 0.06 && b < r - 0.08 && s < 0.2 && l < 0.75) return 'gravel';
+  // Beige-grey: ash / gravel up to luma 0.71 (Route 113 0.67, Sootopolis 0.70), lighter is a
+  // patterned plaza (Lilycove 0.73).
+  if (Math.abs(r - g) < 0.06 && b < r - 0.08 && s < 0.2 && l < 0.75) return l < 0.71 ? 'gravel' : 'paving';
   if (s < 0.12) return l >= 0.6 ? 'paving' : 'rock';
   if (g >= r - 0.02 && l > 0.6 && s <= 0.25) return 'path';
   if (r > b + 0.1 && r >= g - 0.02) return 'dirt';
