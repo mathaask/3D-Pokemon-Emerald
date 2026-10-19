@@ -41,7 +41,8 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - Task 6b: water pixels in a walkable cell's tile are never its ground — they are the sea beside a shore tile (0x1ae),
   the backdrop hidden under a NORMAL overhang (Slateport roof 0x290–0x293, Mossdeep rocket gantry) or under COVERED
   logs/planks/shallows. `cellLook` takes the dominant non-water colour when ≥ 1/4 of the layer, then a COVERED cell's
-  top layer, else `wetGround()` (greyed water, Sand). No terrain cell on any group-0 map is water-tinted any more.
+  top layer, else `wetGround()` (greyed water, Sand). No land terrain cell is water-tinted any more. Dive maps
+  (`ClassifyOptions.underwater`, map type 5; read only by the kit) are exempt: their seabed is drawn in water colours.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

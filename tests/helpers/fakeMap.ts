@@ -1,5 +1,5 @@
 // Tiny synthetic map for unit tests that need a MapAnalysis without the ROM.
-import { analyze, type MapAnalysis } from '../../src/render/overworld/analyze';
+import { analyze, type ClassifyOptions, type MapAnalysis } from '../../src/render/overworld/analyze';
 import type { TileInfo } from '../../src/render/overworld/tileInfo';
 import type { GridData } from '../../src/render/overworld/world';
 
@@ -19,7 +19,10 @@ export function fakeGrid(rows: string[]): GridData {
   return { width: w, height: h, cells, border: [1, 1, 1, 1], borderW: 2, borderH: 2, borderPhase: 0 };
 }
 
-export function fakeAnalysis(rows: string[]): MapAnalysis {
+/** An outdoor map by default; `opts` overrides the map-type flags. */
+export function fakeAnalysis(rows: string[], opts: Partial<Omit<ClassifyOptions, 'info'>> = {}): MapAnalysis {
   const info = fakeInfo();
-  return analyze(fakeGrid(rows), { info, generalPrimary: false, indoor: false, underground: false, margin: 1 });
+  return analyze(fakeGrid(rows), {
+    info, generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 1, ...opts,
+  });
 }

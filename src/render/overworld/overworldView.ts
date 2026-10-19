@@ -196,6 +196,7 @@ export class OverworldView {
       generalPrimary: primaryTileset === SYM.gTileset_General,
       indoor: this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
+      underwater: this.mapType === MAP_TYPE_UNDERWATER,
     }, { style: this.worldStyle, events, quality: this.quality });
     this.haveWorld = true;
   }

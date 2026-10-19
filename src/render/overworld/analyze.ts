@@ -17,6 +17,8 @@ export interface ClassifyOptions {
   generalPrimary: boolean;
   indoor: boolean;
   underground: boolean;
+  /** Dive map (map type 5). Read only by the kit: its seabed is drawn in water colours. */
+  underwater: boolean;
   margin: number;
 }
 

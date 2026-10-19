@@ -78,11 +78,16 @@ export function soften(c: RGB, k = 0.12): RGB {
   }) as RGB;
 }
 
+/** Water is blue by more than this over red (and above green): see classifyGroundColor. */
+const WATER_BLUE_OVER_RED = 0.2;
+
 /** A water colour on walkable ground (a puddle, a hot spring, the sea behind an overhang's art):
- *  greyed at the same lightness so it reads as wet sand or mud, not open water. */
+ *  greyed at the same lightness so it reads as wet sand or mud, not open water. Greyed 70 %, or
+ *  more for a deep pure blue, so blue always ends below the water margin over red. */
 export function wetGround(c: RGB): RGB {
   const l = luma(c);
-  return mix(c, [l, l, l], 0.7);
+  const t = Math.max(0.7, 1 - (WATER_BLUE_OVER_RED - 0.02) / Math.max(c[2] - c[0], 1e-6));
+  return mix(c, [l, l, l], t);
 }
 
 export type GroundClass = 'grass' | 'path' | 'sand' | 'paving' | 'dirt' | 'gravel' | 'rock' | 'water' | 'dark';
@@ -93,7 +98,7 @@ export function classifyGroundColor(c: RGB): GroundClass {
   const l = luma(c);
   const s = saturation(c);
   if (l < 0.12) return 'dark';
-  if (b > r + 0.2 && b > g + 0.05) return 'water';
+  if (b > r + WATER_BLUE_OVER_RED && b > g + 0.05) return 'water';
   if (g > r + 0.15 && s > 0.25) return 'grass';
   if (r > 0.75 && g > 0.65 && b < g - 0.12) return 'sand';
   // Beige-grey: ash / gravel up to luma 0.71 (Route 113 0.67, Sootopolis 0.70), lighter is a

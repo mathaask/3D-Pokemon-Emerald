@@ -118,6 +118,16 @@ describe('cellLook', () => {
     expect(s.tint).toEqual(wetGround(bgr555ToSrgb(SEA)));
     for (const t of [p.tint, s.tint]) expect(classifyGroundColor(t)).not.toBe('water');
   });
+  it('on a Dive map the seabed keeps its own water colours', () => {
+    // Underwater Route 124's seabed is drawn indigo: that is its identity (spec §4.4), not water.
+    const a = fakeAnalysis(['...'], { underwater: true });
+    const INDIGO = px(14, 9, 25);
+    paint(a.info.bottom, 5, [[INDIGO, 150], [px(12, 16, 12), 106]]);
+    paint(a.info.both, 5, [[INDIGO, 150], [px(12, 16, 12), 106]]);
+    const look = cellLook(a, 5, new Map());
+    expect(look.mat).toBe(GroundMat.Sand);
+    expect(look.tint).toEqual(bgr555ToSrgb(INDIGO));
+  });
 });
 
 describe('terrain extract', () => {
@@ -145,7 +155,7 @@ describe('terrain extract', () => {
     info.attributes[6] = MB.HORIZONTAL_RAIL; // Acro Bike rail over water (rail on the top layer)
     const grid = fakeGrid(['......', '......']);
     for (let x = 1; x <= 4; x++) grid.cells[x] = (x + 2) | 0x3000;
-    const a = analyze(grid, { info, generalPrimary: false, indoor: false, underground: false, margin: 1 });
+    const a = analyze(grid, { info, generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 1 });
     const claims = new Claims(a.N);
     const p = terrainFamily.extract({ a, events: NO_EVENTS, quality: 'medium' }, claims);
     const covered = new Set(p.cells.map((c) => c.i));

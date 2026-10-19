@@ -17,7 +17,7 @@ describe('shoreDistance', () => {
     const cells = new Uint16Array(w * h);
     rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = ch === 'w' ? 3 | 0x1000 : 1 | 0x3000; }));
     const a = analyze({ width: w, height: h, cells, border: [3, 3, 3, 3], borderW: 2, borderH: 2, borderPhase: 0 },
-      { info, generalPrimary: false, indoor: false, underground: false, margin: 0 });
+      { info, generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 0 });
     const d = shoreDistance(a);
     expect(d[a.idx(0, 1)]).toBe(0);
     expect(d[a.idx(1, 1)]).toBe(1);
@@ -47,7 +47,7 @@ function sea(rows: string[]): MapAnalysis {
   for (const [k, m] of Object.entries(ROCK)) code[k] = m | 0x1400;
   rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch] ?? 1 | 0x3000; }));
   return analyze({ width: w, height: h, cells, border: [3, 3, 3, 3], borderW: 2, borderH: 2, borderPhase: 0 },
-    { info, generalPrimary: true, indoor: false, underground: false, margin: 0 });
+    { info, generalPrimary: true, indoor: false, underground: false, underwater: false, margin: 0 });
 }
 
 const ctx = (a: MapAnalysis) => ({ a, events: NO_EVENTS, quality: 'medium' as const });

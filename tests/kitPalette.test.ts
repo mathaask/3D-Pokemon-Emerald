@@ -46,8 +46,8 @@ describe('dominantColor', () => {
 
 describe('wetGround', () => {
   it('greys water colours into wet ground that no longer reads as water', () => {
-    // the sea, a puddle, Lavaridge's hot spring
-    const waters: RGB[] = [[0.32, 0.42, 0.84], [0.45, 0.74, 0.97], [0.55, 0.81, 0.97]];
+    // the sea, a puddle, Lavaridge's hot spring, and a deep pure blue that 70 % greying leaves blue
+    const waters: RGB[] = [[0.32, 0.42, 0.84], [0.45, 0.74, 0.97], [0.55, 0.81, 0.97], [0.1, 0.2, 0.9]];
     for (const c of waters) {
       const w = wetGround(c);
       expect(classifyGroundColor(w)).not.toBe('water');

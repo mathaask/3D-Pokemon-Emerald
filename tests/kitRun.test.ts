@@ -79,7 +79,7 @@ describe('semantic core', () => {
     const u = createKitUniforms();
     const mats = createWorldMaterials(atlas.target.texture, u);
     const world = new World(atlas, mats, u, [claimer('box', 5, CLAIM_OBJECT)]);
-    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false };
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
     const ctxB = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
     world.build(fakeGrid(['....', '.#..', '....']), opts, ctxB);
     world.build(fakeGrid(['....', '.#..', '....']), opts, ctxB);

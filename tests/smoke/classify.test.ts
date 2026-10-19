@@ -25,7 +25,7 @@ it('classify-live', async () => {
   const info = analyzeMetatiles(gba.bus, atlas.entries, atlas.attributes, charBase, gba.bus.ewram16.subarray(palOff, palOff + 256));
   const border = [0, 1, 2, 3].map((i) => st.mem.u16(st.layout!.border + i * 2));
   const model = classify({ width: st.backupWidth, height: st.backupHeight, cells: st.readBackupGrid(), border, borderW: 2, borderH: 2, borderPhase: 1 },
-    { info, generalPrimary: st.layout!.primaryTileset === SYM.gTileset_General, indoor: false, underground: false, margin: 2 });
+    { info, generalPrimary: st.layout!.primaryTileset === SYM.gTileset_General, indoor: false, underground: false, underwater: false, margin: 2 });
   const grid = st.readBackupGrid();
   const hex: string[] = [];
   for (let y = 0; y < st.backupHeight; y++) {

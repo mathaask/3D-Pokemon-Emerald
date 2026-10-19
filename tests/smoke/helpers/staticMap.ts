@@ -63,6 +63,7 @@ export function loadStaticMap(group: number, num: number): StaticMap {
       generalPrimary: map.layout.primaryTileset === SYM.gTileset_General,
       indoor: map.mapType === 8 || map.mapType === 9,
       underground: map.mapType === 4,
+      underwater: map.mapType === 5,
     },
   };
 }

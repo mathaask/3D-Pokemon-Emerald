@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
+import { attrBehavior, attrLayerType, LayerType } from '../../game/rom/tileset';
 import { DOOR_BEHAVIORS, K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
@@ -37,32 +38,33 @@ export interface CellLook { mat: GroundMat; tint: RGB }
 /** Outlines and shadows are never the ground's own colour. */
 const lit = (c: RGB) => luma(c) >= 0.33;
 const isWater = (c: RGB) => classifyGroundColor(c) === 'water';
-/** Nor is water: terrain cells are walkable, so water in their tiles is the sea beside a shore
- *  tile, or a backdrop that an overhang's or a covered top layer's art hides. */
+/** Nor is water, on land: terrain cells are walkable, so water in their tiles is the sea beside a
+ *  shore tile, or a backdrop that an overhang's or a covered top layer's art hides. A Dive map's
+ *  seabed is drawn in water colours, though: there they are the ground's own. */
 const isGround = (c: RGB) => lit(c) && !isWater(c);
 /** A layer shows ground when a quarter of it is ground-coloured: a grass fringe on a puddle tile
  *  or a rock tip in the sea does not make the cell dry land. */
 const MIN_GROUND_PX = 64;
-const groundColor = (px: Uint16Array, m: number) =>
-  countPixels(px, [m], isGround) >= MIN_GROUND_PX ? dominantColor(px, [m], isGround) : null;
+const groundColor = (px: Uint16Array, m: number, accept: (c: RGB) => boolean) =>
+  countPixels(px, [m], accept) >= MIN_GROUND_PX ? dominantColor(px, [m], accept) : null;
 const anyColor = (px: Uint16Array, m: number) => dominantColor(px, [m], lit) ?? dominantColor(px, [m]);
-/** Layer type whose top layer is drawn under objects, i.e. on the floor (tileset.ts LayerType). */
-const LAYER_COVERED = 1;
 
 /** Material + dominant (sRGB) colour of a metatile's ground layer, cached per metatile. */
 export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>): CellLook {
   let e = cache.get(m);
   if (!e) {
     const { bottom, both, attributes } = a.info;
+    const land = !a.opts.underwater;
+    const ground = land ? isGround : lit;
     // The bottom layer is the ground (a NORMAL cell's top layer is an overhang drawn above it).
-    // Where that is water, a COVERED cell's top layer (drawn on the floor too) may hold it.
-    let c = groundColor(bottom, m) ?? anyColor(bottom, m) ?? anyColor(both, m) ?? [0.45, 0.7, 0.5];
-    if (isWater(c) && attributes[m] >> 12 === LAYER_COVERED) c = groundColor(both, m) ?? c;
-    const mat = groundMaterial(attributes[m] & 0xff, c);
+    // Where that is water on land, a COVERED cell's top layer (drawn on the floor too) may hold it.
+    let c = groundColor(bottom, m, ground) ?? anyColor(bottom, m) ?? anyColor(both, m) ?? [0.45, 0.7, 0.5];
+    if (land && isWater(c) && attrLayerType(attributes[m]) === LayerType.COVERED) c = groundColor(both, m, ground) ?? c;
+    const mat = groundMaterial(attrBehavior(attributes[m]), c);
     // Bridges and walkways draw their planks on the top layer (over water or canopy).
-    let tint = mat === GroundMat.Deck ? dominantColor(both, [m], isGround) ?? dominantColor(both, [m], lit) ?? c : c;
-    // Still water all over (puddles, hot springs, the sea behind an overhang): wet ground.
-    if (isWater(tint)) tint = wetGround(tint);
+    let tint = mat === GroundMat.Deck ? dominantColor(both, [m], ground) ?? dominantColor(both, [m], lit) ?? c : c;
+    // Still water all over on land (puddles, hot springs, the sea behind an overhang): wet ground.
+    if (land && isWater(tint)) tint = wetGround(tint);
     e = { mat, tint };
     cache.set(m, e);
   }
