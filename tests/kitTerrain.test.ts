@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import { MB } from '../src/game/behaviors';
 import { cellLook, groundMaterial, GroundMat, terrainFamily } from '../src/render/kit/terrain';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
+import { createKitUniforms } from '../src/render/kit/materials';
 import { analyze, K } from '../src/render/overworld/analyze';
 import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
 
@@ -81,5 +83,39 @@ describe('terrain extract', () => {
     }
     expect(covered.has(a.idx(0, 0))).toBe(true);
     expect(covered.has(a.idx(5, 0))).toBe(true);
+  });
+});
+
+describe('terrain build', () => {
+  it('emits one top per cell plus banks, every triangle facing its normal', () => {
+    const a = fakeAnalysis(['.....', '.###.', '.....']);
+    const claims = new Claims(a.N);
+    // Ground under claimed objects at assorted heights (row 0 is at 1, row 2 at 0): banks rising
+    // and falling in both directions.
+    [1.5, 0.25, 0.75].forEach((h, k) => {
+      claims.claim(a.idx(k + 1, 1), CLAIM_OBJECT);
+      claims.groundY[a.idx(k + 1, 1)] = h;
+    });
+    const ctx = { a, events: NO_EVENTS, quality: 'medium' as const };
+    const p = terrainFamily.extract(ctx, claims);
+    const kit = { uniforms: createKitUniforms(), quality: 'medium' as const, disposables: [] as { dispose(): void }[] };
+    const mesh = terrainFamily.build(p, ctx, kit) as THREE.Mesh;
+    expect(kit.disposables).toHaveLength(1);
+    const pos = mesh.geometry.getAttribute('position');
+    const nor = mesh.geometry.getAttribute('normal');
+    const quads = pos.count / 6;
+    expect(quads).toBeGreaterThan(p.cells.length);
+    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), n = new THREE.Vector3();
+    const kinds = new Set<string>();
+    for (let t = 0; t < pos.count; t += 3) {
+      va.fromBufferAttribute(pos, t);
+      vb.fromBufferAttribute(pos, t + 1).sub(va);
+      vc.fromBufferAttribute(pos, t + 2).sub(va);
+      n.fromBufferAttribute(nor, t);
+      expect(vb.cross(vc).dot(n)).toBeGreaterThan(0);
+      kinds.add(n.toArray().map((v) => Math.sign(Math.round(v * 10))).join(','));
+    }
+    // tops, both S-bank orientations and both E-bank orientations
+    for (const k of ['0,1,0', '0,0,1', '0,1,-1', '1,0,0', '-1,0,0']) expect(kinds.has(k)).toBe(true);
   });
 });

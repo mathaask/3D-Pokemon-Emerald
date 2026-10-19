@@ -8,7 +8,6 @@ import { MB } from '../../game/behaviors';
 import { DOOR_BEHAVIORS, K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { classifyGroundColor, dominantColor, luma, scale, type GroundClass, type RGB } from './palette';
-import { MeshBuilder, type V3 } from './geom';
 import { kitMaterial } from './materials';
 import type { Family, SemanticContext, KitContext } from './semantics';
 
@@ -57,6 +56,10 @@ export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>
 const isStructure = (beh: number) =>
   beh === MB.NON_ANIMATED_DOOR || beh === MB.LADDER || beh === MB.NO_RUNNING || DOOR_BEHAVIORS.has(beh) ||
   (beh >= MB.ISOLATED_VERTICAL_RAIL && beh <= MB.HORIZONTAL_RAIL);
+
+/** Triangle corner orders of a quad a-b-c-d (as MeshBuilder.quad: flipped when (b-a)x(d-a) opposes the normal). */
+const UNFLIPPED = [0, 1, 2, 0, 2, 3];
+const FLIPPED = [0, 2, 1, 0, 3, 2];
 
 export interface TerrainCell { i: number; h: number; mat: GroundMat; tint: RGB }
 export interface TerrainPlacement { cells: TerrainCell[] }
@@ -117,10 +120,17 @@ const FRAG_COLOR = /* glsl */ `
   vec2 t = g - 0.5;
   vec3 tint = kitSrgbToLinear(texture(tCells, (floor(t) + 0.5 + smoothstep(0.3, 0.7, fract(t))) / uGridSize).rgb);
   vec3 col = kitGround(mat, tint, cell);
-  vec3 fn = normalize(cross(dFdx(vKitWorld), dFdy(vKitWorld)));
-  float steep = 1.0 - smoothstep(0.55, 0.85, abs(fn.y));
-  // Banks: earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
-  vec3 earth = (mat == 3 || mat == 6 || mat == 7) ? tint * 0.68 : mix(tint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
+  // Banks (45° S slopes, vertical E faces: |n.y| <= 0.71) are all soil; tops (n.y = 1) none.
+  vec3 nW = inverseTransformDirection(vNormal, viewMatrix);
+  float steep = 1.0 - smoothstep(0.75, 0.95, abs(nW.y));
+  // A bank's soil is that of the cell owning it, the higher side: bank normals point at the lower
+  // cell, so step half a cell against them (unwarped, so it holds steady along the bank).
+  vec2 own = cell - nW.xz / max(length(nW.xz), 1e-4) * 0.5;
+  vec4 od = texelFetch(tCells, clamp(ivec2(floor(own - uGridMin)), ivec2(0), ivec2(uGridSize) - 1), 0);
+  int omat = int(od.a * 255.0 + 0.5) >> 4;
+  vec3 otint = kitSrgbToLinear(od.rgb);
+  // Earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
+  vec3 earth = (omat == 3 || omat == 6 || omat == 7) ? otint * 0.68 : mix(otint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
   vec3 soil = earth * (0.85 + 0.3 * kitFbm2(vec2(vKitWorld.x + vKitWorld.z, vKitWorld.y) * 3.0));
   diffuseColor.rgb *= mix(col, soil, steep);
 }
@@ -160,29 +170,34 @@ export const terrainFamily: Family<TerrainPlacement> = {
 
   build(p: TerrainPlacement, { a }: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!p.cells.length) return null;
+    // Grid index i = row * W + col (see analyze.ts idx); loops below use that layout directly.
+    const W = a.GW, H = a.GH;
     // Per-cell data: rgb = sRGB tint, a = material << 4. Uncovered texels are dilated from
     // their neighbours so bilinear tint blending never pulls in black.
-    const data = new Uint8Array(a.GW * a.GH * 4);
+    const data = new Uint8Array(W * H * 4);
     const has = new Uint8Array(a.N);
     const surfH = new Float32Array(a.N).fill(NaN);
     for (const c of p.cells) {
-      data.set([c.tint[0] * 255, c.tint[1] * 255, c.tint[2] * 255, (c.mat << 4) | 8], c.i * 4);
+      const o = c.i * 4;
+      data[o] = c.tint[0] * 255;
+      data[o + 1] = c.tint[1] * 255;
+      data[o + 2] = c.tint[2] * 255;
+      data[o + 3] = (c.mat << 4) | 8;
       has[c.i] = 1;
       surfH[c.i] = c.h;
     }
+    const next = new Uint8Array(a.N);
     for (let pass = 0; pass < 3; pass++) {
-      const next = has.slice();
+      next.set(has);
       for (let i = 0; i < a.N; i++) {
         if (has[i]) continue;
-        const x = a.cellX(i), y = a.cellY(i);
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          if (!a.inside(x + dx, y + dy)) continue;
-          const j = a.idx(x + dx, y + dy);
-          if (!has[j]) continue;
-          data.copyWithin(i * 4, j * 4, j * 4 + 4);
-          next[i] = 1;
-          break;
-        }
+        const col = i % W, row = (i - col) / W;
+        // first covered neighbour in the order +x, -x, +y, -y
+        const j = col + 1 < W && has[i + 1] ? i + 1 : col > 0 && has[i - 1] ? i - 1
+          : row + 1 < H && has[i + W] ? i + W : row > 0 && has[i - W] ? i - W : -1;
+        if (j < 0) continue;
+        for (let k = 0; k < 4; k++) data[i * 4 + k] = data[j * 4 + k];
+        next[i] = 1;
       }
       has.set(next);
     }
@@ -198,36 +213,65 @@ export const terrainFamily: Family<TerrainPlacement> = {
     const covered = new Uint8Array(a.N);
     for (const c of p.cells) covered[c.i] = 1;
 
-    const mb = new MeshBuilder();
-    const white: RGB = [1, 1, 1];
-    for (const c of p.cells) {
-      const x = a.cellX(c.i), y = a.cellY(c.i), h = c.h;
-      mb.quad([x, h, y + h], [x + 1, h, y + h], [x + 1, h, y + 1 + h], [x, h, y + 1 + h], [0, 1, 0], white);
-    }
     // Banks: same geometry as the legacy connectors, for every S/E pair touching the terrain.
+    // Packed as (x, y, hi, lo, kind) with kind 0/1 = S bank falling south/north, 2/3 = E bank
+    // falling east/west.
+    const banks: number[] = [];
     for (let i = 0; i < a.N; i++) {
-      const x = a.cellX(i), y = a.cellY(i);
       const h = surfH[i];
       if (Number.isNaN(h)) continue;
-      if (a.inside(x, y + 1)) {
-        const j = a.idx(x, y + 1);
+      const col = i % W, row = (i - col) / W;
+      const x = col + a.minX, y = row + a.minY;
+      for (let e = 0; e < 2; e++) {
+        if (e === 0 ? row + 1 >= H : col + 1 >= W) continue;
+        const j = e === 0 ? i + W : i + 1;
         const h2 = surfH[j];
-        if ((covered[i] || covered[j]) && !Number.isNaN(h2) && Math.abs(h - h2) > 0.01) {
-          const hi = Math.max(h, h2), lo = Math.min(h, h2);
-          const n: V3 = h > h2 ? [0, 0, 1] : [0, 0.7, -0.7];
-          mb.quad([x, hi, y + 1 + hi], [x + 1, hi, y + 1 + hi], [x + 1, lo, y + 1 + lo], [x, lo, y + 1 + lo], n, white);
-        }
-      }
-      if (a.inside(x + 1, y)) {
-        const j = a.idx(x + 1, y);
-        const h2 = surfH[j];
-        if ((covered[i] || covered[j]) && !Number.isNaN(h2) && Math.abs(h - h2) > 0.01) {
-          const hi = Math.max(h, h2), lo = Math.min(h, h2);
-          const px = x + 1;
-          mb.quad([px, hi, y + hi], [px, hi, y + 1 + hi], [px, lo, y + 1 + lo], [px, lo, y + lo], [h > h2 ? 1 : -1, 0, 0], white);
-        }
+        if (!(covered[i] || covered[j]) || Number.isNaN(h2) || Math.abs(h - h2) <= 0.01) continue;
+        banks.push(x, y, Math.max(h, h2), Math.min(h, h2), e * 2 + (h > h2 ? 0 : 1));
       }
     }
+
+    // Non-indexed triangles: position + normal only (the material uses no vertex colours or UVs).
+    const quads = p.cells.length + banks.length / 5;
+    const pos = new Float32Array(quads * 18);
+    const nor = new Float32Array(quads * 18);
+    const q = new Float64Array(12); // corners a, b, c, d (a = TL, b = TR, c = BR, d = BL)
+    let o = 0;
+    /** Emits quad q as two triangles wound to face normal n (`flip` per its corner order). */
+    const emit = (flip: boolean, nx: number, ny: number, nz: number) => {
+      for (const k of flip ? FLIPPED : UNFLIPPED) {
+        pos[o] = q[k * 3]; pos[o + 1] = q[k * 3 + 1]; pos[o + 2] = q[k * 3 + 2];
+        nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz;
+        o += 3;
+      }
+    };
+    const corners = (ax: number, ay: number, az: number, bx: number, by: number, bz: number,
+      cx: number, cy: number, cz: number, dx: number, dy: number, dz: number) => {
+      q[0] = ax; q[1] = ay; q[2] = az; q[3] = bx; q[4] = by; q[5] = bz;
+      q[6] = cx; q[7] = cy; q[8] = cz; q[9] = dx; q[10] = dy; q[11] = dz;
+    };
+    for (const c of p.cells) {
+      const x = a.cellX(c.i), y = a.cellY(c.i), h = c.h;
+      corners(x, h, y + h, x + 1, h, y + h, x + 1, h, y + 1 + h, x, h, y + 1 + h);
+      emit(true, 0, 1, 0);
+    }
+    for (let b = 0; b < banks.length; b += 5) {
+      const x = banks[b], y = banks[b + 1], hi = banks[b + 2], lo = banks[b + 3], kind = banks[b + 4];
+      if (kind < 2) {
+        corners(x, hi, y + 1 + hi, x + 1, hi, y + 1 + hi, x + 1, lo, y + 1 + lo, x, lo, y + 1 + lo);
+        if (kind === 0) emit(true, 0, 0, 1);
+        else emit(false, 0, 0.7, -0.7);
+      } else {
+        const px = x + 1;
+        corners(px, hi, y + hi, px, hi, y + 1 + hi, px, lo, y + 1 + lo, px, lo, y + lo);
+        emit(kind === 3, kind === 2 ? 1 : -1, 0, 0);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.computeBoundingSphere();
+
     const km = kitMaterial(kit.uniforms, {
       roughness: 0.95,
       uniforms: {
@@ -239,7 +283,7 @@ export const terrainFamily: Family<TerrainPlacement> = {
       fragColor: FRAG_COLOR,
       hookKey: 'terrain',
     });
-    const mesh = new THREE.Mesh(mb.build(), km.material);
+    const mesh = new THREE.Mesh(geo, km.material);
     mesh.receiveShadow = true;
     mesh.castShadow = true; // terraces shade the ground below them, as the legacy floors did
     return mesh;
