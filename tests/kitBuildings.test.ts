@@ -6,7 +6,10 @@ import { MeshBuilder } from '../src/render/kit/geom';
 import { treeFamily } from '../src/render/kit/trees';
 import { analyze, type MapAnalysis } from '../src/render/overworld/analyze';
 import { Claims, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
+import { emitLegacy } from '../src/render/overworld/legacyQuads';
 import { createKitUniforms } from '../src/render/kit/materials';
+import { disposeKit } from '../src/render/kit/semantics';
+import { pokeballTexture } from '../src/render/kit/text';
 import type { GridEvents } from '../src/render/kit/events';
 import { MB } from '../src/game/behaviors';
 import { fakeInfo } from './helpers/fakeMap';
@@ -211,11 +214,21 @@ describe('building footprints', () => {
     expect(box(run(a, ev([[2, 3, 'OldaleTown_House1']])).out[0])).toEqual([1, 3, 1, 3]);
   });
 
-  it('takes the walls, roof edge and overhang of its footprint', () => {
+  it('takes the walls and overhang of its footprint; the legacy art draws the roof edge above', () => {
     const a = map(['......', '..R...', '.RRRR.', '.WWWW.', '.WDWW.', '......']);
-    const { out, claims } = run(a, ev([[2, 4, 'OldaleTown_House1']]));
+    const events = ev([[2, 4, 'OldaleTown_House1']]);
+    const { out, claims } = run(a, events);
     expect(box(out[0])).toEqual([1, 4, 2, 4]);
-    expect(claims.has(a.idx(2, 1), CLAIM_OBJECT)).toBe(true); // the roof's lone edge cell above
+    // The roof's lone edge cell on the row above is the building's (no stray block other families
+    // could take), but the model never reaches that row: unclaimed, the legacy art stands there
+    // as a block, so the cell the game blocks never shows as open ground.
+    const edge = a.idx(2, 1);
+    expect(buildingLayout(a, events).owner[edge]).toBe(1);
+    expect(buildingLayout(a, events).stray[edge]).toBe(0);
+    expect(claims.has(edge, CLAIM_OBJECT)).toBe(false);
+    const legacy = emitLegacy(a, claims).quads;
+    expect(legacy.some((q) => q.metatile === T.roof && q.a[0] === 2 && q.normal[2] === 1 && q.a[2] === 2)).toBe(true);
+    for (let y = 2; y <= 4; y++) for (let x = 1; x <= 4; x++) expect(claims.has(a.idx(x, y), CLAIM_OBJECT)).toBe(true);
     for (let y = 2; y <= 4; y++) for (let x = 1; x <= 4; x++) expect(claims.groundY[a.idx(x, y)]).toBe(0);
     expect(claims.has(a.idx(0, 2), CLAIM_TOP)).toBe(false);
     // a walled-in walkable cell inside is under the model, on the ground before the door
@@ -317,6 +330,125 @@ describe('building build', () => {
       const bb = new THREE.Box3().setFromObject(buildingFamily.build(out, ctx, kitCtx())!);
       expect(bb.min.z).toBeGreaterThanOrEqual(out[0].top + out[0].base);
     }
+  });
+});
+
+describe('building details', () => {
+  /** Builds the map's buildings (door warps given) and returns the root, placements and kit. */
+  const build = (rows: string[], warps: [number, number, string][]) => {
+    const a = map(rows);
+    const ctx = { a, events: ev(warps), quality: 'medium' as const };
+    const out = buildingFamily.extract(ctx, new Claims(a.N));
+    const kit = kitCtx();
+    const root = buildingFamily.build(out, ctx, kit)!;
+    root.updateMatrixWorld(true);
+    return { a, out, kit, root };
+  };
+  const named = (root: THREE.Object3D, prefix: string) => {
+    const found: THREE.Mesh[] = [];
+    root.traverse((o) => { if (o.name.startsWith(prefix)) found.push(o as THREE.Mesh); });
+    return found;
+  };
+  const bounds = (o: THREE.Object3D) => new THREE.Box3().setFromObject(o);
+  const mapOf = (m: THREE.Mesh) => (m.material as THREE.MeshStandardMaterial).map;
+  const SMALL = ['......', '.RRRR.', '.WWWW.', '.WDWW.', '......'];
+
+  it('gives a Pokémon Center its sign above the door and a Poké Ball emblem on the roof', () => {
+    // zf = 4, main body z 2..4 (zm = 3), eave 2.02
+    const { root, kit } = build(SMALL, [[2, 3, 'OldaleTown_PokemonCenter_1F']]);
+    const [sign] = named(root, 'sign:POKéMON CENTER');
+    const s = bounds(sign);
+    expect(s.min.z).toBeGreaterThan(4); // on the front wall, not buried in it...
+    expect(s.max.z).toBeLessThan(4.1); // ...nor floating before it
+    expect(s.min.x).toBeGreaterThanOrEqual(1);
+    expect(s.max.x).toBeLessThanOrEqual(5);
+    expect(s.min.y).toBeGreaterThan(1.4); // above the door
+    expect(s.max.y).toBeLessThan(2.02); // below the eave
+    const [emblem] = named(root, 'emblem');
+    expect(mapOf(emblem)).toBe(pokeballTexture());
+    const e = bounds(emblem);
+    expect(e.min.y).toBeGreaterThan(2.02); // on the roof, on its front slope, at the middle
+    expect(e.min.z).toBeGreaterThan(3);
+    expect(e.max.z).toBeLessThan(4.25);
+    expect((e.min.x + e.max.x) / 2).toBeCloseTo(3, 5);
+    // the signage textures are cached for the session: shared by every build, never disposed with it
+    const again = build(SMALL, [[2, 3, 'OldaleTown_PokemonCenter_1F']]);
+    expect(mapOf(named(again.root, 'sign:')[0])).toBe(mapOf(sign));
+    let disposed = false;
+    mapOf(sign)!.addEventListener('dispose', () => { disposed = true; });
+    expect(kit.disposables).not.toContain(mapOf(sign));
+    disposeKit(root, kit);
+    expect(disposed).toBe(false);
+  });
+
+  it("gives a Mart its sign and a striped awning over the front, above the shoppers' heads", () => {
+    const { root } = build(SMALL, [[2, 3, 'OldaleTown_Mart']]);
+    expect(named(root, 'sign:POKé MART')).toHaveLength(1);
+    expect(named(root, 'emblem')).toHaveLength(0);
+    // falling onto the cell before the wall, past the eave (z 4.25): the awning, high up
+    const colors = new Set<string>();
+    for (const x of [1.2, 1.45, 1.7, 1.95, 3.5, 4.5]) {
+      root.updateMatrixWorld(true);
+      const hit = new THREE.Raycaster(new THREE.Vector3(x, 5, 4.32), new THREE.Vector3(0, -1, 0)).intersectObject(root, true)[0];
+      expect(hit.point.y).toBeGreaterThan(1.3);
+      expect(hit.point.y).toBeLessThan(1.9);
+      const c = (hit.object as THREE.Mesh).geometry.getAttribute('color');
+      colors.add([c.getX(hit.face!.a), c.getY(hit.face!.a), c.getZ(hit.face!.a)].map((v) => v.toFixed(2)).join());
+    }
+    expect(colors.size).toBe(2); // two-colour stripes
+    expect(hitsBelow(root, 1.5, 4.5, 1.3)).toBe(false); // nothing of it over the front cell below head height
+  });
+
+  it("gives a gym pillars by the door and its sign, on the door's bay between the walkable front steps", () => {
+    const rows = ['..........', '.RRRRRR...', '.WWWWWW...', '.sWWDWs...', '..........'];
+    const { root } = build(rows, [[4, 3, 'PetalburgCity_Gym']]);
+    // the bay x 2..6 stands out to z = 4, the main body's front over the steps is z = 3
+    const s = bounds(named(root, 'sign:POKéMON GYM')[0]);
+    expect(s.min.x).toBeGreaterThanOrEqual(2);
+    expect(s.max.x).toBeLessThanOrEqual(6);
+    expect(s.min.z).toBeGreaterThan(4);
+    expect(s.max.z).toBeLessThan(4.1);
+    // a pillar on each side of the door, standing out of the bay's wall
+    for (const x of [3.8, 5.2]) {
+      const z = firstWallZ(root, x, 0.8);
+      expect(z).toBeGreaterThan(4.1);
+      expect(z).toBeLessThan(4.4);
+    }
+    expect(hitsBelow(root, 1.5, 3.5, 1.6)).toBe(false); // the steps stay clear
+    // the bay's walls beside the door are bare (no windows behind the pillars); the wings keep theirs
+    expect(firstWallZ(root, 2.5, 1.0)).toBeCloseTo(4, 3);
+    expect(firstWallZ(root, 6.5, 1.0) - 3).toBeGreaterThan(0.05);
+  });
+
+  it("puts vents and a dish on a lab's roof", () => {
+    const rows = ['.........', '.RRRRRRR.', '.RRRRRRR.', '.WWWWWWW.', '.WWWWDWW.', '.........'];
+    const lab = bounds(build(rows, [[5, 4, 'LittlerootTown_ProfessorBirchsLab']]).root);
+    const plain = bounds(build(rows, [[5, 4, 'LilycoveCity_ContestLobby']]).root); // the same massing
+    expect(lab.max.y).toBeGreaterThan(plain.max.y + 0.3);
+  });
+
+  it("dresses a special building's front walls in its ROM facade, upscaled, on each front's own plane", () => {
+    const rows = ['..........', '.RRRRRR...', '.WWWWWW...', '.sWWDWs...', '..........'];
+    const { root, kit, out } = build(rows, [[4, 3, 'BattleFrontier_Lounge2']]);
+    expect(out[0].kind).toBe('special');
+    const [facade] = named(root, 'facade');
+    const tex = mapOf(facade) as THREE.DataTexture;
+    expect([tex.image.width, tex.image.height]).toEqual([6 * 16 * 4, 2 * 16 * 4]);
+    expect(kit.disposables).toContain(tex);
+    // the wall art's colours, and its transparent pixels filled with the wall colour (opaque)
+    const px = new Uint8Array(tex.image.data!.buffer);
+    for (let i = 3; i < px.length; i += 4) expect(px[i]).toBe(255);
+    // the front over the steps stands one row back (z = 3), the bay's at the door row's edge (z = 4)
+    for (const [x, z] of [[1.5, 3], [2.5, 4], [4.5, 4], [6.5, 3]]) {
+      const hit = new THREE.Raycaster(new THREE.Vector3(x, 1, 50), new THREE.Vector3(0, 0, -1)).intersectObject(facade)[0];
+      expect(hit.point.z - z).toBeGreaterThan(0);
+      expect(hit.point.z - z).toBeLessThan(0.05);
+      expect(hit.uv!.x).toBeCloseTo((x - 1) / 6, 5); // the column's own pixels
+    }
+    let disposed = false;
+    tex.addEventListener('dispose', () => { disposed = true; });
+    disposeKit(root, kit);
+    expect(disposed).toBe(true);
   });
 });
 

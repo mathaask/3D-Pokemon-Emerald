@@ -79,6 +79,14 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   pale blues as house windows (glass is judged against the wall colour). Fortree's treehouse side posts run 1–2 rows
   past the door row: `doorStructures` now keeps such short posts. At margin 14 Lilycove's Department Store tiles
   read as water (blue blocks beside the map-edge sea): no building there.
+- Task 13: specials whose doors are NON_ANIMATED_DOOR warps on walkable cells (Slateport Oceanic Museum, Stern's
+  Shipyard, Fan Club, Harbor; Mauville Game Corner; Lilycove Museum; Devon Corp) get no footprint — `buildingLayout`
+  seeds only blocked doors — so they stay legacy art and get no facade (part of the Oceanic Museum is even K.Tree).
+  At the Classic pitch the 0.25 roof overhang hides the top ≈ 0.27 of a wall: signs hang just above the door, and
+  PC/Mart/gym walls are 0.3 taller. Signs are `CanvasTexture`s cached per session; a page's first canvas text costs
+  2–7 ms in the app (≈ 80 ms on a blank page: font init). Lone roof-edge cells (27 on all maps) are owned but left
+  unclaimed: legacy draws them as standing faces behind the roof (several are no roof: Lavaridge's cliff foot,
+  Sootopolis' ledge end).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

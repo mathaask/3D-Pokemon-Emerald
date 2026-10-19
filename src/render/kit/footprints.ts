@@ -34,9 +34,10 @@ export interface Footprint {
 
 export interface BuildingLayout {
   footprints: Footprint[];
-  /** Cells under a footprint's model: the blocked art inside it, the walkable cells walled in by
-   *  that art (no way in), and the lone roof-edge cells on the row above it. Footprint index + 1,
-   *  0 = none. */
+  /** Cells of a footprint's building: the blocked art inside it and the walkable cells walled in
+   *  by that art (no way in), both under its model, and the lone roof-edge cells on the row above
+   *  it (no other family's, but the model never reaches them: the legacy art draws them).
+   *  Footprint index + 1, 0 = none. */
   owner: Int16Array;
   /** Cells of a modelled building region (one with an owned cell) outside every footprint: art the
    *  door flood fill swallowed that is not a building (a forest, rock, hedges, fences, lamp posts,
