@@ -87,6 +87,14 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   2–7 ms in the app (≈ 80 ms on a blank page: font init). Lone roof-edge cells (27 on all maps) are owned but left
   unclaimed: legacy draws them as standing faces behind the roof (several are no roof: Lavaridge's cliff foot,
   Sootopolis' ledge end).
+- Task 13b: walk-in doors are NON_ANIMATED_DOOR warps on walkable cells; ≈ 60 on outdoor maps, mostly cave mouths
+  (General 0x0a7), forests and Fortree's treehouses (their front cell is a NO_RUNNING walkway). A walk-in door cell's
+  analysis height can sit below the street (Game Corner 0 vs 2, Lilycove Harbor 0 vs 4): the building claims its
+  surface and lays a threshold. The Lilycove Museum's door is behind a walkable landing (front one row lower). The
+  Dept Store's water reading is the blue-block→water pass cascading row by row from the border sea; that cascade is
+  load-bearing (≈ 28k cells on Dive maps), so it stays. Buildings draw non-rectangular corners with the ground's own
+  8×8 tiles in any quarter (the Slateport tent's bottom = grass 0x001's top half). Stern's Shipyard's back row is an
+  elevation-1 pier the height solver lifts to 4 (top of the building's face): it floats behind the 3D roof.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

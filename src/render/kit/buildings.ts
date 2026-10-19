@@ -5,10 +5,10 @@
 
 import * as THREE from 'three';
 import { K, type MapAnalysis } from '../overworld/analyze';
-import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
+import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { bgr555ToSrgb, luma, mix, saturation, scale, soften, toLinear, type RGB } from './palette';
 import { MeshBuilder, type V3 } from './geom';
-import { buildingKind, buildingLayout, type BuildingKind } from './footprints';
+import { buildingKind, buildingLayout, TERRAIN, type BuildingKind } from './footprints';
 import { kitMaterial } from './materials';
 import type { Family, KitContext, SemanticContext } from './semantics';
 import { pokeballTexture, signTexture, SIGN_ASPECT } from './text';
@@ -27,9 +27,13 @@ export interface BuildingPlacement {
   wall: RGB;
   windows: number[];
   chimneyX: number | null;
-  /** Columns whose door-row cell is the building's walkable front steps: the walls stand one row
-   *  back over them (the door's bay stays at the front). */
+  /** Columns whose bottom-row cell is walkable (the building's front steps, a walk-in door). */
   steps: number[];
+  /** Per column from x0: how many rows its front stands back from the bottom row's front edge (1
+   *  over the front steps or a walk-in door, 2 over a walk-in door behind its landing). */
+  recess: number[];
+  /** Columns of a walk-in door: its cell, before the wall in its recess, is the player's to step on. */
+  walkIn: number[];
   /** `special`: the wall rows' ROM pixels (BGR555, 0x8000 transparent), row-major from the top. */
   facade: { w: number; h: number; px: Uint16Array } | null;
 }
@@ -115,18 +119,67 @@ function roofColor(tc: TileColors, mts: readonly number[]): RGB | null {
   return n?.c ?? null;
 }
 
-function facadePixels(a: MapAnalysis, x0: number, x1: number, y0: number, y1: number) {
-  const w = (x1 - x0 + 1) * 16, h = (y1 - y0 + 1) * 16;
+/**
+ * A special building's facade: the ROM pixels (both layers) of each column's `rows` wall rows up
+ * to its own front's row `bots[k]` (a front two rows back shows the art above its landing), with
+ * the ground showing at its edges cleared (see clearGround) against the `grounds` metatiles.
+ */
+function facadePixels(a: MapAnalysis, x0: number, bots: number[], rows: number, grounds: Iterable<number>): { w: number; h: number; px: Uint16Array } {
+  const w = bots.length * 16, h = rows * 16;
   const px = new Uint16Array(w * h);
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const m = a.mt[a.idx(x, y)];
+  const under = new Uint8Array(w * h);
+  const { both, bottom } = a.info;
+  bots.forEach((bot, k) => {
+    for (let r = 0; r < rows; r++) {
+      const m = a.mt[a.idx(x0 + k, bot - rows + 1 + r)];
       for (let p = 0; p < 256; p++) {
-        px[((y - y0) * 16 + (p >> 4)) * w + (x - x0) * 16 + (p & 15)] = a.info.both[m * 256 + p];
+        const o = (r * 16 + (p >> 4)) * w + k * 16 + (p & 15), v = both[m * 256 + p];
+        px[o] = v;
+        under[o] = !(v & 0x8000) && v === bottom[m * 256 + p] ? 1 : 0;
       }
     }
+  });
+  // the grounds' colours at each position of an 8x8 tile (the GBA builds metatiles from 8x8 tiles:
+  // a building's corner reuses the ground's tiles, in any quarter)
+  const at = Array.from({ length: 64 }, () => new Set<number>());
+  for (const g of grounds) {
+    for (let p = 0; p < 256; p++) if (!(both[g * 256 + p] & 0x8000)) at[((p >> 4) & 7) * 8 + (p & 7)].add(both[g * 256 + p]);
   }
+  clearGround(px, under, w, h, (x, y, v) => at[(y & 7) * 8 + (x & 7)].has(v));
   return { w, h, px };
+}
+
+/**
+ * Clears the ground a facade's art shows: the GBA draws a building that is no rectangle (a round
+ * tent, the Contest Hall's bevelled corners) over the ground, which shows in its tiles' bottom
+ * layer where the top layer is transparent. A pixel is ground when its bottom layer shows (`under`)
+ * and it has the ground's colour at that very position (`ground`: the GBA draws the corner with the
+ * ground's own 8x8 tiles, so a real wall colour that happens to match elsewhere is no ground), and
+ * it is reached from the facade's sides or bottom through ground pixels. Ground pixels become
+ * transparent (the wall colour fills them).
+ */
+export function clearGround(px: Uint16Array, under: Uint8Array, w: number, h: number, ground: (x: number, y: number, v: number) => boolean): void {
+  const is = (o: number) => under[o] === 1 && !(px[o] & 0x8000) && ground(o % w, (o / w) | 0, px[o]);
+  const stack: number[] = [];
+  const push = (o: number) => { if (is(o)) { px[o] = 0x8000; stack.push(o); } };
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  for (let x = 0; x < w; x++) push((h - 1) * w + x);
+  while (stack.length) {
+    const o = stack.pop()!, x = o % w;
+    if (x > 0) push(o - 1);
+    if (x < w - 1) push(o + 1);
+    if (o >= w) push(o - w);
+    if (o + w < w * h) push(o + w);
+  }
+}
+
+/** The map's ground tiles: plain floor (no overhang drawn over it) repeated across the map, as
+ *  terrain art is (grass, paths, sand). Not a building's own walkable tiles (its front steps, a
+ *  walk-in door, the stairs before it: drawn once), whose outlines a wall may share. */
+function mapGrounds(a: MapAnalysis): number[] {
+  const count = new Map<number, number>();
+  for (let i = 0; i < a.N; i++) if (a.kind[i] === K.Floor && !a.hasTop(i)) count.set(a.mt[i], (count.get(a.mt[i]) ?? 0) + 1);
+  return [...count].filter(([, n]) => n >= TERRAIN).map(([m]) => m);
 }
 
 // ---------------------------------------------------------------- family
@@ -139,6 +192,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
     if (a.opts.indoor || a.opts.underground || a.opts.underwater) return [];
     const { footprints, owner } = buildingLayout(a, events);
     const tc = new TileColors(a.info.both);
+    let grounds: number[] | null = null;
     const out: BuildingPlacement[] = [];
     footprints.forEach((fp, k) => {
       const { x0, x1, top, bottom, doorX } = fp;
@@ -146,7 +200,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       for (let y = top; y <= bottom; y++) for (let x = x0; x <= x1; x++) if (mine(x, y) && claims.has(a.idx(x, y), CLAIM_OBJECT)) return;
       const rows = bottom - top + 1;
       const wallRows = rows >= 9 ? 4 : rows >= 7 ? 3 : 2;
-      const { base, steps } = fp;
+      const { base, steps, recess, walkIn } = fp;
       const kind = buildingKind(fp.dest, x1 - x0 + 1);
       const roofMts: number[] = [], wallMts: number[] = [];
       for (let y = top; y <= bottom; y++) {
@@ -175,6 +229,10 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       // reaches that row, and some of them are no roof at all (a cliff's foot, a ledge's end).
       const below = a.inside(doorX, bottom + 1) ? a.idx(doorX, bottom + 1) : -1;
       const ground = below >= 0 && a.kind[below] === K.Floor ? a.mt[below] : -1;
+      // A walk-in door's cell stays the player's (walkable, nothing of the model on it), but its
+      // floor is the building's threshold at the building's level: the game may draw the doorway
+      // at a lower level than the street before it (the Game Corner's sits two below it).
+      for (const x of walkIn) claims.claim(a.idx(x, fp.doorY), CLAIM_SURFACE);
       for (let y = top - 1; y <= bottom; y++) {
         for (let x = x0; x <= x1; x++) {
           if (!a.inside(x, y)) continue;
@@ -190,8 +248,8 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       }
       out.push({
         kind, x0, x1, top, bottom, base, wallRows, doorX,
-        roof: soften(roof), wall: soften(wall), windows, chimneyX, steps,
-        facade: kind === 'special' ? facadePixels(a, x0, x1, bottom - wallRows + 1, bottom) : null,
+        roof: soften(roof), wall: soften(wall), windows, chimneyX, steps, recess, walkIn,
+        facade: kind === 'special' ? facadePixels(a, x0, recess.map((r) => bottom - Math.max(0, r - 1)), wallRows, (grounds ??= mapGrounds(a))) : null,
       });
     });
     return out;
@@ -223,7 +281,7 @@ export interface BuildingParts { body: MeshBuilder; roof: MeshBuilder; glass: Me
 export interface BuildingFrame {
   X0: number; X1: number; cx: number;
   zf: number;      // front at the door (the door row's front edge)
-  zr: number;      // front of the main body: zf, or one row back over walkable front steps
+  zr: number;      // front of the main body: zf, or as far back as its fronts stand (front steps, walk-in doors)
   zb: number; zm: number; // back and middle of the main body
   y0: number;      // top of the plinth (wall bottom)
   eave: number;    // wall top
@@ -234,9 +292,10 @@ export interface BuildingFrame {
 export function buildFrame(p: BuildingPlacement): BuildingFrame {
   const W = p.x1 - p.x0 + 1;
   const zf = p.bottom + 1 + p.base;
-  // the walls start behind the top row (the GBA draws the roof's back slope there), at least 1.6 deep
-  const zb = zf - Math.min(4, Math.max(1.6, p.bottom - p.top));
-  const zr = p.steps.length ? zf - 1 : zf;
+  const zr = zf - Math.max(0, ...p.recess);
+  // the walls start behind the top row (the GBA draws the roof's back slope there), at least 1.6
+  // deep (the main body at least 0.6 behind the deepest recess: never behind the top row's back)
+  const zb = Math.min(zf - Math.min(4, Math.max(1.6, p.bottom - p.top)), zr - 0.6);
   const y0 = p.base + 0.12;
   // Pokémon Centers, Marts and gyms stand a little taller: their signs hang between the door and
   // the eave, below the band the roof's overhang hides from the camera
@@ -297,34 +356,40 @@ function buildBuilding(p: BuildingPlacement, parts: BuildingParts, kit: KitConte
     addBox(body, cx, f.y0 + 0.15, cz, w + 0.03, 0.3, d + 0.03, scale(wall, 0.72));
     for (const x of [x0, x1]) addBox(body, x, f.y0 + H / 2, zf, 0.12, H, 0.12, trim);
   };
-  // the main body (one row back over walkable front steps), its back corner posts
+  // the main body (as far back as the fronts over the walkable front steps or a walk-in door
+  // stand), its back corner posts
   block(f.X0, f.X1, f.zb, f.zr);
   for (const x of [f.X0, f.X1]) addBox(body, x, f.y0 + H / 2, f.zb, 0.12, H, 0.12, trim);
-  // the bays between the steps, out to the door row's front edge, under flat caps
-  const steps = new Set(p.steps);
-  for (let x = p.x0; x <= p.x1 && f.zr < f.zf; x++) {
-    if (steps.has(x)) continue;
-    let e = x;
-    while (e + 1 <= p.x1 && !steps.has(e + 1)) e++;
-    block(x, e + 1, f.zr, f.zf);
-    addBox(parts.roof, (x + e + 1) / 2, f.eave + 0.04, (f.zr + f.zf + f.ov) / 2, e + 1 - x + 0.2, 0.1, f.zf - f.zr + f.ov, roof);
-    x = e;
+  // the bays standing out of it (each run of columns out to its own front), under flat caps
+  for (let x = p.x0; x <= p.x1;) {
+    const [a, b] = frontRun(p, x), z = frontZ(p, f, x);
+    if (z > f.zr) {
+      block(a, b, f.zr, z);
+      addBox(parts.roof, (a + b) / 2, f.eave + 0.04, (f.zr + z + f.ov) / 2, b - a + 0.2, 0.1, z - f.zr + f.ov, roof);
+    }
+    x = b;
   }
-  // step in front of the door
-  addBox(body, p.doorX + 0.5, p.base + 0.04, f.zf + 0.22, 1.1, 0.08, 0.36, stone);
+  if (p.walkIn.length) {
+    // a walk-in door: the threshold on its cell, in the recess before the wall
+    const a = p.walkIn[0], b = p.walkIn[p.walkIn.length - 1] + 1, z = frontZ(p, f, a);
+    addBox(body, (a + b) / 2, p.base - 0.04, z + 0.5, b - a, 0.08, 1, stone);
+  } else {
+    // step in front of the door
+    addBox(body, p.doorX + 0.5, p.base + 0.04, f.zf + 0.22, 1.1, 0.08, 0.36, stone);
+  }
   if (p.kind === 'special') {
     addSpecialFacade(p, f, parts, kit);
   } else {
     // Pokémon Centers, Marts and gyms: wide glass sliding doors, windows kept below the sign
     const store = isStore(p.kind);
-    const dx = p.doorX + 0.5;
+    const dx = p.doorX + 0.5, dz = frontZ(p, f, p.doorX);
     if (store) {
-      addBox(body, dx, f.y0 + OPENING_TOP / 2, f.zf + 0.03, 1.08, OPENING_TOP, 0.08, trim);
-      addBox(glass, dx, f.y0 + 0.6, f.zf + 0.075, 0.94, 1.16, 0.03, glassC);
-      addBox(body, dx, f.y0 + 0.6, f.zf + 0.095, 0.035, 1.16, 0.02, trim);
+      addBox(body, dx, f.y0 + OPENING_TOP / 2, dz + 0.03, 1.08, OPENING_TOP, 0.08, trim);
+      addBox(glass, dx, f.y0 + 0.6, dz + 0.075, 0.94, 1.16, 0.03, glassC);
+      addBox(body, dx, f.y0 + 0.6, dz + 0.095, 0.035, 1.16, 0.02, trim);
     } else {
-      addBox(body, dx, f.y0 + 0.68, f.zf + 0.03, 0.86, 1.36, 0.08, trim);
-      addBox(body, dx, f.y0 + 0.62, f.zf + 0.07, 0.68, 1.22, 0.05, wood);
+      addBox(body, dx, f.y0 + 0.68, dz + 0.03, 0.86, 1.36, 0.08, trim);
+      addBox(body, dx, f.y0 + 0.62, dz + 0.07, 0.68, 1.22, 0.05, wood);
     }
     // windows (a gym's door bay holds its pillars instead)
     const [ba, bb] = frontRun(p, p.doorX);
@@ -369,18 +434,19 @@ const WHITE = toLinear([0.95, 0.95, 0.93]);
 /** The sign boards' backing, in the canvas frame's colour (text.ts SIGN_FRAME). */
 const SIGN_BACK = toLinear([0x1d / 255, 0x1d / 255, 0x22 / 255]);
 
-/** Front of column x: the door row's front edge, or one row back over walkable front steps. */
+/** Front of column x: the bottom row's front edge, or as many rows back as it is recessed (over
+ *  walkable front steps, a walk-in door). */
 function frontZ(p: BuildingPlacement, f: BuildingFrame, x: number): number {
-  return p.steps.includes(x) ? f.zr : f.zf;
+  return f.zf - p.recess[x - p.x0];
 }
 
 /** Columns [a, b) around x whose fronts stand in one plane: the door's bay between the walkable
- *  front steps, a wing over them, or the whole front. */
+ *  front steps, a wing over them, a walk-in door's recess, or the whole front. */
 function frontRun(p: BuildingPlacement, x: number): [number, number] {
-  const step = p.steps.includes(x);
+  const r = p.recess[x - p.x0];
   let a = x, b = x + 1;
-  while (a > p.x0 && p.steps.includes(a - 1) === step) a--;
-  while (b <= p.x1 && p.steps.includes(b) === step) b++;
+  while (a > p.x0 && p.recess[a - 1 - p.x0] === r) a--;
+  while (b <= p.x1 && p.recess[b - p.x0] === r) b++;
   return [a, b];
 }
 
