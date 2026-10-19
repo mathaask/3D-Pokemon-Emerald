@@ -9,6 +9,9 @@ import * as THREE from 'three';
 import type { MetatileAtlas } from './metatileAtlas';
 import type { Quality } from '../post';
 import type { GridEvents } from '../kit/events';
+import type { KitUniforms } from '../kit/materials';
+import { runKit, disposeKit, type Family, type KitContext, type FamilyReport } from '../kit/semantics';
+import { FAMILIES } from '../kit/index';
 import { analyze, queries } from './analyze';
 import { emitLegacy } from './legacyQuads';
 import type { Claims } from './claims';
@@ -75,13 +78,23 @@ export class World {
   treeCards: TreeCards | null = null;
   /** Extra ring of border cells rendered around the grid. */
   readonly margin = 14;
+  private kit: KitContext;
+  private kitGroup: THREE.Group | null = null;
+  /** Per-family outcome of the last build (empty when the kit did not run). */
+  kitReport: FamilyReport[] = [];
 
   private base = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0x5a9a6a, roughness: 1 }),
   );
 
-  constructor(private atlas: MetatileAtlas, private materials: WorldMaterials) {
+  constructor(
+    private atlas: MetatileAtlas,
+    private materials: WorldMaterials,
+    uniforms: KitUniforms,
+    private families: readonly Family<unknown>[] = FAMILIES,
+  ) {
+    this.kit = { uniforms, quality: 'medium', disposables: [] };
     this.base.receiveShadow = true;
     this.group.add(this.base);
   }
@@ -97,13 +110,28 @@ export class World {
       this.treeCards.dispose();
       this.treeCards = null;
     }
+    if (this.kitGroup) { disposeKit(this.kitGroup, this.kit); this.kitGroup = null; }
   }
 
   build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
     this.dispose();
     const a = analyze(grid, { ...opts, margin: this.margin });
-    const claims: Claims | null = null; // filled by the kit (Task 5)
-    void ctx;
+    let claims: Claims | null = null;
+    this.kitReport = [];
+    if (ctx.style === 'modern' && !opts.indoor && !opts.underground && this.families.length) {
+      try {
+        this.kit.quality = ctx.quality;
+        const r = runKit({ a, events: ctx.events, quality: ctx.quality }, this.families, this.kit);
+        claims = r.claims;
+        this.kitReport = r.report;
+        this.kitGroup = r.group;
+        this.group.add(r.group);
+      } catch (e) {
+        console.warn('[kit] semantic layer failed; this map uses Retro 3D', e);
+        claims = null;
+        if (this.kitGroup) { disposeKit(this.kitGroup, this.kit); this.kitGroup = null; }
+      }
+    }
     const model: CellModel = { ...queries(a), ...emitLegacy(a, claims) };
     this.atlas.setGroundRefs(model.groundRefs);
     this.model = model;

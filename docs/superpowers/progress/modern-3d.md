@@ -22,6 +22,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   `<project_vertex>` wholesale, so `USE_BATCHING` (BatchedMesh) is unsupported. It also replaces `<worldpos_vertex>`
   so shadows/env use the swayed pose; the hook GLSL is hashed into the program key (`hookKey` optional); a depth twin
   exists for `wind` or `vertTransform`. Kit materials must not be `clone()`d (onBeforeCompile/key are not copied).
+- Task 5: `tests/helpers/fakeMap.ts` `fakeAnalysis(rows)` (no ROM) has a *blocked* border ring, so passable cells
+  flanked W+E by blocks become Stairs and a `'#'` row lifts the floor north of it to height 1 (see the header of
+  `tests/legacyClaims.test.ts`). `disposeKit` disposes every material under the kit group (only geometries can opt
+  out, via `userData.shared`); textures a family creates go in `kit.disposables`.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

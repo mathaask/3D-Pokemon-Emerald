@@ -18,7 +18,8 @@ import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
-import { createWorldMaterials, type WorldUniforms } from './materials';
+import { createWorldMaterials } from './materials';
+import { createKitUniforms, type KitUniforms } from '../kit/materials';
 
 export interface CameraPreset {
   name: string;
@@ -52,7 +53,7 @@ export class OverworldView {
   private lantern = new THREE.PointLight(0xffd9a0, 0, 10, 1.6);
   private sky: Sky;
   readonly weather = new Weather();
-  private worldUniforms: WorldUniforms = { uNight: { value: 0 }, uTime: { value: 0 } };
+  readonly kitUniforms: KitUniforms = createKitUniforms();
   private opaqueMat: THREE.MeshStandardMaterial;
   private cutoutMat: THREE.MeshStandardMaterial;
 
@@ -87,10 +88,10 @@ export class OverworldView {
 
   constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
-    const mats = createWorldMaterials(this.atlas.target.texture, this.worldUniforms);
+    const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
-    this.world = new World(this.atlas, mats);
+    this.world = new World(this.atlas, mats, this.kitUniforms);
     this.billboards = new Billboards(spriteAtlas);
     this.scene.add(this.world.group);
     this.scene.add(this.billboards.mesh);
@@ -355,7 +356,7 @@ export class OverworldView {
 
     // Window glow: fades in after sunset, out after sunrise (outdoors only).
     const nightK = indoor || underground ? 0 : THREE.MathUtils.clamp(Math.max((tod - 18.3) / 1.5, (6.2 - tod) / 1.2), 0, 1);
-    this.worldUniforms.uNight.value = nightK;
+    this.kitUniforms.uNight.value = nightK;
     // Lightning flashes brighten everything for a moment.
     const flash = this.weather.flash;
     if (flash > 0) {
@@ -407,7 +408,7 @@ export class OverworldView {
   /** Per displayed frame: camera smoothing, billboards, lights. */
   update(state: GameState, dt: number, input: { yaw: number; pitch: number; zoom: number }): void {
     this.time += dt;
-    this.worldUniforms.uTime.value = this.time;
+    this.kitUniforms.uTime.value = this.time;
     if (!this.haveWorld) return;
     this.yaw += input.yaw;
     this.pitchOffset = THREE.MathUtils.clamp(this.pitchOffset + input.pitch, -0.5, 0.5);
