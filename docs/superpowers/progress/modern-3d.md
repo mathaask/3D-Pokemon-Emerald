@@ -32,7 +32,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
-- [ ] 5 semantic core · [ ] 6 terrain · [ ] 7 water · [ ] 8 cliffs · [ ] 9 trees · [ ] 10 fade
+- [x] 5 semantic core · [ ] 6 terrain · [ ] 7 water · [ ] 8 cliffs · [ ] 9 trees · [ ] 10 fade
 - [ ] 11 grass/flowers · [ ] 12 buildings I · [ ] 13 buildings II · [ ] 14 table/props
 - [ ] 15 smoke/coverage · [ ] 16 polish/perf · [ ] 17 live check/docs
 
