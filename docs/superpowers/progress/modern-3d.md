@@ -15,12 +15,14 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - Task 2: `tests/smoke/golden.test.ts` pins legacy `classify()` output (hash per regression map). Regress PNGs
   are not byte-stable everywhere: littleroot reproduces exactly, slateport's water (right side, ~2–5 % px) differs
   between two runs of the same code — compare such maps by eye + stats, not bytes.
+- Task 3: `OverworldView.quality` comes from `Renderer.quality` *after* the `?quality=` URL override (same value
+  PostFX uses). Live map events: `OverworldView.liveEvents()` (ROM events table, +MAP_OFFSET); preview uses offset 0.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
 
 ## Phase 1 tasks
-- [x] 1 regress harness · [x] 2 golden + split · [ ] 3 style/events · [ ] 4 kit foundation
+- [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [ ] 4 kit foundation
 - [ ] 5 semantic core · [ ] 6 terrain · [ ] 7 water · [ ] 8 cliffs · [ ] 9 trees · [ ] 10 fade
 - [ ] 11 grass/flowers · [ ] 12 buildings I · [ ] 13 buildings II · [ ] 14 table/props
 - [ ] 15 smoke/coverage · [ ] 16 polish/perf · [ ] 17 live check/docs
