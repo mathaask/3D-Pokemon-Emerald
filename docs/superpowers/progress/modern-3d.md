@@ -6,16 +6,18 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - 2026-10-19: Brainstorming done. User chose: modern stylized 3D; scope = outdoor, interiors,
   characters, battles; approach A in 4 phases. Spec approved ("go for it").
 - Git repo initialised; baseline commit `667c190`.
-- Phase 1 plan written: `docs/superpowers/plans/2026-10-19-phase1-outdoor.md` (17 tasks) —
-  **awaiting user review + choice of execution method**.
+- Phase 1 plan written: `docs/superpowers/plans/2026-10-19-phase1-outdoor.md` (17 tasks). User approved;
+  executing **subagent-driven** on branch `phase1-outdoor`. SDD ledger (task-level detail, rulings):
+  `.superpowers/sdd/2026-10-19-phase1-outdoor/progress.md` (gitignored) — read it first after a reset.
 - Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
   max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
+  NOTE: route119's legacy build already exceeds the 150 ms budget before Phase 1 (see ledger ruling).
 
 ## Next step
-- Execute Phase 1 plan from Task 1. Tick tasks off below as they are committed.
+- Continue Phase 1 at the first unticked task below (ledger has the exact state).
 
 ## Phase 1 tasks
-- [ ] 1 regress harness · [ ] 2 golden + split · [ ] 3 style/events · [ ] 4 kit foundation
+- [x] 1 regress harness · [ ] 2 golden + split · [ ] 3 style/events · [ ] 4 kit foundation
 - [ ] 5 semantic core · [ ] 6 terrain · [ ] 7 water · [ ] 8 cliffs · [ ] 9 trees · [ ] 10 fade
 - [ ] 11 grass/flowers · [ ] 12 buildings I · [ ] 13 buildings II · [ ] 14 table/props
 - [ ] 15 smoke/coverage · [ ] 16 polish/perf · [ ] 17 live check/docs
