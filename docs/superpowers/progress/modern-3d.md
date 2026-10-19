@@ -43,6 +43,13 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   logs/planks/shallows. `cellLook` takes the dominant non-water colour when ≥ 1/4 of the layer, then a COVERED cell's
   top layer, else `wetGround()` (greyed water, Sand). No land terrain cell is water-tinted any more. Dive maps
   (`ClassifyOptions.underwater`, map type 5; read only by the kit) are exempt: their seabed is drawn in water colours.
+- Task 8: colour alone can't tell rock from wood/beige buildings — Devon Corp, Fortree's treehouses and the Game
+  Corner are K.Block (their doors are NON_ANIMATED_DOOR warps on walkable cells, so the analysis never floods them)
+  and Route 113's ash trees are K.Block with rock-coloured trunk rows. Cliffs therefore skip block masses on a
+  warp (`doorStructures`), ignore tiles in the map's common floor colours, need rock masses ≥ 2 columns wide and
+  keep only walls whose neighbour column shares the foot row (Mossdeep's diagonal rock ridges stay legacy). Water
+  family skips Dive maps. Perf: `noise3` ≈ 0.6 µs/call and MeshBuilder's per-vertex pushes dominate meshes of
+  thousands of quads — the cliff build writes typed arrays and uses a 2D value noise (cold browser runs ≈ 2–3× Node).
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
