@@ -15,7 +15,7 @@ import { MB } from '../../game/behaviors';
 import { attrBehavior } from '../../game/rom/tileset';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
-import { buildingLayout } from './buildings';
+import { buildingLayout } from './footprints';
 import { doorStructures } from './cliffs';
 import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';

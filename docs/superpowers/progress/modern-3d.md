@@ -72,7 +72,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   maps only General 0x004 (and Route 110's copy 0x206) are flowers.
 - Task 12: the analysis' door flood fill is no footprint — it swallows lamp posts, fences, gardens, crater rock and
   Route 113's ash forest, joins neighbours (Mauville House2 + Mart) and can hand a building's upper half to the
-  neighbour flooded first (Lavaridge's Mart region holds the PC's roof). `buildingLayout` (buildings.ts, memoised per
+  neighbour flooded first (Lavaridge's Mart region holds the PC's roof). `buildingLayout` (footprints.ts, memoised per
   analysis) grows footprints from each door instead; region cells outside them (`stray`) are blocks again for
   trees, `doorStructures` and the legacy emitter. Pokémon Center/Mart "signs" are bg events on their *wall* cells,
   PC/Mart/lab doors are 2 cells wide with a warp on one, tents have 2-row doors, and Mart/PC/gym walls use the same

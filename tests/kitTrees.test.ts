@@ -219,6 +219,10 @@ describe('tree extract', () => {
     // a cliff beside a door, running on far past the door row, stays out of the structure
     const b = map(['.....', 'TJ##.', 'TJ.#.', 'TJ...', 'TJ...', 'TJ...', '.....']);
     expect(doorStructures(b, events)[b.idx(1, 1)]).toBe(0);
+    // a column open at the door row is no post (its walkable cell is no structure)
+    const c = map(['.....', 'TJ##.', 'T..#.', 'TJ...', '.....']);
+    const sc = doorStructures(c, events);
+    for (const y of [1, 2, 3]) expect(sc[c.idx(1, y)]).toBe(0);
   });
 
   it('turns a border forest the analysis left as blocks (ash trees) into round trees', () => {

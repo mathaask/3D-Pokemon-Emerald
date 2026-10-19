@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { addBox, buildingKind, buildingFamily, buildingLayout, type BuildingPlacement } from '../src/render/kit/buildings';
+import { addBox, buildingKind, buildingFamily, type BuildingPlacement } from '../src/render/kit/buildings';
+import { buildingLayout } from '../src/render/kit/footprints';
 import { MeshBuilder } from '../src/render/kit/geom';
 import { treeFamily } from '../src/render/kit/trees';
 import { analyze, type MapAnalysis } from '../src/render/overworld/analyze';
@@ -72,7 +73,8 @@ function map(rows: string[], border = [T.rock, T.rock, T.rock, T.rock], underwat
   // a cream wall with a blue window, drawn mostly in a navy outline shade
   fill(T.wall, px(8, 9, 13)); fill(T.wall, px(28, 25, 20), 100, 192); fill(T.wall, px(16, 24, 30), 192, 256);
   fill(T.blueWall, px(23, 25, 28)); // a Mart's pale blue wall
-  fill(T.roof, px(8, 9, 13)); fill(T.roof, px(26, 9, 8), 160); // a red roof, mostly navy outlines fill(T.door, px(18, 11, 6)); fill(T.post, px(12, 12, 14));
+  fill(T.roof, px(8, 9, 13)); fill(T.roof, px(26, 9, 8), 160); // a red roof, mostly navy outlines
+  fill(T.door, px(18, 11, 6)); fill(T.post, px(12, 12, 14));
   fill(T.fence, px(20, 14, 9)); fill(T.other, px(25, 25, 8)); fill(T.hedge, px(8, 22, 6)); info.green[T.hedge] = 0.9; info.attributes[T.hedge] = 1 << 12; // (covered: no tree)
   fill(T.ashA, ASH_LEAF); fill(T.ashA, px(21, 21, 17), 0, 100); info.green[T.ashA] = 0.4;
   fill(T.ashB, ASH_LEAF); fill(T.ashB, px(21, 21, 17), 0, 140); info.green[T.ashB] = 0.3;
@@ -140,8 +142,18 @@ describe('building footprints', () => {
       '..........',
     ]);
     const events = ev([[4, 3, 'PetalburgCity_Gym']], [[5, 3]]);
-    const { out } = run(a, events);
+    const { out, claims } = run(a, events);
     expect(box(out[0])).toEqual([1, 6, 1, 3]);
+    expect(out[0].steps).toEqual([1, 6]);
+    // the steps stay walkable ground: not under the model (the walls stand behind them)
+    for (const x of [1, 6]) expect(claims.has(a.idx(x, 3), CLAIM_OBJECT)).toBe(false);
+    for (const x of [1, 6]) expect(claims.has(a.idx(x, 2), CLAIM_OBJECT)).toBe(true);
+    const root = buildingFamily.build(out, { a, events, quality: 'medium' }, kitCtx())!;
+    // walking north into the door row at chest height: the wall is the step cell's back edge
+    // (z = 3) over the steps, the door row's front edge (z = 4) over the bay between them
+    for (const [x, z] of [[1.5, 3], [6.5, 3], [2.5, 4], [4.5, 4], [5.5, 4]]) expect(Math.abs(firstWallZ(root, x, 0.8) - z)).toBeLessThan(0.15);
+    // nothing of the model over a step cell below head height
+    expect(hitsBelow(root, 1.5, 3.5, 1.6)).toBe(false);
     // plain ground at a corner is not a step: the building stops before it
     const b = map(['.......', '.RRRR..', '.WWWW..', '..WDW..', '.......']);
     expect(box(run(b, ev([[3, 3, 'OldaleTown_House1']])).out[0])).toEqual([2, 4, 1, 3]);
@@ -178,6 +190,20 @@ describe('building footprints', () => {
     // a double door with one warp (a Pokémon Center): one building
     const c = map(['......', '.RRRR.', '.WDDW.', '......']);
     expect(run(c, ev([[2, 2, 'OldaleTown_PokemonCenter_1F']])).out.map(box)).toEqual([[1, 4, 1, 2]]);
+  });
+
+  it('leaves out a column with a cell the player can walk into below its top row', () => {
+    // (3, 2) is open to the ground on its right: the model must not stand on it
+    const a = map(['......', '.RRRR.', '.WWW..', '.WDWW.', '......']);
+    expect(box(run(a, ev([[2, 3, 'OldaleTown_House1']])).out[0])).toEqual([1, 3, 1, 3]);
+  });
+
+  it('builds nothing for a door with nothing of its building above it', () => {
+    const a = map(['......', '......', '.WDW..', '......']);
+    expect(a.buildings).toHaveLength(1);
+    const { out, claims } = run(a, ev([[2, 2, 'OldaleTown_House1']]));
+    expect(out).toEqual([]);
+    expect(claims.bits.every((b) => b === 0)).toBe(true);
   });
 
   it('leaves out a hedge beside the house', () => {
@@ -277,4 +303,35 @@ describe('building build', () => {
     expect(bb.max.z).toBeLessThan(4 + 0.5);
     expect(buildingFamily.build([], ctx, kit)).toBeNull();
   });
+
+  it('never reaches behind its top row, however shallow or tall', () => {
+    for (const [dest, rows] of [
+      ['OldaleTown_House1', ['......', '.RRRR.', '.WDWW.', '......']], // two rows: the shallowest model (1.6 deep)
+      ['OldaleTown_House1', ['......', '.RRRR.', '.RRRR.', '.RRRR.', '.WWWW.', '.WDWW.', '......']],
+      ['LilycoveCity_ContestLobby', ['......', ...Array(6).fill('.RRRR.'), '.WWWW.', '.WDWW.', '......']], // 4 deep at most
+    ] as [string, string[]][]) {
+      const a = map(rows);
+      const ctx = { a, events: ev([[2, rows.length - 2, dest]]), quality: 'medium' as const };
+      const out = buildingFamily.extract(ctx, new Claims(a.N));
+      expect(out[0].top).toBe(1);
+      const bb = new THREE.Box3().setFromObject(buildingFamily.build(out, ctx, kitCtx())!);
+      expect(bb.min.z).toBeGreaterThanOrEqual(out[0].top + out[0].base);
+    }
+  });
 });
+
+const kitCtx = () => ({ uniforms: createKitUniforms(), quality: 'medium' as const, disposables: [] as { dispose(): void }[] });
+
+/** Z of the first surface of the model a ray walking north (-z) at height y meets at column x. */
+function firstWallZ(root: THREE.Object3D, x: number, y: number): number {
+  root.updateMatrixWorld(true);
+  const hits = new THREE.Raycaster(new THREE.Vector3(x, y, 50), new THREE.Vector3(0, 0, -1)).intersectObject(root, true);
+  return hits.length ? hits[0].point.z : NaN;
+}
+
+/** Whether a ray falling at (x, z) meets the model below height h (above the ground). */
+function hitsBelow(root: THREE.Object3D, x: number, z: number, h: number): boolean {
+  root.updateMatrixWorld(true);
+  const hits = new THREE.Raycaster(new THREE.Vector3(x, h, z), new THREE.Vector3(0, -1, 0), 0, h - 0.01).intersectObject(root, true);
+  return hits.length > 0;
+}

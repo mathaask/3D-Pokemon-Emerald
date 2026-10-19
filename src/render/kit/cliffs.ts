@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
-import { buildingLayout } from './buildings';
+import { buildingLayout } from './footprints';
 import type { GridEvents } from './events';
 import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, QuadWriter, type V3 } from './geom';
@@ -67,7 +67,8 @@ export function doorStructures(a: MapAnalysis, events: GridEvents): Uint8Array {
       for (; Math.abs(x - w.x) <= 9 && block(x, y) && !block(x, w.y + 1); x += dir) {
         for (let r = block(x, w.y) ? w.y : y; r > y - 14 && block(x, r); r--) out[a.idx(x, r)] = 1;
       }
-      if (x === x0 || Math.abs(x - w.x) > 9 || !block(x, y)) continue;
+      // (a post stands through the door row: blocked above, at and below it)
+      if (x === x0 || Math.abs(x - w.x) > 9 || !block(x, y) || !block(x, w.y)) continue;
       // (at most four rows, no higher than the structure beside it: a cliff beside a cave mouth runs on)
       let e = w.y + 1, t = y, top = y;
       while (block(x, e + 1)) e++;
