@@ -38,6 +38,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   top-layer art (boats, bank edges); the General 2x2 sea rock (bottom row 0x158|0x16c, 0x159|0x16d) becomes a boulder.
   SHALLOW_WATER metatile 0x1ae (Mossdeep/Lilycove) is terrain sand tinted deep blue (Task 6 cellLook) — reads as blue
   blotches next to the new water.
+- Task 6b: water pixels in a walkable cell's tile are never its ground — they are the sea beside a shore tile (0x1ae),
+  the backdrop hidden under a NORMAL overhang (Slateport roof 0x290–0x293, Mossdeep rocket gantry) or under COVERED
+  logs/planks/shallows. `cellLook` takes the dominant non-water colour when ≥ 1/4 of the layer, then a COVERED cell's
+  top layer, else `wetGround()` (greyed water, Sand). No terrain cell on any group-0 map is water-tinted any more.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

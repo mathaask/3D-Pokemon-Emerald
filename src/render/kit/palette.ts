@@ -78,6 +78,13 @@ export function soften(c: RGB, k = 0.12): RGB {
   }) as RGB;
 }
 
+/** A water colour on walkable ground (a puddle, a hot spring, the sea behind an overhang's art):
+ *  greyed at the same lightness so it reads as wet sand or mud, not open water. */
+export function wetGround(c: RGB): RGB {
+  const l = luma(c);
+  return mix(c, [l, l, l], 0.7);
+}
+
 export type GroundClass = 'grass' | 'path' | 'sand' | 'paving' | 'dirt' | 'gravel' | 'rock' | 'water' | 'dark';
 
 /** Ground material class of a tile's dominant colour (thresholds from measured ROM colours). */

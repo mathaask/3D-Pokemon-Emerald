@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { MB } from '../src/game/behaviors';
 import { cellLook, groundMaterial, GroundMat, terrainFamily } from '../src/render/kit/terrain';
+import { bgr555ToSrgb, classifyGroundColor, wetGround } from '../src/render/kit/palette';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
@@ -23,10 +24,22 @@ describe('groundMaterial', () => {
   it('beach shallows are sand', () => {
     expect(groundMaterial(MB.SHALLOW_WATER, [0.61, 0.65, 0.74])).toBe(GroundMat.Sand);
   });
+  it('water-coloured ground is wet sand, not paving', () => {
+    expect(groundMaterial(MB.NORMAL, [0.32, 0.42, 0.84])).toBe(GroundMat.Sand);
+  });
 });
 
 /** BGR555 pixel of an sRGB colour given in 31sts. */
 const px = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
+/** Fills metatile `m` of a layer with consecutive runs of [pixel, count]. */
+const paint = (layer: Uint16Array, m: number, runs: [number, number][]) => {
+  let p = m * 256;
+  for (const [v, n] of runs) { layer.fill(v, p, p + n); p += n; }
+};
+// Hoenn ROM colours: the sea, its wave lines, shallows over sand, foam, grass shades, a puddle.
+const SEA = px(10, 13, 26), SEA2 = px(13, 16, 26), SHALLOW = px(19, 20, 23), FOAM = px(21, 24, 28);
+const GRASS = px(14, 24, 20), PUDDLE = px(14, 23, 30);
+const COVERED = 1 << 12;
 
 describe('cellLook', () => {
   it('ignores dark outline and shadow pixels', () => {
@@ -44,6 +57,66 @@ describe('cellLook', () => {
     const look = cellLook(a, 5, new Map());
     expect(look.mat).toBe(GroundMat.Deck);
     expect(look.tint).toEqual([25 / 31, 26 / 31, 20 / 31]);
+  });
+  it('takes a deck colour from the planks, not the water between them', () => {
+    const a = fakeAnalysis(['...']);
+    a.info.attributes[5] = MB.BRIDGE_OVER_OCEAN;
+    paint(a.info.bottom, 5, [[SEA, 256]]);
+    paint(a.info.both, 5, [[SEA, 120], [px(12, 12, 15), 70], [px(16, 16, 19), 66]]);
+    expect(cellLook(a, 5, new Map()).tint).toEqual(bgr555ToSrgb(px(12, 12, 15)));
+  });
+  it('a shore tile is its shallows, not the sea it borders', () => {
+    // Mossdeep / Lilycove 0x1ae: deep sea on one half, shallows on the other, nothing on top.
+    const a = fakeAnalysis(['...']);
+    a.info.attributes[5] = MB.SHALLOW_WATER;
+    paint(a.info.bottom, 5, [[SEA, 118], [SHALLOW, 114], [SEA2, 14], [FOAM, 10]]);
+    paint(a.info.both, 5, [[SEA, 118], [SHALLOW, 114], [SEA2, 14], [FOAM, 10]]);
+    const look = cellLook(a, 5, new Map());
+    expect(look.mat).toBe(GroundMat.Sand);
+    expect(look.tint).toEqual(bgr555ToSrgb(SHALLOW));
+  });
+  it('an overhang over a backdrop of sea and grass stands on grass', () => {
+    // Slateport 0x290: a roof edge on the top layer (drawn over objects) hides a shore tile.
+    const a = fakeAnalysis(['...']);
+    paint(a.info.bottom, 5, [[SEA, 118], [SEA2, 10], [GRASS, 110], [px(20, 26, 24), 11], [px(8, 22, 16), 7]]);
+    paint(a.info.both, 5, [[px(27, 26, 29), 240], [SEA, 16]]);
+    const look = cellLook(a, 5, new Map());
+    expect(look.mat).toBe(GroundMat.Grass);
+    expect(look.tint).toEqual(bgr555ToSrgb(GRASS));
+  });
+  it('a covered tile over a water backdrop takes the ground its top layer paints on the floor', () => {
+    const a = fakeAnalysis(['...']);
+    a.info.attributes[5] = COVERED;
+    paint(a.info.bottom, 5, [[SEA, 236], [SEA2, 20]]);
+    paint(a.info.both, 5, [[GRASS, 200], [SEA, 56]]);
+    const look = cellLook(a, 5, new Map());
+    expect(look.mat).toBe(GroundMat.Grass);
+    expect(look.tint).toEqual(bgr555ToSrgb(GRASS));
+  });
+  it('without water, a covered tile still takes its ground from the bottom layer', () => {
+    const a = fakeAnalysis(['...']);
+    a.info.attributes[5] = COVERED;
+    paint(a.info.bottom, 5, [[px(16, 6, 4), 201], [px(19, 12, 10), 55]]); // mostly shadow
+    paint(a.info.both, 5, [[px(22, 19, 9), 136], [px(16, 6, 4), 120]]);
+    expect(cellLook(a, 5, new Map()).tint).toEqual(bgr555ToSrgb(px(19, 12, 10)));
+  });
+  it('ground that is water all over is wet ground, not open water', () => {
+    // A puddle's corner: a grass fringe on the covered top layer does not make it dry land.
+    const puddle = fakeAnalysis(['...']);
+    puddle.info.attributes[5] = MB.PUDDLE | COVERED;
+    paint(puddle.info.bottom, 5, [[PUDDLE, 256]]);
+    paint(puddle.info.both, 5, [[PUDDLE, 200], [GRASS, 40], [px(10, 6, 8), 16]]);
+    const p = cellLook(puddle, 5, new Map());
+    expect(p.mat).toBe(GroundMat.Dirt);
+    expect(p.tint).toEqual(wetGround(bgr555ToSrgb(PUDDLE)));
+    // The sea behind an overhang's art (Mossdeep's rocket gantry): no ground anywhere.
+    const sea = fakeAnalysis(['...']);
+    paint(sea.info.bottom, 5, [[SEA, 256]]);
+    paint(sea.info.both, 5, [[px(29, 18, 14), 200], [SEA, 56]]);
+    const s = cellLook(sea, 5, new Map());
+    expect(s.mat).toBe(GroundMat.Sand);
+    expect(s.tint).toEqual(wetGround(bgr555ToSrgb(SEA)));
+    for (const t of [p.tint, s.tint]) expect(classifyGroundColor(t)).not.toBe('water');
   });
 });
 

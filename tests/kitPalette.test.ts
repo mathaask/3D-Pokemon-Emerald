@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyGroundColor, soften, dominantColor, bgr555ToSrgb, saturation, type RGB } from '../src/render/kit/palette';
+import { classifyGroundColor, soften, dominantColor, bgr555ToSrgb, saturation, luma, wetGround, type RGB } from '../src/render/kit/palette';
 
 describe('classifyGroundColor', () => {
   const cases: [RGB, string][] = [
@@ -41,5 +41,19 @@ describe('dominantColor', () => {
     expect(dominantColor(px, [0, 1])).toEqual(bgr555ToSrgb(31));
     expect(dominantColor(px, [0, 1], (c) => c[0] < 0.5)).toEqual(bgr555ToSrgb(31 << 5));
     expect(dominantColor(px, [1], (c) => c[0] > 0.5)).toBeNull();
+  });
+});
+
+describe('wetGround', () => {
+  it('greys water colours into wet ground that no longer reads as water', () => {
+    // the sea, a puddle, Lavaridge's hot spring
+    const waters: RGB[] = [[0.32, 0.42, 0.84], [0.45, 0.74, 0.97], [0.55, 0.81, 0.97]];
+    for (const c of waters) {
+      const w = wetGround(c);
+      expect(classifyGroundColor(w)).not.toBe('water');
+      expect(saturation(w)).toBeLessThan(0.2);
+      expect(luma(w)).toBeCloseTo(luma(c), 3);
+      expect(w[2]).toBe(Math.max(...w)); // still cool
+    }
   });
 });
