@@ -50,6 +50,14 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   keep only walls whose neighbour column shares the foot row (Mossdeep's diagonal rock ridges stay legacy). Water
   family skips Dive maps. Perf: `noise3` ≈ 0.6 µs/call and MeshBuilder's per-vertex pushes dominate meshes of
   thousands of quads — the cliff build writes typed arrays and uses a 2D value noise (cold browser runs ≈ 2–3× Node).
+- Task 9: trees are InstancedMeshes per drawn style × 8-cell map chunk (crown + trunk in one geometry, trunk flagged
+  in the vertex alpha). The sun's 48×48 shadow box draws ~3× the view's trees, so each chunk's `onBeforeShadow`
+  sets `count = 0` when its shadows can't reach the camera frustum (three then issues no draw). The post grade
+  (saturation 1.12, contrast 1.05 around 0.18, linear) crushes the blue of the GBA's yellow-greens to 0 — leaf
+  colours are pixel means with capped saturation. Route 113's ash trees are K.Block: found via the map's border
+  tiles (a foliage border = the forest); part of that forest is K.Building (the analysis' flood fill from the Glass
+  Workshop door) and stays legacy. Tree counts (margin 14): woods 1176, route119 4146 (interior thinned), fortree
+  1515, littleroot 491; regress woods ≈ 193k triangles, max 401k (fortree h21), max 64 calls.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
