@@ -20,7 +20,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
 
 ## Phase 1 tasks
-- [x] 1 regress harness · [ ] 2 golden + split · [ ] 3 style/events · [ ] 4 kit foundation
+- [x] 1 regress harness · [x] 2 golden + split · [ ] 3 style/events · [ ] 4 kit foundation
 - [ ] 5 semantic core · [ ] 6 terrain · [ ] 7 water · [ ] 8 cliffs · [ ] 9 trees · [ ] 10 fade
 - [ ] 11 grass/flowers · [ ] 12 buildings I · [ ] 13 buildings II · [ ] 14 table/props
 - [ ] 15 smoke/coverage · [ ] 16 polish/perf · [ ] 17 live check/docs
@@ -32,7 +32,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - [ ] Phase 4 — Interiors
 
 ## Key facts (so they don't need re-deriving)
-- `classify.ts` mixes analysis + quad emission; plan is to split into `analyze.ts` + `legacyQuads.ts`.
+- `classify.ts` is now a wrapper over `analyze.ts` (pure analysis) + `legacyQuads.ts` (quads, honours `Claims`).
 - `src/game/rom/maps.ts` already decodes warps + bg events (`MapEvents`); map names in `src/game/mapNames.ts`.
 - Live backup grid coords include `MAP_OFFSET = 7` (`src/game/state.ts`); preview uses offset 0.
 - `ObjectEventSnap.graphicsId` available for object model replacements (phase 2).
