@@ -106,6 +106,18 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   blocks with water-coloured tops of it). Secret-base spots (behaviours 0x90–0x9d: cave holes, shrubs, the
   secret-base tree; 75 cells, each under a secret-base bg event) are a gameplay cue: `isSecretBaseSpot` (semantics.ts)
   keeps every family off them (cliff/tree runs break there) so they stay legacy art.
+- Task 15: `tests/smoke/semantics.test.ts` (smoke config) pins the families on real maps (every town's PC/Mart/Gym,
+  Dive maps terrain-only, Fortree's treehouse corners, no tree in front of a warp, 75 secret-base spots unclaimed)
+  and writes `out/coverage.txt` + `out/coverage-all.txt` (legacy share of non-void cells at margin 14; the margin
+  dominates small maps, so the reports also give the map-only share). **Coverage: regression average 9.0 %** (max
+  Sootopolis 77.6 % — its white crater rock is not rock to the cliffs; next Route 119 7.2 %); **all 68 outdoor maps
+  12.7 %** (16.2 % of map cells). Mountain maps stay mostly legacy — Mt Chimney 89.9, Lavaridge 87.6 (28.5 in-map),
+  Jagged Pass 81.1, Route 112 79.6, Route 111 62.0, Route 114 19.0 — because their rock-mass top tile (0x071, 0x271,
+  0x241) is also their walkable plateau floor: the cliffs' common-floor-colour veto rejects the masses and tints
+  the mass tops with a dark face tile. Sky Pillar Top's 87.8 is its cloud backdrop. Secondary-tileset flower tiles
+  (Route 117 0x208–0x217, Ever Grande 0x290–0x297 and the flowers over stone) fail the blob test and stay legacy.
+  The analysis' colour-guessed trees (secondary green blocks) in the column north of a warp are left to legacy
+  art: they were Petalburg Woods' north exit, Mt Pyre's summit path and the Trainer Hill door's lintel.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
