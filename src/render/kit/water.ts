@@ -62,6 +62,8 @@ uniform vec3 uTint;
 // tWater, sampled bilinearly between cell centres so every field is seamless: r = shore distance
 // / 15 (0.5 at the shoreline itself), g = waterfall, b = splash pool below a waterfall; a (fetched
 // per texel) = a sea rock centred on the cell's north-west corner.
+// Most water is open sea: the shore foam's noise, the rocks' four fetches, the waterfall streaks and
+// the pools' fbm each run only where they can show (coherent branches; the same result).
 const FRAG_COLOR = /* glsl */ `
 float kitFoam = 0.0;
 {
@@ -72,34 +74,48 @@ float kitFoam = 0.0;
   vec3 tint = kitSrgbToLinear(uTint);
   vec3 shallow = mix(tint, vec3(0.0, 0.55, 0.62), 0.6);            // light turquoise near shore
   vec3 col = mix(shallow, tint * vec3(0.28, 0.6, 0.55), deep);      // deeper, darker offshore
-  // Foam: a frayed line hugging the shore, and broken lines lapping in towards it.
   float edge = dist - 0.5;                                          // cells from the shoreline
-  float n1 = kitNoise2(cell * 2.3 + vec2(uTime * 0.25, -uTime * 0.18));
-  float n2 = kitNoise2(cell * 6.1 - vec2(uTime * 0.4, uTime * 0.3));
-  float w = 0.04 + 0.1 * n1 + 0.02 * sin(uTime * 1.3 + cell.x * 0.8 + cell.y * 0.6);
-  float line = (1.0 - smoothstep(w, w + 0.05, edge)) * smoothstep(0.2, 0.5, n2 + 0.3 * n1);
-  float ph = fract(uTime * 0.2 + n1 * 0.45);
-  float lap = (1.0 - smoothstep(0.015, 0.045, abs(edge - mix(0.6, w + 0.05, ph)))) * smoothstep(0.4, 0.65, n2) * (1.0 - ph);
-  kitFoam = max(line * 0.95, lap * 0.7);
-  // Sea rocks: a foam collar where the rock meets the water and small rings spreading from it.
-  float rd = 9.0;
-  for (int k = 0; k < 4; k++) {
-    vec2 c = floor(cell) + vec2(float(k & 1), float(k >> 1));
-    ivec2 t = clamp(ivec2(c - uGridMin), ivec2(0), ivec2(uGridSize) - 1);
-    if (texelFetch(tWater, t, 0).a > 0.5) rd = min(rd, length(cell - c - vec2(0.0, 0.15)));
+  // a sea rock on one of the cell's corners: their four texels, in one bilinear fetch at their middle
+  bool rockNear = texture(tWater, (floor(cell) + 1.0 - uGridMin) / uGridSize).a > 0.1;
+  // (the foam lines reach < 0.65 cells from the shoreline: w + 0.05 < 0.21, the laps 0.6 + 0.045)
+  if (edge < 0.7 || rockNear || wd.b > 0.0) {
+    float n1 = kitNoise2(cell * 2.3 + vec2(uTime * 0.25, -uTime * 0.18));
+    float n2 = kitNoise2(cell * 6.1 - vec2(uTime * 0.4, uTime * 0.3));
+    if (edge < 0.7) {
+      // Foam: a frayed line hugging the shore, and broken lines lapping in towards it.
+      float w = 0.04 + 0.1 * n1 + 0.02 * sin(uTime * 1.3 + cell.x * 0.8 + cell.y * 0.6);
+      float line = (1.0 - smoothstep(w, w + 0.05, edge)) * smoothstep(0.2, 0.5, n2 + 0.3 * n1);
+      float ph = fract(uTime * 0.2 + n1 * 0.45);
+      float lap = (1.0 - smoothstep(0.015, 0.045, abs(edge - mix(0.6, w + 0.05, ph)))) * smoothstep(0.4, 0.65, n2) * (1.0 - ph);
+      kitFoam = max(line * 0.95, lap * 0.7);
+    }
+    if (rockNear) {
+      // Sea rocks: a foam collar where the rock meets the water and small rings spreading from it.
+      float rd = 9.0;
+      for (int k = 0; k < 4; k++) {
+        vec2 c = floor(cell) + vec2(float(k & 1), float(k >> 1));
+        ivec2 t = clamp(ivec2(c - uGridMin), ivec2(0), ivec2(uGridSize) - 1);
+        if (texelFetch(tWater, t, 0).a > 0.5) rd = min(rd, length(cell - c - vec2(0.0, 0.15)));
+      }
+      float rph = fract(uTime * 0.3 + n1 * 0.35);
+      float collar = 1.0 - smoothstep(0.4 + 0.08 * n1, 0.47 + 0.1 * n1, rd);
+      float ring = (1.0 - smoothstep(0.015, 0.05, abs(rd - 0.45 - 0.4 * rph))) * smoothstep(0.35, 0.6, n2) * (1.0 - rph);
+      kitFoam = max(kitFoam, max(collar * 0.9, ring * 0.7));
+    }
+    if (wd.b > 0.0) {
+      // the churning pool below a waterfall
+      float churn = smoothstep(0.5, 0.7, kitFbm2(cell * 2.6 + vec2(0.3 * n1, -uTime * 1.1)));
+      kitFoam = max(kitFoam, wd.b * churn * 0.75);
+    }
   }
-  float rph = fract(uTime * 0.3 + n1 * 0.35);
-  float collar = 1.0 - smoothstep(0.4 + 0.08 * n1, 0.47 + 0.1 * n1, rd);
-  float ring = (1.0 - smoothstep(0.015, 0.05, abs(rd - 0.45 - 0.4 * rph))) * smoothstep(0.35, 0.6, n2) * (1.0 - rph);
-  kitFoam = max(kitFoam, max(collar * 0.9, ring * 0.7));
-  // Waterfalls: paler water streaming south in bright streaks; a churning pool below.
-  float s1 = kitNoise2(vec2(cell.x * 9.0, cell.y * 0.7 - uTime * 2.8));
-  float s2 = kitNoise2(vec2(cell.x * 17.0 + 3.1, cell.y * 1.3 - uTime * 4.1));
-  float streak = smoothstep(0.45, 0.75, s1 * 0.65 + s2 * 0.35);
-  col = mix(col, vec3(0.3, 0.6, 0.85), wd.g * 0.5);
-  kitFoam = max(kitFoam, wd.g * (0.2 + 0.75 * streak));
-  float churn = smoothstep(0.5, 0.7, kitFbm2(cell * 2.6 + vec2(0.3 * n1, -uTime * 1.1)));
-  kitFoam = max(kitFoam, wd.b * churn * 0.75);
+  if (wd.g > 0.0) {
+    // Waterfalls: paler water streaming south in bright streaks.
+    float s1 = kitNoise2(vec2(cell.x * 9.0, cell.y * 0.7 - uTime * 2.8));
+    float s2 = kitNoise2(vec2(cell.x * 17.0 + 3.1, cell.y * 1.3 - uTime * 4.1));
+    float streak = smoothstep(0.45, 0.75, s1 * 0.65 + s2 * 0.35);
+    col = mix(col, vec3(0.3, 0.6, 0.85), wd.g * 0.5);
+    kitFoam = max(kitFoam, wd.g * (0.2 + 0.75 * streak));
+  }
   diffuseColor.rgb = mix(col, vec3(0.92, 0.96, 1.0), kitFoam);
   // See-through only in the shallows: opaque before the seabed (dist <= 2 cells) ends.
   diffuseColor.a = max(mix(0.5, 1.0, smoothstep(0.5, 2.0, dist)), kitFoam);
