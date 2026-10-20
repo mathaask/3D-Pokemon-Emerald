@@ -29,6 +29,8 @@ export class PreviewApp {
   private pitch = 0;
   private zoom = 0;
   private buildMs = 0;
+  /** Rebuilds the world (as crossing a map connection does, with warm code); returns the time in ms. */
+  readonly rebuild: () => number;
   readonly name: string;
 
   constructor(canvas: HTMLCanvasElement, rom: Uint8Array, group: number, num: number, params: URLSearchParams) {
@@ -76,9 +78,13 @@ export class PreviewApp {
       borderPhase: 0,
     };
     this.view.renderAtlas(this.webgl);
-    const t0 = performance.now();
-    this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset);
-    this.buildMs = performance.now() - t0;
+    this.rebuild = () => {
+      const t0 = performance.now();
+      this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset);
+      return performance.now() - t0;
+    };
+    // (the first build in the page: cold code, an upper bound of a rebuild)
+    this.buildMs = this.rebuild();
 
     const hour = parseFloat(params.get('hour') ?? '11');
     this.fakeState = {
