@@ -11,7 +11,8 @@
     "test": "vitest run",
     "symbols": "tsx tools/gen-symbols.ts",
     "headless": "tsx tools/headless.ts",
-    "regress": "tsx tools/regress.ts"
+    "regress": "tsx tools/regress.ts",
+    "regress:live": "tsx tools/regress-live.ts"
   },
   "dependencies": {
     "three": "^0.186.1"

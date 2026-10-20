@@ -7,10 +7,27 @@ import { kvGet, kvSet } from './ui/storage';
 import { Shell } from './ui/shell';
 import { Renderer } from './render/renderer';
 import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/settings';
+import { keyMask } from './input/keyNames';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
 const FAST_FORWARD = 4;
+/** Emulated RTC in manual mode (local time): the game's clock re-reads replay identically. */
+const MANUAL_RTC = '2026-01-01T10:00:00';
+
+/** Setting overrides from the URL (?style=modern|retro, ?camera=0..3): applied, never saved. */
+function urlOverrides(params: URLSearchParams, s: Settings): void {
+  const style = params.get('style');
+  if (style === 'modern' || style === 'retro') s.worldStyle = style;
+  const camera = params.get('camera');
+  if (camera !== null && /^[0-3]$/.test(camera)) s.camera = Number(camera);
+}
+
+/** Median and 90th percentile (upper element) of a list of numbers. */
+function percentiles(xs: number[]): { p50: number; p90: number } {
+  const s = [...xs].sort((a, b) => a - b);
+  return { p50: s[s.length >> 1], p90: s[Math.floor(s.length * 0.9)] };
+}
 
 async function sha1(data: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-1', data as unknown as BufferSource);
@@ -25,6 +42,65 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
     /* fall through to manual selection */
   }
   return shell.askForRom();
+}
+
+/**
+ * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
+ * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n)` times n
+ * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians).
+ */
+function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
+  renderer.setFixedTimestep(1 / 60);
+  const gl = renderer.webgl.getContext() as WebGL2RenderingContext;
+  type TimerExt = { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number };
+  const frame = (mask: number, timer?: { ext: TimerExt; query: WebGLQuery }): number => {
+    gba.keys = mask;
+    gba.runFrame();
+    renderer.onEmulatedFrame();
+    if (timer) gl.beginQuery(timer.ext.TIME_ELAPSED_EXT, timer.query);
+    const t0 = performance.now();
+    renderer.render(1000 / 60);
+    const ms = performance.now() - t0;
+    if (timer) gl.endQuery(timer.ext.TIME_ELAPSED_EXT);
+    return ms;
+  };
+  const step = (keys: string, frames: number): number[] => {
+    const mask = keyMask(keys);
+    const times: number[] = [];
+    for (let i = 0; i < frames; i++) times.push(frame(mask));
+    return times;
+  };
+  const gpuFrames = async (n: number): Promise<{ gpuMs: number; gpuP90: number; cpuMs: number }> => {
+    const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
+    if (!ext) throw new Error('EXT_disjoint_timer_query_webgl2 is not available');
+    const px = new Uint8Array(4);
+    // a disjoint batch (GPU clock change, context switch) is discarded and measured again
+    for (let attempt = 0; attempt < 3; attempt++) {
+      gl.getParameter(ext.GPU_DISJOINT_EXT); // (reading clears the flag)
+      const queries: WebGLQuery[] = [];
+      const cpu: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const query = gl.createQuery();
+        cpu.push(frame(0, { ext, query }));
+        queries.push(query);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // (waits for the GPU)
+      }
+      // query results become available only after control returns to the browser
+      const deadline = performance.now() + 10_000;
+      while (!queries.every((q) => gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE))) {
+        if (performance.now() > deadline) throw new Error('GPU timer query results never became available');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean;
+      const gpu = queries.map((q) => (gl.getQueryParameter(q, gl.QUERY_RESULT) as number) / 1e6);
+      for (const q of queries) gl.deleteQuery(q);
+      if (disjoint) continue;
+      const g = percentiles(gpu);
+      return { gpuMs: g.p50, gpuP90: g.p90, cpuMs: percentiles(cpu).p50 };
+    }
+    throw new Error('GPU timer queries disjoint in 3 attempts');
+  };
+  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
 }
 
 function debounce(fn: () => void, ms: number): () => void {
@@ -62,7 +138,11 @@ async function boot(): Promise<void> {
     console.warn('Audio unavailable', e);
   }
 
-  const gba = new Gba(rom, { sampleRate: audio.sampleRate });
+  // Debug/testing hooks: ?state=<url> loads a save state, ?autostart skips the start gate,
+  // ?manual=1 (implies autostart) stops the frame loop: frames advance only through emu.step.
+  const params = new URLSearchParams(location.search);
+  const manual = params.get('manual') === '1';
+  const gba = new Gba(rom, { sampleRate: audio.sampleRate, now: manual ? () => new Date(MANUAL_RTC) : undefined });
   const save = await kvGet<Uint8Array>('flash');
   if (save) gba.loadSave(save);
   const persist = debounce(() => {
@@ -77,6 +157,7 @@ async function boot(): Promise<void> {
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const input = new Input(canvas);
   const settings = loadSettings();
+  urlOverrides(params, settings);
   const renderer = new Renderer(canvas, gba, settings.quality);
 
   const quickSave = () => {
@@ -150,17 +231,20 @@ async function boot(): Promise<void> {
   input.on('quickSave', quickSave);
   input.on('quickLoad', quickLoad);
 
-  // Debug/testing hooks: ?state=<url> loads a save state, ?autostart skips the start gate.
-  const params = new URLSearchParams(location.search);
   const stateUrl = params.get('state');
   if (stateUrl) {
     const res = await fetch(stateUrl);
     if (res.ok) gba.loadState(new Uint8Array(await res.arrayBuffer()));
   }
-  if (!params.has('autostart')) await shell.waitForGesture('Press any key to start');
+  if (!params.has('autostart') && !manual) await shell.waitForGesture('Press any key to start');
   audio.resume();
   shell.hideLoader();
   canvas.focus();
+
+  if (manual) {
+    exposeManual(gba, renderer, { gba, renderer, input });
+    return;
+  }
 
   let acc = 0;
   let last = performance.now();

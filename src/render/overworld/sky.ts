@@ -75,13 +75,14 @@ export class Sky {
     this.mesh.frustumCulled = false;
   }
 
-  setColors(sky: THREE.Color, fog: THREE.Color, indoor: boolean): void {
+  /** `time`: the view's clock in seconds (drifts the clouds; no wall clock, so frames replay exactly). */
+  setColors(sky: THREE.Color, fog: THREE.Color, indoor: boolean, time: number): void {
     const u = this.material.uniforms;
     const lum = sky.r * 0.3 + sky.g * 0.59 + sky.b * 0.11;
     u.uZenith.value.copy(sky).multiplyScalar(0.75).lerp(new THREE.Color(0.2, 0.45, 0.95), 0.35 * lum);
     u.uHorizon.value.copy(fog);
     u.uNight.value = THREE.MathUtils.clamp((0.5 - lum) * 3, 0, 1);
     u.uIndoor.value = indoor ? 1 : 0;
-    u.uTime.value = performance.now() / 1000;
+    u.uTime.value = time;
   }
 }

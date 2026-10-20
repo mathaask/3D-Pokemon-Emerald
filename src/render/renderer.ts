@@ -40,6 +40,10 @@ export class Renderer {
   private fadeScene = new THREE.Scene();
   private fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private lastTime = performance.now();
+  /** Fixed seconds per render() (deterministic stepping), or null: wall-clock time. */
+  private fixedDt: number | null = null;
+  /** Virtual clock in ms, advanced by fixedDt per render() while a fixed timestep is set. */
+  private virtualNow = 0;
   /** Scene actually presented (transition frames keep the previous one). */
   presented: 'overworld' | 'battle' | 'screen2d' = 'screen2d';
   private transitionFx = new BattleTransitionFx();
@@ -61,6 +65,8 @@ export class Renderer {
     this.webgl.toneMapping = THREE.NeutralToneMapping;
     this.webgl.toneMappingExposure = 1.0;
     this.webgl.outputColorSpace = THREE.SRGBColorSpace;
+    // whole-frame totals (every pass of a render() call): reset at its start, see stats()
+    this.webgl.info.autoReset = false;
 
     this.state = new GameState(gba.bus);
     this.screen = new ScreenView(gba.ppu.framebuffer);
@@ -173,10 +179,32 @@ export class Renderer {
     r.autoClear = true;
   }
 
+  /**
+   * Deterministic stepping: every render() advances `dt` seconds and a virtual clock (for the
+   * battle transition) instead of reading performance.now(). null restores wall-clock time.
+   */
+  setFixedTimestep(dt: number | null): void {
+    this.fixedDt = dt;
+    this.lastTime = performance.now();
+  }
+
+  /** Render statistics of the last render() call, all passes together. */
+  stats(): { calls: number; triangles: number; programs: number } {
+    const info = this.webgl.info;
+    return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0 };
+  }
+
   render(_dtMs: number): void {
-    const now = performance.now();
-    const dt = Math.min(0.1, (now - this.lastTime) / 1000);
-    this.lastTime = now;
+    this.webgl.info.reset();
+    let now: number, dt: number;
+    if (this.fixedDt !== null) {
+      dt = this.fixedDt;
+      now = this.virtualNow += dt * 1000;
+    } else {
+      now = performance.now();
+      dt = Math.min(0.1, (now - this.lastTime) / 1000);
+      this.lastTime = now;
+    }
     if (this.emulatedSinceRender > 0 || this.resync) {
       this.syncFromEmulator();
       this.emulatedSinceRender = 0;

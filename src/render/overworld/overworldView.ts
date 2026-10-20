@@ -458,7 +458,7 @@ export class OverworldView {
     const fogFar = indoor ? 45 : underwater ? 38 : (w === 6 || w === 9 || w === 8) ? 32 : 64;
     fogObj.near = fogNear * this.zoom;
     fogObj.far = fogFar * this.zoom;
-    this.sky.setColors(skyColor, fog, indoor || underground);
+    this.sky.setColors(skyColor, fog, indoor || underground, this.time);
     // Characters are lit with a simplified model (no normal): ambient + part of the sun.
     // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI.
     const k = 1 / Math.PI;
