@@ -8,6 +8,9 @@ export const CLAIM_TOP = 4; // the cell's top-layer overhang card (crowns / eave
  *  draws the ground under it. (Legacy reads it nowhere; without it the terrain leaves ground art it
  *  cannot paint to the legacy art.) */
 export const CLAIM_DECOR = 8;
+/** 3D grass blades stand on the cell: they hide the legs of the characters walking in it, so the view
+ *  hides the GBA's grass overlay sprite there (and only there). Read only by the view. */
+export const CLAIM_BLADES = 16;
 
 export interface ClaimsSnapshot {
   bits: Uint8Array;

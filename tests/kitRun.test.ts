@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { extractAll, buildAll, disposeKit, type Family, type KitContext } from '../src/render/kit/semantics';
 import { createKitUniforms } from '../src/render/kit/materials';
-import { CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
+import { CLAIM_BLADES, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../src/render/overworld/claims';
+import { hidesGrassOverlay } from '../src/render/overworld/overworldView';
+import { SpriteKind } from '../src/game/spriteKinds';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { World } from '../src/render/overworld/world';
 import { MetatileAtlas } from '../src/render/overworld/metatileAtlas';
@@ -127,5 +129,46 @@ describe('semantic core', () => {
     expect(world.group.children.filter((o) => o.name === 'kit')).toHaveLength(1);
     world.build(fakeGrid(['....', '.#..', '....']), opts, { ...ctxB, style: 'retro' });
     expect(world.group.children.filter((o) => o.name === 'kit')).toHaveLength(0);
+  });
+});
+
+describe('grass overlay sprite', () => {
+  it('is hidden in Modern only where 3D blades stand on its cell', () => {
+    expect(hidesGrassOverlay(SpriteKind.Grass, 'modern', true)).toBe(true);
+    // short grass, or tall grass the grass family did not draw (its build failed): the GBA overlay
+    expect(hidesGrassOverlay(SpriteKind.Grass, 'modern', false)).toBe(false);
+    expect(hidesGrassOverlay(SpriteKind.Grass, 'retro', true)).toBe(false);
+    expect(hidesGrassOverlay(SpriteKind.Upright, 'modern', true)).toBe(false);
+  });
+
+  it("the world knows where the grass family's blades stand (none in Retro, nor after a failed build)", () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const grid = fakeGrid(['....', '....']);
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const a = fakeAnalysis(['....', '....'], { margin: 14 });
+    const blades = (fail?: 'build'): Family<number> => ({
+      name: 'grass',
+      extract(_c, claims) { claims.claim(a.idx(2, 1), CLAIM_TOP | CLAIM_BLADES); return 0; },
+      build() {
+        if (fail) throw new Error('boom');
+        return new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+      },
+    });
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const mats = createWorldMaterials(atlas.target.texture, u);
+    const modern = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
+    const world = new World(atlas, mats, u, [blades()]);
+    world.build(grid, opts, modern);
+    expect(world.hasGrassBlades(2.5, 1.5)).toBe(true);
+    expect(world.hasGrassBlades(2.1, 1.9)).toBe(true);
+    expect(world.hasGrassBlades(1.5, 1.5)).toBe(false);
+    expect(world.hasGrassBlades(-40, -40)).toBe(false); // (outside the grid)
+    world.build(grid, opts, { ...modern, style: 'retro' });
+    expect(world.hasGrassBlades(2.5, 1.5)).toBe(false);
+    const failed = new World(atlas, mats, u, [blades('build')]);
+    failed.build(grid, opts, modern);
+    expect(failed.hasGrassBlades(2.5, 1.5)).toBe(false);
+    warn.mockRestore();
   });
 });

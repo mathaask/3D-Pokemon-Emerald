@@ -1,6 +1,7 @@
 // Tall grass: instanced clumps of curved, tapered blades on every tall, long and ash-covered grass
 // cell. They sway with the wind and part around characters, hiding their legs (KIT_BEND; this
-// replaces the GBA's grass overlay sprite, which OverworldView hides in Modern). Blades take the
+// replaces the GBA's grass overlay sprite, which OverworldView hides on the cells the blades stand
+// on: CLAIM_BLADES). Blades take the
 // tile's blade colour, dark at the root and light at the tip, and are lit like the ground on both
 // faces (their normals lean up); the terrain under them takes the same colour (terrain.ts).
 //
@@ -10,7 +11,7 @@
 import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { K } from '../overworld/analyze';
-import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
+import { CLAIM_BLADES, CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { bgr555ToSrgb, dominantColor, luma, lush, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, rng } from './geom';
 import { applyKitMaterial, kitMaterial } from './materials';
@@ -147,7 +148,8 @@ export const grassFamily: Family<GrassCell[]> = {
         tints.set(m, tint);
       }
       out.push({ x: a.cellX(i), y: a.cellY(i), h: Math.max(0, a.height[i]), long, tint });
-      claims.claim(i, CLAIM_TOP); // the 3D blades replace the drawn grass tips
+      // the 3D blades replace the drawn grass tips, and the overlay sprite hiding the legs
+      claims.claim(i, CLAIM_TOP | CLAIM_BLADES);
     }
     return out;
   },

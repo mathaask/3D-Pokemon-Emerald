@@ -35,6 +35,15 @@ export const CAMERA_PRESETS: CameraPreset[] = [
   { name: 'Low', pitch: 0.36, distance: 9.5, fov: 45 },
 ];
 
+/**
+ * Whether the GBA's grass overlay sprite (drawn over the legs of a character in grass) is left out:
+ * in Modern where 3D grass blades stand on its cell (kit/grass.ts: they hide the legs and part around
+ * them). Elsewhere (short grass, tall grass the grass family did not draw, Retro) it is drawn.
+ */
+export function hidesGrassOverlay(kind: SpriteKind, style: WorldStyle, bladesOnCell: boolean): boolean {
+  return kind === SpriteKind.Grass && style === 'modern' && bladesOnCell;
+}
+
 const MAP_TYPE_INDOOR = 8;
 const MAP_TYPE_UNDERGROUND = 4;
 const MAP_TYPE_SECRET_BASE = 9;
@@ -252,16 +261,15 @@ export class OverworldView {
       if (!s.coordOffset || s.invisible) continue;
       const kind = this.classifier ? this.classifier.kind(s) : SpriteKind.Upright;
       if (kind === SpriteKind.Hidden) continue;
-      // Modern: 3D grass blades (kit/grass.ts) hide the legs and part around them.
-      if (kind === SpriteKind.Grass && this.worldStyle === 'modern') continue;
-      const slot = this.spriteAtlas.slots.get(s.index);
-      if (!slot) continue;
       const fx = s.worldX / 16;
       const flat = kind === SpriteKind.Flat;
       // Upright cards stand on the cell centre; flat decals cover their GBA rectangle.
       let fy = flat ? s.worldY / 16 : s.worldY / 16 - 0.5;
       const cellX = Math.floor(fx);
       const cellY = Math.floor(flat ? fy - 0.5 : fy);
+      if (hidesGrassOverlay(kind, this.worldStyle, this.world.hasGrassBlades(cellX + 0.5, cellY + 0.5))) continue;
+      const slot = this.spriteAtlas.slots.get(s.index);
+      if (!slot) continue;
       const h = this.spriteHeight(state, s, cellX, cellY);
       if (kind === SpriteKind.Grass) fy += 0.06; // in front of the legs it covers
       list.push({

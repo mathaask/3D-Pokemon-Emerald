@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { flowerFamily, isFlowerTile, petalColors, setFlowerIds, type FlowerCell } from '../src/render/kit/flowers';
 import { BLADES, bladeColor, clump, grassFamily, LONG_SCALE, type GrassCell } from '../src/render/kit/grass';
 import { cellLook } from '../src/render/kit/terrain';
-import { Claims, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
+import { Claims, CLAIM_BLADES, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { bgr555ToSrgb, luma } from '../src/render/kit/palette';
@@ -195,6 +195,14 @@ describe('grass extract', () => {
     expect(at(2, 1)!.tint[0]).toBeGreaterThanOrEqual(at(2, 1)!.tint[1]); // ash
     for (const c of cells) expect(claims.has(a.idx(c.x, c.y), CLAIM_TOP)).toBe(true);
     expect(claims.has(a.idx(0, 0), CLAIM_TOP)).toBe(false);
+  });
+
+  it('flags the cells its blades stand on (the view hides the GBA grass overlay sprite there)', () => {
+    const a = map(['.g.', 'LEA']);
+    const claims = new Claims(a.N);
+    const cells = grassFamily.extract(ctxOf(a), claims);
+    for (const c of cells) expect(claims.has(a.idx(c.x, c.y), CLAIM_BLADES)).toBe(true);
+    expect(claims.has(a.idx(0, 0), CLAIM_BLADES)).toBe(false);
   });
 
   it('leaves cells an earlier family took as an object', () => {

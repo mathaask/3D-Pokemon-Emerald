@@ -14,7 +14,7 @@ import { runKit, disposeKit, type Family, type KitContext, type FamilyReport } f
 import { FAMILIES } from '../kit/index';
 import { analyze, queries } from './analyze';
 import { emitLegacy } from './legacyQuads';
-import { CLAIM_SURFACE, type Claims } from './claims';
+import { CLAIM_BLADES, CLAIM_SURFACE, type Claims } from './claims';
 import type { CellModel, ClassifyOptions } from './classify';
 import { TreeCards, type TreeRow } from './treeCards';
 
@@ -85,6 +85,8 @@ export class World {
   /** Walkable surface heights the kit draws instead of the analysis' (per grid cell, NaN = none;
    *  null: Retro, or the kit did not run). */
   private surfaceY: Float32Array | null = null;
+  /** Cells where the kit's 3D grass blades stand (null: Retro, the kit did not run, or no blades). */
+  private blades: Uint8Array | null = null;
   private cellOf: ((x: number, y: number) => number) | null = null;
 
   private base = new THREE.Mesh(
@@ -138,6 +140,7 @@ export class World {
     }
     const model: CellModel = { ...queries(a), ...emitLegacy(a, claims) };
     this.surfaceY = claims ? surfaceHeights(claims) : null;
+    this.blades = claims ? bladeCells(claims) : null;
     this.cellOf = (x, y) => {
       const xi = Math.floor(x), yi = Math.floor(y);
       return a.inside(xi, yi) ? a.idx(xi, yi) : -1;
@@ -216,6 +219,23 @@ export class World {
     if (i >= 0 && !Number.isNaN(this.surfaceY![i])) return this.surfaceY![i];
     return this.model.heightAt(x, y);
   }
+
+  /** True where the kit's 3D grass blades stand on grid cell (x, y): they hide characters' legs. */
+  hasGrassBlades(x: number, y: number): boolean {
+    const i = this.blades && this.cellOf ? this.cellOf(x, y) : -1;
+    return i >= 0 && this.blades![i] === 1;
+  }
+}
+
+/** The cells still claimed CLAIM_BLADES after the kit's build (a failed grass family lost them). */
+function bladeCells(claims: Claims): Uint8Array | null {
+  let out: Uint8Array | null = null;
+  for (let i = 0; i < claims.bits.length; i++) {
+    if (!claims.has(i, CLAIM_BLADES)) continue;
+    out ??= new Uint8Array(claims.bits.length);
+    out[i] = 1;
+  }
+  return out;
 }
 
 /** The surface heights still claimed after the kit's build (a family whose build failed lost its
