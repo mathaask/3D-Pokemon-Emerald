@@ -208,6 +208,22 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   its neighbour stays pixel art; both switch to the right models when you cross. Retro regress = `before` (calls/triangles −1/−2 everywhere: the atlas
   no longer draws every frame); pixels differ only at shadow edges (the Task 16 PCF `shadow.radius` is set per quality
   in both styles: slightly softer edges in Retro too) and in water animation phase.
+- Task 17b (controller-inserted, after Phase 1): **live events include the connected maps' strips.**
+  `kit/events.ts` `liveGridEvents` reads the current map's events plus every connected map's (header.connections →
+  gMapGroups → its header), shifted by `stripPlacement` exactly as fieldmap.c `Fill{South,North,West,East}Connection`
+  lays them into gBackupMapLayout (map + 15 columns / 14 rows; south/north/west strips 7 cells, east 8; dive/emerge
+  not laid out; a cell two strips share belongs to the later one), kept only on the copied cells; cached per
+  events/connections/layout (0.02 ms uncached). Unit-tested against a literal transcription of the C fill over a sweep
+  of offsets, and live against the real backup grid (`r101`, `s22`: every strip cell equals the neighbour's layout).
+  Live from Route 101: Oldale's Pokémon Center (sign + emblem) and the house beside it are the same models before and
+  after crossing (emblem z 3.71 → 23.71 = the 20-row origin shift). Game-wide static check (57 connected outdoor maps):
+  all 39 strip buildings now have their own map's kind (15 corrected); 12 differ only in extent where the strip cuts
+  them. **Retro shadows** are the pre-Phase-1 ones again (`shadowSettings(q, style)`: Retro 2048 / radius 1 at every
+  quality, applied on a style switch): Retro regress = pre-Task-16 Retro byte for byte (11 maps; the 5 water maps
+  differ only in animation phase). The rest of the Retro-vs-`before` residual (Littleroot 0.59 % px > 2, rows of
+  texel edges in the tilt-shift bands) is Task 16a `c5d37e7`'s 5-variant metatile atlas (3072 → 3840 px tall:
+  nearest-texel rounding moves); with a 4-variant atlas it is byte-identical — left as is (sub-texel, not a look change).
+  Tests: `npm test` 21 files / 423; smoke golden + semantics 15; `tsc` clean.
 
 ## Phase 1 result (2026-10-20)
 Modern style draws terrain, water, cliffs/ledges, trees, tall grass, flowers, buildings (houses, lab, PC, Mart, gyms,
@@ -229,15 +245,16 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
   - Town-tileset fences, bushes and bollards are still pixel art (props only label `gTileset_General` + Rustboro lamps).
   - Lilycove Department Store is read as water by the analysis (no building); legacy specials: Devon Corp, Battle
     Pyramid/Pike/Palace, Fan Club, cable car, Battle Frontier gate/Ranking Hall.
-  - Buildings in the connected maps' strips are built without that map's warps (Task 17 above): Pokémon Centers /
-    Marts there are plain houses and null-warp doors can stay pixel art until you cross.
+  - ~~Buildings in the connected maps' strips are built without that map's warps~~ — **fixed (Task 17b)**: live events
+    include the connected maps' strips. Left: a building the strip cuts can be narrower/shorter (or, where the
+    strip's terrain-tile counts differ, wider) than in its own map, so its extent may still change when you cross.
   - The first 1–2 map rebuilds after boot may hitch (98–193 ms, JIT warm-up); a boot-time warm-up build would fix it.
   - Pixel-water squares can return under palette effects (drought weather, fades: the Dry cut follows live colours).
   - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
 
 ## Next step
 - Phase 2 (characters, Pokémon, field objects — spec §6): write its plan in `docs/superpowers/plans/`, then execute.
-  Optional first: the Phase 1 follow-ups above (connected-map events, terrain height solver v2).
+  Optional first: the Phase 1 follow-up above (terrain height solver v2; connected-map events done in Task 17b).
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
@@ -254,7 +271,8 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
 ## Key facts (so they don't need re-deriving)
 - `classify.ts` is now a wrapper over `analyze.ts` (pure analysis) + `legacyQuads.ts` (quads, honours `Claims`).
 - `src/game/rom/maps.ts` already decodes warps + bg events (`MapEvents`); map names in `src/game/mapNames.ts`.
-- Live backup grid coords include `MAP_OFFSET = 7` (`src/game/state.ts`); preview uses offset 0.
+- Live backup grid coords include `MAP_OFFSET = 7` (`src/game/state.ts`); preview uses offset 0. The backup grid is
+  the map + 15 columns / 14 rows with the connected maps' strips (`kit/events.ts` `stripPlacement`, = fieldmap.c).
 - `ObjectEventSnap.graphicsId` available for object model replacements (phase 2).
 - Indoor maps share primary `gTileset_Building`; outdoor share `gTileset_General`.
 - Existing screenshots of the old look: `out/3d/*.png` (pv_*, t_* are map previews).
