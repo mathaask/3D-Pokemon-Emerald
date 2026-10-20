@@ -57,7 +57,7 @@ const px = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
 const ASH_LEAF = px(19, 23, 12);
 const T = {
   ground: 1, wall: 2, roof: 3, door: 4, post: 5, steps: 6, fence: 7, other: 8, grass: 9, hedge: 10, blueWall: 11,
-  walkDoor: 12, walkway: 13, teal: 14, bush: 15, corner: 16, sea: 17, blue: 18, lawn: 19,
+  walkDoor: 12, walkway: 13, teal: 14, bush: 15, corner: 16, sea: 17, blue: 18, lawn: 19, window: 20,
   ashA: 0x220, ashB: 0x221, rock: 0x222,
 };
 const CREAM = px(28, 25, 20), LAWN_A = px(10, 22, 8), LAWN_B = px(12, 26, 10);
@@ -71,7 +71,8 @@ const lawn = (x: number) => (x % 2 ? LAWN_B : LAWN_A);
  * wall, 'A' / 'a' ash-forest blocks, 'd' a walk-in door (walkable, NON_ANIMATED_DOOR), 'x' a
  * treehouse walkway (walkable, NO_RUNNING), 'L' a teal wall the analysis takes for leaves, 'b' a
  * bush, ',' a striped lawn, 'C' a wall's corner drawn over the lawn (its bottom left), '~'
- * the sea, 'B' a blue harbour wall (the analysis reads it as water beside the sea),
+ * the sea, 'B' a blue harbour wall (the analysis reads it as water beside the sea), 'V' a cream wall
+ * with a framed 8x6 window of the wall tile's glass blue in it,
  * '#' rock. `border` defaults to rock (terrain: repeated all around the map). `general`: the
  * tiles are the General tileset's.
  */
@@ -97,6 +98,11 @@ function map(rows: string[], border = [T.rock, T.rock, T.rock, T.rock], underwat
   fill(T.bush, px(8, 22, 6)); info.green[T.bush] = 0.9;
   fill(T.sea, px(6, 12, 28)); info.attributes[T.sea] = MB.OCEAN_WATER; info.blue[T.sea] = 1;
   fill(T.blue, px(10, 14, 30)); info.blue[T.blue] = 0.8;
+  fill(T.window, px(28, 25, 20));
+  for (let y = 3; y <= 10; y++) for (let x = 3; x <= 12; x++) {
+    const c = y >= 4 && y <= 9 && x >= 4 && x <= 11 ? px(16, 24, 30) : px(8, 9, 13);
+    info.both[T.window * 256 + y * 16 + x] = c; info.bottom[T.window * 256 + y * 16 + x] = c;
+  }
   for (let p = 0; p < 256; p++) { info.both[T.lawn * 256 + p] = lawn(p & 15); info.bottom[T.lawn * 256 + p] = lawn(p & 15); }
   // the wall's bottom-left corner cut off: the lawn shows there (bottom layer, top transparent);
   // a detail at the foot of the wall drawn in the bottom layer, in the lawn's other stripe colour
@@ -110,7 +116,7 @@ function map(rows: string[], border = [T.rock, T.rock, T.rock, T.rock], underwat
     D: T.door | 0x0400, p: T.post | 0x0400, f: T.fence | 0x0400, O: T.other | 0x0400,
     h: T.hedge | 0x0400, w: T.blueWall | 0x0400, A: T.ashA | 0x0400, a: T.ashB | 0x0400, '#': T.rock | 0x0400,
     d: T.walkDoor | 0x3000, x: T.walkway | 0x3000, L: T.teal | 0x0400, b: T.bush | 0x0400, C: T.corner | 0x0400,
-    '~': T.sea | 0x0400, B: T.blue | 0x0400, ',': T.lawn | 0x3000,
+    '~': T.sea | 0x0400, B: T.blue | 0x0400, ',': T.lawn | 0x3000, V: T.window | 0x0400,
   };
   const w = rows[0].length, h = rows.length;
   const cells = new Uint16Array(w * h);
@@ -473,6 +479,66 @@ describe('building details', () => {
     tex.addEventListener('dispose', () => { disposed = true; });
     disposeKit(root, kit);
     expect(disposed).toBe(true);
+  });
+
+  it("lights a special facade's window glass at night, as a house's windows; not wall paint in a glass colour", () => {
+    // windows (V: a framed 8x6 pane), and the wall tile's band of the same blue running along a row of
+    // walls (W W W W: 64 px wide, paint like the Oceanic Museum's stripes)
+    const rows = ['..........', '.RRRRRR...', '.VWWWWV...', '.sVVDVs...', '..........'];
+    const { root, kit, out } = build(rows, [[4, 3, 'BattleFrontier_Lounge2']]);
+    expect(out[0].kind).toBe('special');
+    const { w, h, px: fpx, glass } = out[0].facade!;
+    const pane = (i: number) => {
+      const x = i % w, y = (i / w) | 0, col = (x >> 4) + 1, row = (y >> 4) + 2, lx = x & 15, ly = y & 15;
+      return rows[row][col] === 'V' && lx >= 4 && lx <= 11 && ly >= 4 && ly <= 9;
+    };
+    let panes = 0, paint = 0;
+    for (let i = 0; i < w * h; i++) {
+      expect(glass[i] === 1, `pixel ${i % w},${(i / w) | 0}`).toBe(pane(i));
+      if (pane(i)) panes++;
+      else if (fpx[i] === px(16, 24, 30)) paint++;
+    }
+    expect(panes).toBe(5 * 48); // (five V cells)
+    expect(paint).toBe(4 * 64); // (the band: the same colour, unlit)
+    const [facade] = named(root, 'facade');
+    const tex = mapOf(facade) as THREE.DataTexture;
+    const shader = {
+      uniforms: {} as Record<string, { value: unknown }>,
+      vertexShader: '#include <begin_vertex>\n#include <project_vertex>\n#include <worldpos_vertex>',
+      fragmentShader: '#include <clipping_planes_fragment>\n#include <color_fragment>\n#include <normal_fragment_maps>\n#include <emissivemap_fragment>',
+    };
+    (facade.material as THREE.Material).onBeforeCompile(shader as never, undefined as never);
+    expect(shader.fragmentShader).toContain('tGlass');
+    expect(shader.fragmentShader).toContain('uNight');
+    // the mask over the 4x colour texture (rows bottom-up): the panes only, as upscaled (the upscaler
+    // rounds their corners: a corner texel takes the frame's colour, and is unlit with it)
+    const mask = shader.uniforms.tGlass.value as THREE.DataTexture;
+    const W4 = tex.image.width, H4 = tex.image.height;
+    expect([mask.image.width, mask.image.height]).toEqual([W4, H4]);
+    const m = mask.image.data as Uint8Array, colour = new Uint8Array(tex.image.data!.buffer);
+    const glassC = [colour[0], colour[1], colour[2]]; // (overwritten below with a lit texel's colour)
+    let lit = 0;
+    for (let t = 0; t < m.length; t++) {
+      const i = ((H4 - 1 - ((t / W4) | 0)) >> 2) * w + ((t % W4) >> 2);
+      expect(colour[t * 4 + 3]).toBe(255); // (the colour texture stays opaque)
+      if (m[t] !== 255) { expect(m[t]).toBe(0); continue; }
+      expect(pane(i), `texel ${t}`).toBe(true);
+      if (!lit) for (let c = 0; c < 3; c++) glassC[c] = colour[t * 4 + c];
+      for (let c = 0; c < 3; c++) expect(colour[t * 4 + c]).toBe(glassC[c]); // every lit texel is the glass
+      lit++;
+    }
+    expect(lit).toBeGreaterThan(0.95 * 5 * 48 * 16);
+    expect(kit.disposables).toContain(mask);
+  });
+
+  it('gives a facade without glass no glow hook', () => {
+    const rows = ['..........', '.RRRRRR...', '.OOOOOO...', '.sOODOs...', '..........'];
+    const { root, out } = build(rows, [[4, 3, 'BattleFrontier_Lounge2']]);
+    expect(out[0].facade!.glass.every((g) => g === 0)).toBe(true);
+    const [facade] = named(root, 'facade');
+    const shader = { uniforms: {} as Record<string, { value: unknown }>, vertexShader: '', fragmentShader: '#include <emissivemap_fragment>' };
+    (facade.material as THREE.Material).onBeforeCompile(shader as never, undefined as never);
+    expect(shader.fragmentShader).not.toContain('tGlass');
   });
 });
 

@@ -32,8 +32,9 @@ export interface BuildingPlacement {
   recess: number[];
   /** Columns of a walk-in door: its cell, before the wall in its recess, is the player's to step on. */
   walkIn: number[];
-  /** `special`: the wall rows' ROM pixels (BGR555, 0x8000 transparent), row-major from the top. */
-  facade: { w: number; h: number; px: Uint16Array } | null;
+  /** `special`: the wall rows' ROM pixels (BGR555, 0x8000 transparent), row-major from the top,
+   *  and its window panes (1 = glass, per pixel: they glow at night). */
+  facade: { w: number; h: number; px: Uint16Array; glass: Uint8Array } | null;
 }
 
 /** Window glass: a light blue (not the navy outlines), unlike the wall around it (Marts, Pokémon
@@ -120,9 +121,11 @@ function roofColor(tc: TileColors, mts: readonly number[]): RGB | null {
 /**
  * A special building's facade: the ROM pixels (both layers) of each column's `rows` wall rows up
  * to its own front's row `bots[k]` (a front two rows back shows the art above its landing), with
- * the ground showing at its edges cleared (see clearGround) against the `grounds` metatiles.
+ * the ground showing at its edges cleared (see clearGround) against the `grounds` metatiles, and its
+ * window panes (facadeGlass).
  */
-function facadePixels(a: MapAnalysis, x0: number, bots: number[], rows: number, grounds: Iterable<number>): { w: number; h: number; px: Uint16Array } {
+function facadePixels(a: MapAnalysis, x0: number, bots: number[], rows: number, grounds: Iterable<number>,
+  glass: (c: RGB) => boolean): { w: number; h: number; px: Uint16Array; glass: Uint8Array } {
   const w = bots.length * 16, h = rows * 16;
   const px = new Uint16Array(w * h);
   const under = new Uint8Array(w * h);
@@ -144,7 +147,49 @@ function facadePixels(a: MapAnalysis, x0: number, bots: number[], rows: number, 
     for (let p = 0; p < 256; p++) if (!(both[g * 256 + p] & 0x8000)) at[((p >> 4) & 7) * 8 + (p & 7)].add(both[g * 256 + p]);
   }
   clearGround(px, under, w, h, (x, y, v) => at[(y & 7) * 8 + (x & 7)].has(v));
-  return { w, h, px };
+  return { w, h, px, glass: facadeGlass(px, w, h, glass) };
+}
+
+/** A window pane in facade pixels: 4..32 wide (two cells), 4..16 high (one), 16 px or more, filling half its
+ *  box or more (houses' and shops' windows, portholes, a tower's glazing). Thinner, smaller, wider,
+ *  taller or sparser runs of a glass colour are trim, highlights, pillars or wall paint (the Oceanic
+ *  Museum's light blue stripes run along its whole front). */
+const PANE_MIN = 4, PANE_MAX_W = 32, PANE_MAX_H = 16, PANE_PX = 16;
+
+/** Mask (1 = glass) of a facade's window panes: 4-connected runs of `glass`-coloured pixels the size
+ *  and shape of a pane. */
+export function facadeGlass(px: Uint16Array, w: number, h: number, glass: (c: RGB) => boolean): Uint8Array {
+  const out = new Uint8Array(w * h); // 1 = glass colour, 2 = visited, 3 = a pane's
+  const isGlassPx = new Map<number, boolean>();
+  for (let i = 0; i < w * h; i++) {
+    const v = px[i];
+    if (v & 0x8000) continue;
+    let g = isGlassPx.get(v);
+    if (g === undefined) isGlassPx.set(v, (g = glass(bgr555ToSrgb(v))));
+    if (g) out[i] = 1;
+  }
+  const blob: number[] = [];
+  for (let s = 0; s < w * h; s++) {
+    if (out[s] !== 1) continue;
+    blob.length = 0;
+    out[s] = 2;
+    blob.push(s);
+    let x0 = w, x1 = 0, y0 = h, y1 = 0;
+    for (let k = 0; k < blob.length; k++) {
+      const o = blob[k], x = o % w, y = (o - x) / w;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      if (x > 0 && out[o - 1] === 1) { out[o - 1] = 2; blob.push(o - 1); }
+      if (x < w - 1 && out[o + 1] === 1) { out[o + 1] = 2; blob.push(o + 1); }
+      if (y > 0 && out[o - w] === 1) { out[o - w] = 2; blob.push(o - w); }
+      if (y < h - 1 && out[o + w] === 1) { out[o + w] = 2; blob.push(o + w); }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const pane = bw >= PANE_MIN && bh >= PANE_MIN && bw <= PANE_MAX_W && bh <= PANE_MAX_H && blob.length >= PANE_PX &&
+      blob.length * 2 >= bw * bh;
+    if (pane) for (const o of blob) out[o] = 3;
+  }
+  for (let i = 0; i < w * h; i++) out[i] = out[i] === 3 ? 1 : 0;
+  return out;
 }
 
 /**
@@ -253,7 +298,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       out.push({
         kind, x0, x1, top, bottom, base, wallRows, doorX,
         roof: soften(roof), wall: soften(wall), windows, chimneyX, recess, walkIn,
-        facade: kind === 'special' ? facadePixels(a, x0, recess.map((r) => bottom - Math.max(0, r - 1)), wallRows, (grounds ??= mapGrounds(a))) : null,
+        facade: kind === 'special' ? facadePixels(a, x0, recess.map((r) => bottom - Math.max(0, r - 1)), wallRows, (grounds ??= mapGrounds(a)), glass) : null,
       });
     });
     return out;
@@ -273,7 +318,7 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
     };
     add(parts.body, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.85, fade: true }).material);
     add(parts.roof, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.7, pattern: 'roofTiles', fade: true, side: THREE.DoubleSide }).material);
-    add(parts.glass, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.15, metalness: 0.1, glow: 1.6, fade: true }).material);
+    add(parts.glass, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.15, metalness: 0.1, glow: WINDOW_GLOW, fade: true }).material);
     for (const e of parts.extras) root.add(e);
     return root;
   },
@@ -432,6 +477,13 @@ const OPENING_TOP = 1.32;
 /** Signs are lit from within (their own colours, not the windows' warm wash): a little by day, so
  *  they read in the eave's shadow, more at night. */
 const SIGN_GLOW = 'totalEmissiveRadiance += diffuseColor.rgb * (0.12 + 0.5 * uNight);';
+/** Night glow of window glass (materials.ts KIT_GLOW's warm light), houses' and special facades'. */
+const WINDOW_GLOW = 1.6;
+const FACADE_GLASS_HEAD = 'uniform sampler2D tGlass;';
+/** Alpha byte marking a facade's glass pixels through the upscaler (every other pixel is 255). */
+const GLASS_ALPHA = 0xfe;
+/** A special facade's glass texels (tGlass, over its map's uv) glow at night as windows do. */
+const FACADE_GLASS_GLOW = `totalEmissiveRadiance += vec3(1.0, 0.72, 0.38) * uNight * ${WINDOW_GLOW.toFixed(2)} * texture(tGlass, vMapUv).r;`;
 /** The roof emblem, in full sun by day (its white would bloom), is lit at night only. */
 const EMBLEM_GLOW = 'totalEmissiveRadiance += diffuseColor.rgb * 0.35 * uNight;';
 const WHITE = toLinear([0.95, 0.95, 0.93]);
@@ -584,23 +636,43 @@ function addKindDetails(p: BuildingPlacement, f: BuildingFrame, rise: number, pa
  *  character survive. */
 function addSpecialFacade(p: BuildingPlacement, f: BuildingFrame, parts: BuildingParts, kit: KitContext): void {
   if (!p.facade) return;
-  const { w, h, px } = p.facade;
+  const { w, h, px, glass } = p.facade;
   const pack = (c: RGB) => ((255 << 24) | (Math.round(c[2] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[0] * 255)) >>> 0;
   const wall = pack(p.wall);
   const packed = new Map<number, number>();
   const src = new Uint32Array(w * h);
+  let panes = false;
   for (let i = 0; i < w * h; i++) {
     const v = px[i];
     if (v & 0x8000) { src[i] = wall; continue; }
     let c = packed.get(v);
     if (c === undefined) packed.set(v, (c = pack(soften(bgr555ToSrgb(v)))));
-    src[i] = c;
+    // window glass is marked in its alpha (the upscaler copies source pixels: the mark follows the
+    // upscaled panes' edges), restored after
+    src[i] = glass[i] ? (c & 0x00ffffff) | (GLASS_ALPHA << 24) : c;
+    if (glass[i]) panes = true;
   }
   const big = scale4x(src, w, h);
   const W4 = w * 4, H4 = h * 4;
   // DataTexture rows run bottom-up: flip while copying.
   const flipped = new Uint32Array(W4 * H4);
   for (let y = 0; y < H4; y++) flipped.set(big.subarray(y * W4, (y + 1) * W4), (H4 - 1 - y) * W4);
+  // Its window panes glow at night as a house's windows do: a mask of the glass texels.
+  let lit: THREE.DataTexture | null = null;
+  if (panes) {
+    const mask = new Uint8Array(W4 * H4);
+    for (let i = 0; i < mask.length; i++) {
+      if (flipped[i] >>> 24 !== GLASS_ALPHA) continue;
+      mask[i] = 255;
+      flipped[i] |= 0xff000000;
+    }
+    lit = new THREE.DataTexture(mask, W4, H4, THREE.RedFormat, THREE.UnsignedByteType);
+    lit.magFilter = THREE.LinearFilter;
+    lit.minFilter = THREE.LinearMipmapLinearFilter;
+    lit.generateMipmaps = true;
+    lit.needsUpdate = true;
+    kit.disposables.push(lit);
+  }
   const tex = new THREE.DataTexture(new Uint8Array(flipped.buffer), W4, H4, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.magFilter = THREE.LinearFilter;
@@ -625,7 +697,13 @@ function addSpecialFacade(p: BuildingPlacement, f: BuildingFrame, parts: Buildin
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(index);
-  const mesh = new THREE.Mesh(g, kitMaterial(kit.uniforms, { map: tex, roughness: 0.85, fade: true }).material);
+  const km = lit
+    ? kitMaterial(kit.uniforms, {
+      map: tex, roughness: 0.85, fade: true, uniforms: { tGlass: { value: lit } },
+      fragHead: FACADE_GLASS_HEAD, fragEmissive: FACADE_GLASS_GLOW, hookKey: 'facadeGlass',
+    })
+    : kitMaterial(kit.uniforms, { map: tex, roughness: 0.85, fade: true });
+  const mesh = new THREE.Mesh(g, km.material);
   mesh.name = 'facade';
   mesh.receiveShadow = true;
   parts.extras.push(mesh);

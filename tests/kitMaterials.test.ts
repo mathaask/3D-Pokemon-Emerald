@@ -93,6 +93,12 @@ describe('kitMaterial', () => {
     expect(k.depth!.defines).toHaveProperty('KIT_WIND');
     expect(k.depth!.defines).not.toHaveProperty('KIT_BEND');
   });
+  it("ends a one-line fragHead with a newline (three's shader starts with a #define)", () => {
+    const k = kitMaterial(u, { fragHead: 'uniform sampler2D tX;', fragEmissive: 'totalEmissiveRadiance += vec3(texture(tX, vec2(0.0)).r);' });
+    const shader = { uniforms: {}, vertexShader: '', fragmentShader: '#define STANDARD\n#include <emissivemap_fragment>' };
+    k.material.onBeforeCompile(shader as never, undefined as never);
+    expect(shader.fragmentShader).toContain('uniform sampler2D tX;\n#define STANDARD');
+  });
   it('vertTransform alone adds a depth material', () => {
     const k = kitMaterial(u, { vertTransform: 'transformed.y += 0.1;' });
     expect(k.depth).not.toBeNull();

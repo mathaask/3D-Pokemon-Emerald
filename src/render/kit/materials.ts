@@ -254,7 +254,7 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
     .replace('#include <project_vertex>', PROJECT_VERTEX)
     .replace('#include <worldpos_vertex>', WORLDPOS_VERTEX);
   if (!full) return;
-  s.fragmentShader = FRAG_PRELUDE + (o.fragHead ?? '') + s.fragmentShader
+  s.fragmentShader = FRAG_PRELUDE + (o.fragHead ?? '') + '\n' + s.fragmentShader
     .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n' + FADE)
     .replace('#include <color_fragment>', '#include <color_fragment>\n' + PATTERNS + (o.fragColor ?? ''))
     .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + (o.fragNormal ?? ''))
