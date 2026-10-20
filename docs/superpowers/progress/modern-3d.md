@@ -7,8 +7,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   characters, battles; approach A in 4 phases. Spec approved ("go for it").
 - Git repo initialised; baseline commit `667c190`.
 - Phase 1 plan written: `docs/superpowers/plans/2026-10-19-phase1-outdoor.md` (17 tasks). User approved;
-  executing **subagent-driven** on branch `phase1-outdoor`. SDD ledger (task-level detail, rulings):
-  `.superpowers/sdd/2026-10-19-phase1-outdoor/progress.md` (gitignored) — read it first after a reset.
+  executed **subagent-driven** on branch `phase1-outdoor` (+ inserted tasks 6b, 13b, 15b, 15c, 16a, 17b and a final
+  review fix wave). **Phase 1 is complete; final whole-branch review clean.** The full execution ledger (every
+  controller ruling + the deferred-minor backlog per task) is preserved in
+  `docs/superpowers/progress/phase1-sdd-ledger.md`; the final review in `phase1-final-review.md`.
 - Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
   max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
   NOTE: route119's legacy build already exceeds the 150 ms budget before Phase 1 (see ledger ruling).
