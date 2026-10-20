@@ -187,7 +187,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
 - [x] 5 semantic core · [x] 6 terrain · [x] 7 water (+6b terrain colour fix) · [x] 8 cliffs · [x] 9 trees · [x] 10 fade
 - [x] 11 grass/flowers · [x] 12 buildings I · [x] 13 buildings II (+13b walk-in specials) · [x] 14 table/props
-- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [ ] 16a polish backlog · [ ] 16 polish/perf · [ ] 17 live check/docs
+- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [x] 16a polish backlog · [ ] 16 polish/perf · [ ] 17 live check/docs
 
 ## Phases
 - [ ] Phase 1 — Foundation + Outdoor environment
