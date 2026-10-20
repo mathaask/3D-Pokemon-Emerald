@@ -7,11 +7,14 @@
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
-// ({ [entry_style]: { calls, triangles, programs, stepMsMax, gpuMs?, gpuP90?, cpuMs?, diff?, selftest? } }).
+// ({ [entry_style]: { calls, triangles, programs, stepMsMax, gpuMs?, gpuP90?, cpuMs?, diff?, selftest? } };
+// stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first, cold one).
 // --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
-// (a pixel differs when a channel differs by > 8). --gpu times 60 more frames on the GPU after the
-// screenshot (timer queries, medians). stats.json is merged per label, so partial --only runs add
-// or replace entries; the sheets are rebuilt from every PNG in the folder.
+// (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
+// pixels (-1: sizes differ) }). --gpu times 60 more frames on the GPU after the screenshot (timer
+// queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
+// (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
+// Exits non-zero when an entry fails, the page logs an error, or --compare lacks a reference shot.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,7 +61,7 @@ interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
-  diff?: { pct: number; bbox: Diff['bbox'] }; selftest?: unknown;
+  diff?: Diff; selftest?: unknown;
 }
 
 function arg(name: string, def: string): string {
@@ -191,6 +194,7 @@ async function main(): Promise<void> {
   const dpr = parseFloat(arg('dpr', '1'));
   const extra = arg('query', '');
   const compare = arg('compare', '');
+  if (compare && compare === label) throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   const gpu = flag('gpu');
   const selftest = flag('selftest');
   const entries = LIVE.filter((e) => !only.length || only.includes(e.name));
@@ -215,7 +219,9 @@ async function main(): Promise<void> {
       '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
     defaultViewport: { width: VIEW_W, height: VIEW_H, deviceScaleFactor: dpr },
   });
-  let failures = 0;
+  const failures: string[] = [];
+  const errored: string[] = []; // entries that logged page errors
+  const missingRefs: string[] = [];
   let pageErrors = 0;
   const diffs: string[] = [];
   try {
@@ -233,6 +239,7 @@ async function main(): Promise<void> {
       for (const style of styles) {
         const key = `${e.name}_${style}`;
         current = key;
+        const errorsBefore = pageErrors;
         try {
           if (!fs.existsSync(path.join(root, e.state))) throw new Error(`missing save state ${e.state}`);
           const q = ['manual=1', `state=/${e.state}`, `style=${style}`, e.query, extra].filter(Boolean).join('&');
@@ -247,10 +254,12 @@ async function main(): Promise<void> {
             console.log(`GPU: ${gpuName}`);
           }
           if (e.eval) await page.evaluate(e.eval);
+          // the entry's first frame builds the world and compiles programs (seconds, varying with
+          // Chrome's program cache): stepMsMax is the largest frame time after it
           let stepMsMax = 0;
-          for (const [keys, frames] of e.steps) {
+          for (const [n, [keys, frames]] of e.steps.entries()) {
             const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
-            for (const t of times) stepMsMax = Math.max(stepMsMax, t);
+            for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
           }
           // the page chrome's CSS transitions (the loader fading out) run on the wall clock: end them
           await page.evaluate(`document.getAnimations().forEach((a) => { try { a.finish(); } catch { /* infinite */ } })`);
@@ -276,11 +285,12 @@ async function main(): Promise<void> {
             const ref = path.join(refDir, `${key}.png`);
             if (fs.existsSync(ref)) {
               const d = await diffPng(page, file, ref);
-              entry.diff = { pct: d.pct, bbox: d.bbox };
+              entry.diff = d;
               const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
               diffs.push(`diff ${key.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
               line += ` | diff ${d.pct.toFixed(2)} % (${d.pixels} px)`;
             } else {
+              missingRefs.push(key);
               diffs.push(`diff ${key.padEnd(24)} no reference in ${compare}`);
             }
           }
@@ -288,9 +298,14 @@ async function main(): Promise<void> {
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
           console.log(line);
         } catch (err) {
-          failures++;
+          failures.push(key);
           console.log(`[${key}] FAILED: ${(err as Error).message}`);
+          // no stale shot or stats of an earlier run of this label may stand in for the failed entry
+          fs.rmSync(path.join(outDir, `${key}.png`), { force: true });
+          delete stats[key];
+          fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
+        if (pageErrors > errorsBefore) errored.push(key);
       }
     }
     current = 'sheets';
@@ -300,11 +315,11 @@ async function main(): Promise<void> {
     await server.close();
   }
   if (diffs.length) console.log(`\ncompare ${label} vs ${compare}:\n${diffs.join('\n')}`);
-  if (pageErrors) console.log(`${pageErrors} page error(s)`);
-  if (failures) {
-    console.log(`${failures} entr${failures === 1 ? 'y' : 'ies'} failed`);
-    process.exitCode = 1;
-  }
+  // any of these makes the run unusable as a gate: exit non-zero
+  if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
+  if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
+  if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
+  if (pageErrors || missingRefs.length || failures.length) process.exitCode = 1;
 }
 
 main().catch((e) => {
