@@ -16,7 +16,7 @@ import { analyze, queries } from './analyze';
 import { emitLegacy } from './legacyQuads';
 import { CLAIM_BLADES, CLAIM_SURFACE, type Claims } from './claims';
 import type { CellModel, ClassifyOptions } from './classify';
-import { TreeCards, type TreeRow } from './treeCards';
+import { TreeCardMaterials, TreeCards, type TreeRow } from './treeCards';
 
 export type WorldStyle = 'modern' | 'retro';
 
@@ -76,6 +76,8 @@ export class World {
   model: CellModel | null = null;
   private meshes: THREE.Mesh[] = [];
   treeCards: TreeCards | null = null;
+  /** The tree cards' materials, for the session (their shader programs outlive rebuilds). */
+  private treeCardMats: TreeCardMaterials | null = null;
   /** Extra ring of border cells rendered around the grid. */
   readonly margin = 14;
   private kit: KitContext;
@@ -176,7 +178,8 @@ export class World {
       return { px: t.px, py: t.py, pz: t.pz, y0: t.y0, u0: UV[0], v0: UV[1], u1: UV[2], v1: UV[3] };
     });
     if (rows.length) {
-      this.treeCards = new TreeCards(this.atlas.target.texture, rows);
+      this.treeCardMats ??= new TreeCardMaterials(this.atlas.target.texture);
+      this.treeCards = new TreeCards(this.treeCardMats, rows);
       this.group.add(this.treeCards.mesh);
     }
 

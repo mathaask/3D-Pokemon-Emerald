@@ -7,7 +7,7 @@ import { MB } from '../../game/behaviors';
 import type { MapAnalysis } from '../overworld/analyze';
 import { Claims } from '../overworld/claims';
 import type { GridEvents } from './events';
-import type { KitUniforms } from './materials';
+import { releaseKitMaterial, type KitUniforms } from './materials';
 import type { Quality } from '../post';
 
 export interface SemanticContext {
@@ -100,14 +100,18 @@ export function runKit(ctx: SemanticContext, families: readonly Family<unknown>[
   return { group, claims: ex.claims, report: ex.report };
 }
 
-/** Frees everything under `root` (except geometries flagged `userData.shared`) and detaches it. */
+/**
+ * Frees everything under `root` (except geometries flagged `userData.shared`) and detaches it. Kit
+ * materials go back to the session pool instead (releaseKitMaterial): the next build takes them,
+ * so their shader programs are not destroyed and compiled again on its first frame.
+ */
 export function disposeKit(root: THREE.Object3D, kit: KitContext): void {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
     const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
-    for (const mat of mats) mat.dispose();
-    m.customDepthMaterial?.dispose();
+    for (const mat of mats) releaseKitMaterial(mat);
+    if (m.customDepthMaterial) releaseKitMaterial(m.customDepthMaterial);
     // Frees the instance buffers / VAOs (the renderer only releases them on the object's 'dispose').
     if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
   });

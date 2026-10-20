@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { kitMaterial, createKitUniforms, FADE_CORE, FADE_PER_SPRITE_PX, MAX_ACTORS, setKitActors, setKitFocus, WARM_GLOW_GLSL } from '../src/render/kit/materials';
+import { kitMaterial, releaseKitMaterial, createKitUniforms, FADE_CORE, FADE_PER_SPRITE_PX, MAX_ACTORS, setKitActors, setKitFocus, WARM_GLOW_GLSL } from '../src/render/kit/materials';
 import { createWorldMaterials } from '../src/render/overworld/materials';
 import { CAMERA_PRESETS } from '../src/render/overworld/overworldView';
 
@@ -139,6 +139,88 @@ describe('kitMaterial', () => {
     const k = kitMaterial(u, { vertTransform: 'transformed.y += 0.1;' });
     expect(k.depth).not.toBeNull();
     expect(k.depth!.defines).not.toHaveProperty('KIT_WIND');
+  });
+});
+
+describe('kit material pool (shader programs live for the session)', () => {
+  // three destroys a shader program when the last material using it is disposed: a world rebuild that
+  // disposed its kit materials made the next build's identical ones recompile every program on the
+  // first frame (+80-100 ms per map crossing). Released kit materials wait for the next build instead.
+  const shader = () => ({ uniforms: {} as Record<string, { value: unknown }>, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <color_fragment>' });
+  const opts = (tex: THREE.Texture, map: THREE.Texture | null, tint: number) => ({
+    vertexColors: true, roughness: 0.6, fade: true, wind: 0.1, windHeight: 2, map, color: tint,
+    uniforms: { tCells: { value: tex }, uSize: { value: new THREE.Vector2(tint, 1) } },
+    fragHead: 'uniform sampler2D tCells;', fragColor: 'diffuseColor.rgb *= texture(tCells, vec2(0.5)).rgb;', hookKey: 'poolTest',
+  });
+
+  it("hands a released material (and its depth twin) to the next build, with that build's values", () => {
+    const u = createKitUniforms();
+    const t1 = new THREE.Texture(), m1 = new THREE.Texture(), t2 = new THREE.Texture(), m2 = new THREE.Texture();
+    const a = kitMaterial(u, opts(t1, m1, 0xff0000));
+    const first = shader();
+    a.material.onBeforeCompile(first as never, undefined as never);
+    expect(first.uniforms.tCells.value).toBe(t1);
+    let disposed = 0;
+    a.material.addEventListener('dispose', () => disposed++);
+    a.depth!.addEventListener('dispose', () => disposed++);
+    releaseKitMaterial(a.material);
+    releaseKitMaterial(a.depth!); // (a mesh's customDepthMaterial: released with its twin, once)
+    const b = kitMaterial(u, { ...opts(t2, m2, 0x00ff00), roughness: 0.3, wind: 0.2 });
+    expect(b.material).toBe(a.material);
+    expect(b.depth).toBe(a.depth);
+    expect(disposed).toBe(0);
+    expect(b.material.map).toBe(m2);
+    expect(b.material.roughness).toBe(0.3);
+    expect(b.material.color.getHex()).toBe(new THREE.Color(0x00ff00).getHex());
+    // the uniform objects its programs were compiled with now hold the new build's values
+    expect(first.uniforms.tCells.value).toBe(t2);
+    expect((first.uniforms.uSize.value as THREE.Vector2).x).toBe(0x00ff00);
+    expect(first.uniforms.uWindAmp.value).toBe(0.2);
+    const again = shader();
+    b.material.onBeforeCompile(again as never, undefined as never);
+    expect(again.uniforms.tCells).toBe(first.uniforms.tCells);
+  });
+
+  it('a released material keeps no texture of its old build', () => {
+    const u = createKitUniforms();
+    const a = kitMaterial(u, opts(new THREE.Texture(), new THREE.Texture(), 1));
+    const s = shader();
+    a.material.onBeforeCompile(s as never, undefined as never);
+    releaseKitMaterial(a.material);
+    expect(a.material.map).toBeNull();
+    expect(s.uniforms.tCells.value).toBeNull();
+  });
+
+  it('never hands out a material in use, nor one compiled for other options', () => {
+    const u = createKitUniforms();
+    const t = new THREE.Texture();
+    const a = kitMaterial(u, opts(t, t, 1));
+    expect(kitMaterial(u, opts(t, t, 1)).material).not.toBe(a.material); // (a is still in use)
+    releaseKitMaterial(a.material);
+    expect(kitMaterial(u, { ...opts(t, t, 1), side: THREE.DoubleSide }).material).not.toBe(a.material);
+    expect(kitMaterial(u, opts(t, null, 1)).material).not.toBe(a.material);
+    expect(kitMaterial(u, { ...opts(t, t, 1), pattern: 'planks' as const }).material).not.toBe(a.material);
+    expect(kitMaterial(u, { ...opts(t, t, 1), fragColor: '' }).material).not.toBe(a.material);
+    expect(kitMaterial(createKitUniforms(), opts(t, t, 1)).material).not.toBe(a.material); // (another view)
+    expect(kitMaterial(u, opts(t, t, 1)).material).toBe(a.material);
+  });
+
+  it("is reused without carrying a water surface's depthWrite to the next user", () => {
+    const u = createKitUniforms();
+    const a = kitMaterial(u, { transparent: true, depthWrite: false });
+    expect(a.material.depthWrite).toBe(false);
+    releaseKitMaterial(a.material);
+    const b = kitMaterial(u, { transparent: true });
+    expect(b.material).toBe(a.material);
+    expect(b.material.depthWrite).toBe(true);
+  });
+
+  it('other materials are disposed', () => {
+    const m = new THREE.MeshBasicMaterial();
+    let disposed = false;
+    m.addEventListener('dispose', () => { disposed = true; });
+    releaseKitMaterial(m);
+    expect(disposed).toBe(true);
   });
 });
 

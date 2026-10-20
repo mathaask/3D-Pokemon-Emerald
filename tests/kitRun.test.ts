@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { extractAll, buildAll, disposeKit, type Family, type KitContext } from '../src/render/kit/semantics';
-import { createKitUniforms } from '../src/render/kit/materials';
+import { applyKitMaterial, createKitUniforms, kitMaterial } from '../src/render/kit/materials';
 import { CLAIM_BLADES, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../src/render/overworld/claims';
 import { hidesGrassOverlay } from '../src/render/overworld/overworldView';
 import { SpriteKind } from '../src/game/spriteKinds';
@@ -129,6 +129,87 @@ describe('semantic core', () => {
     expect(world.group.children.filter((o) => o.name === 'kit')).toHaveLength(1);
     world.build(fakeGrid(['....', '.#..', '....']), opts, { ...ctxB, style: 'retro' });
     expect(world.group.children.filter((o) => o.name === 'kit')).toHaveLength(0);
+  });
+
+  it("rebuilding a World keeps its kit materials (their shader programs) and frees each build's own resources", () => {
+    // A family as the real ones are built: a kit material with a per-build data texture (kit.disposables),
+    // a geometry of its own and an instanced mesh over a shared one.
+    const shared = new THREE.BoxGeometry();
+    shared.userData.shared = true;
+    const live = { textures: 0, geometries: 0, instanced: 0 };
+    const materials = new Set<THREE.Material>();
+    const textures: THREE.Texture[] = [];
+    const family: Family<number> = {
+      name: 'pool',
+      extract(_c, claims) { claims.claim(5, CLAIM_OBJECT); return 5; },
+      build(_p, _c, k) {
+        const tex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+        live.textures++;
+        tex.addEventListener('dispose', () => live.textures--);
+        k.disposables.push(tex);
+        textures.push(tex);
+        const km = kitMaterial(k.uniforms, { roughness: 0.9, wind: 0.1, uniforms: { tCells: { value: tex } }, fragHead: 'uniform sampler2D tCells;', hookKey: 'poolWorld' });
+        materials.add(km.material);
+        const g = new THREE.BoxGeometry();
+        live.geometries++;
+        g.addEventListener('dispose', () => live.geometries--);
+        const root = new THREE.Group();
+        const mesh = new THREE.Mesh(g, km.material);
+        applyKitMaterial(mesh, km);
+        const inst = new THREE.InstancedMesh(shared, km.material, 2);
+        live.instanced++;
+        inst.addEventListener('dispose', () => live.instanced--);
+        root.add(mesh, inst);
+        return root;
+      },
+    };
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u, [family]);
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const modern = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
+    const grid = fakeGrid(['....', '.#..', '....']);
+    world.build(grid, opts, modern);
+    const [mat] = materials;
+    const depth = (world.group.getObjectByName('pool')!.children[0] as THREE.Mesh).customDepthMaterial!;
+    let materialDisposals = 0;
+    mat.addEventListener('dispose', () => materialDisposals++);
+    depth.addEventListener('dispose', () => materialDisposals++);
+    const compiled = { uniforms: {} as Record<string, { value: unknown }>, vertexShader: '', fragmentShader: '' };
+    mat.onBeforeCompile(compiled as never, undefined as never);
+    // many crossings, and style toggles (Retro builds no kit)
+    for (let n = 0; n < 20; n++) world.build(grid, opts, n % 5 === 4 ? { ...modern, style: 'retro' } : modern);
+    world.build(grid, opts, modern);
+    expect(materials.size).toBe(1); // the same material every build: its programs never went away
+    expect(materialDisposals).toBe(0);
+    expect(compiled.uniforms.tCells.value).toBe(textures[textures.length - 1]); // this build's texture
+    expect(live).toEqual({ textures: 1, geometries: 1, instanced: 1 }); // only the current build's
+    world.build(grid, opts, { ...modern, style: 'retro' });
+    expect(live).toEqual({ textures: 0, geometries: 0, instanced: 0 });
+  });
+
+  it("rebuilding a World keeps the legacy tree cards' materials and frees each build's cards", () => {
+    const info = fakeInfo();
+    info.green[2] = 1; // ('#' is a green block: a tree the legacy art draws as cards)
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u, []);
+    const opts = { info, generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const retro = { style: 'retro' as const, events: NO_EVENTS, quality: 'medium' as const };
+    const grid = fakeGrid(['....', '.#..', '....']);
+    world.build(grid, opts, retro);
+    const cards = world.treeCards!;
+    const mat = cards.mesh.material as THREE.Material, depth = cards.mesh.customDepthMaterial!;
+    let disposals = 0, geometryFreed = false;
+    mat.addEventListener('dispose', () => disposals++);
+    depth.addEventListener('dispose', () => disposals++);
+    cards.mesh.geometry.addEventListener('dispose', () => { geometryFreed = true; });
+    world.build(grid, opts, retro);
+    expect(world.treeCards).not.toBe(cards);
+    expect(world.treeCards!.mesh.material).toBe(mat);
+    expect(world.treeCards!.mesh.customDepthMaterial).toBe(depth);
+    expect(disposals).toBe(0);
+    expect(geometryFreed).toBe(true);
   });
 });
 

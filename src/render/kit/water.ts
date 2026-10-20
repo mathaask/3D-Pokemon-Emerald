@@ -377,9 +377,13 @@ export const waterFamily: Family<WaterPlacement> = {
     const bounds = new THREE.Sphere(new THREE.Vector3((a.minX + a.maxX) / 2, mid, (a.minY + a.maxY) / 2 + mid),
       Math.hypot(a.GW, a.GH + hi - lo, hi - lo) / 2 + 1);
     const group = new THREE.Group();
+    // One non-overlapping sheet drawn after every opaque object (seabed, rocks, legacy cells test
+    // against it as usual), so it need not write depth; if it did, the swell (up to +0.05) would hide
+    // blob shadows and decals lying just above the water level.
     const km = kitMaterial(kit.uniforms, {
       roughness: 0.12,
       transparent: true,
+      depthWrite: false,
       uniforms: {
         tWater: { value: tex },
         uGridMin: { value: new THREE.Vector2(a.minX, a.minY) },
@@ -393,10 +397,6 @@ export const waterFamily: Family<WaterPlacement> = {
       vertTransform: VERT_SWELL,
       hookKey: 'water',
     });
-    // One non-overlapping sheet drawn after every opaque object (seabed, rocks, legacy cells test
-    // against it as usual), so it need not write depth; if it did, the swell (up to +0.05) would hide
-    // blob shadows and decals lying just above the water level.
-    km.material.depthWrite = false;
     const water = new THREE.Mesh(upGeometry(surf, bounds), km.material);
     water.receiveShadow = true;
     // First among transparent objects: blob shadows, weather and effects draw over the water.

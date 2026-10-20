@@ -95,6 +95,8 @@ export interface KitMaterialOptions {
   side?: THREE.Side;
   map?: THREE.Texture | null;
   transparent?: boolean;
+  /** Writes depth (default true; false for a transparent surface drawn over what lies under it). */
+  depthWrite?: boolean;
   flatShading?: boolean;
   /** Sway amplitude in world units at full flex (0 = rigid). */
   wind?: number;
@@ -107,7 +109,8 @@ export interface KitMaterialOptions {
   /** Warm emissive glow at night (window glass, lamps); value = strength. */
   glow?: number;
   pattern?: KitPattern;
-  /** Extra uniforms used by the GLSL hooks below. */
+  /** Extra uniforms used by the GLSL hooks below. Their values are read when the material is handed
+   *  out: later changes to these objects do not reach it (the material keeps its own, see the pool). */
   uniforms?: Record<string, { value: unknown }>;
   /** GLSL declarations appended to the fragment prelude (after the noise helpers). */
   fragHead?: string;
@@ -252,10 +255,14 @@ function hashString(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, local: Local, o: KitMaterialOptions, full: boolean): void {
+type Slots = Record<string, { value: unknown }>;
+type Hooks = Pick<KitMaterialOptions, 'fragHead' | 'fragColor' | 'fragNormal' | 'fragEmissive' | 'vertTransform'>;
+
+function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, local: Local, slots: Slots,
+  o: Hooks, full: boolean): void {
   Object.assign(s.uniforms, {
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
-    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, ...local, ...(o.uniforms ?? {}),
+    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, ...local, ...slots,
   });
   s.vertexShader = VERT_PRELUDE + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
@@ -269,17 +276,49 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
     .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + GLOW + (o.fragEmissive ?? ''));
 }
 
+/**
+ * A kit material and what a build sets on it. Kit materials are pooled for the session (per
+ * KitUniforms, i.e. per view): three destroys a shader program as soon as the last material using it
+ * is disposed, so a world rebuild that disposed its materials made the next build's identical ones
+ * compile every kit program again on its first frame (+80-100 ms per map crossing). disposeKit
+ * returns them here instead (releaseKitMaterial) and the next build takes them back, programs and
+ * all. The pool holds at most as many materials of one kind as a build has used at once, and no GPU
+ * resources but the programs (each build's textures are freed with it).
+ */
+interface Pooled {
+  km: KitMaterial;
+  local: Local;
+  /** The material's own objects for the caller's `uniforms` (its programs were compiled with them). */
+  slots: Slots;
+  /** The free list of its kind (same program-affecting options). */
+  free: Pooled[];
+  inUse: boolean;
+}
+
+const POOLS = new WeakMap<KitUniforms, Map<string, Pooled[]>>();
+const POOLED = new WeakMap<THREE.Material, Pooled>();
+
+/** The options that make a material compile differently (the rest is set per build). */
+function poolKey(programKey: string, o: KitMaterialOptions): string {
+  return [programKey, o.vertexColors ? 1 : 0, o.side ?? THREE.FrontSide, o.transparent ? 1 : 0, o.flatShading ? 1 : 0,
+    o.map ? 1 : 0, Object.keys(o.uniforms ?? {}).sort().join(',')].join('|');
+}
+
+/** Sets what a build chooses freely on a (new or reused) material: colours, values, textures. */
+function configure(p: Pooled, o: KitMaterialOptions): void {
+  const m = p.km.material;
+  m.color.set(o.color ?? 0xffffff);
+  m.roughness = o.roughness ?? 0.9;
+  m.metalness = o.metalness ?? 0;
+  m.map = o.map ?? null;
+  m.depthWrite = o.depthWrite ?? true;
+  p.local.uWindAmp.value = o.wind ?? 0;
+  p.local.uWindHeight.value = o.windHeight ?? 1;
+  p.local.uGlow.value = o.glow ?? 0;
+  for (const k in p.slots) p.slots[k].value = o.uniforms![k].value;
+}
+
 export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMaterial {
-  const material = new THREE.MeshStandardMaterial({
-    color: o.color ?? 0xffffff,
-    vertexColors: o.vertexColors ?? false,
-    roughness: o.roughness ?? 0.9,
-    metalness: o.metalness ?? 0,
-    side: o.side ?? THREE.FrontSide,
-    map: o.map ?? null,
-    transparent: o.transparent ?? false,
-    flatShading: o.flatShading ?? false,
-  });
   const defines: Record<string, string> = {};
   if (o.wind) defines.KIT_WIND = '';
   if (o.wind && o.bend) defines.KIT_BEND = '';
@@ -288,16 +327,35 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
   if (o.pattern === 'roofTiles') defines.KIT_PATTERN_ROOF = '';
   else if (o.pattern === 'planks') defines.KIT_PATTERN_PLANKS = '';
   else if (o.pattern === 'stone') defines.KIT_PATTERN_STONE = '';
-  material.defines = defines;
-  const local: Local = {
-    uWindAmp: { value: o.wind ?? 0 },
-    uWindHeight: { value: o.windHeight ?? 1 },
-    uGlow: { value: o.glow ?? 0 },
-  };
   // three's program cache key omits onBeforeCompile output, so the hook source must be part of it.
   const hooks = [o.fragHead, o.fragColor, o.fragNormal, o.fragEmissive, o.vertTransform].map((h) => h ?? '').join('|');
   const key = 'kit:' + Object.keys(defines).sort().join(',') + ':' + (o.hookKey ?? '') + ':' + hashString(hooks);
-  material.onBeforeCompile = (s) => patchKit(s, u, local, o, true);
+
+  let pools = POOLS.get(u);
+  if (!pools) POOLS.set(u, (pools = new Map()));
+  const kind = poolKey(key, o);
+  let free = pools.get(kind);
+  if (!free) pools.set(kind, (free = []));
+  const reused = free.pop();
+  if (reused) {
+    reused.inUse = true;
+    configure(reused, o);
+    return reused.km;
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    vertexColors: o.vertexColors ?? false,
+    side: o.side ?? THREE.FrontSide,
+    transparent: o.transparent ?? false,
+    flatShading: o.flatShading ?? false,
+  });
+  material.defines = defines;
+  const local: Local = { uWindAmp: { value: 0 }, uWindHeight: { value: 1 }, uGlow: { value: 0 } };
+  const slots: Slots = {};
+  for (const k of Object.keys(o.uniforms ?? {})) slots[k] = { value: null };
+  // (the hooks only: the options' textures are this build's, the material outlives it)
+  const h: Hooks = { fragHead: o.fragHead, fragColor: o.fragColor, fragNormal: o.fragNormal, fragEmissive: o.fragEmissive, vertTransform: o.vertTransform };
+  material.onBeforeCompile = (s) => patchKit(s, u, local, slots, h, true);
   material.customProgramCacheKey = () => key;
   let depth: THREE.MeshDepthMaterial | null = null;
   if (o.wind || o.vertTransform) {
@@ -307,10 +365,32 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
     const depthDefines: Record<string, string> = {};
     if (defines.KIT_WIND !== undefined) depthDefines.KIT_WIND = '';
     depth.defines = depthDefines;
-    depth.onBeforeCompile = (s) => patchKit(s, u, local, o, false);
+    depth.onBeforeCompile = (s) => patchKit(s, u, local, slots, h, false);
     depth.customProgramCacheKey = () => key + ':depth';
   }
-  return { material, depth };
+  const p: Pooled = { km: { material, depth }, local, slots, free, inUse: true };
+  configure(p, o);
+  POOLED.set(material, p);
+  if (depth) POOLED.set(depth, p);
+  return p.km;
+}
+
+/**
+ * Done with a material of a world being disposed: a kit material (or its depth twin) goes back to
+ * the session pool for the next build, without its build's textures (released twice: once); any
+ * other material is disposed.
+ */
+export function releaseKitMaterial(m: THREE.Material): void {
+  const p = POOLED.get(m);
+  if (!p) {
+    m.dispose();
+    return;
+  }
+  if (!p.inUse) return;
+  p.inUse = false;
+  p.km.material.map = null;
+  for (const k in p.slots) if ((p.slots[k].value as THREE.Texture | null)?.isTexture) p.slots[k].value = null;
+  p.free.push(p);
 }
 
 /** Assigns a kit material (and its shadow-depth twin) to a mesh. */
