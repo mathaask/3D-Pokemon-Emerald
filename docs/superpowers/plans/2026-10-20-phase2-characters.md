@@ -14,7 +14,7 @@
 
 - **No Nintendo assets in the repository and no third-party asset downloads.** Models are procedural; colours are sampled at runtime from the live sprite pixels / palettes (emulated RAM) or ROM data.
 - World mapping is fixed: grid cell (x, y) at height h → world (X = x, Y = h, Z = y + h). Upright actors stand where today's cards stand: foot = (worldX/16, h, worldY/16 − 0.5 + h).
-- **Retro 3D renders every sprite exactly as today** (flat billboard cards, blob shadows, `charLight`). Gate: `regress-live --compare p2-base` reports 0.00 % differing pixels on every Retro entry after every task (sole allowed exception: Task 10's multi-piece sprites, if the controller confirms Task 10).
+- **Retro 3D renders every sprite exactly as today** (flat billboard cards, blob shadows, `charLight`). Gate: `regress-live --compare p2-base` reports 0.00 % differing pixels on every Retro entry after every task (sole allowed exception, confirmed by the controller: Task 10's composed multi-piece sprites — the truck). The `battle` and `transition` entries are gated at 0.00 % in Retro only (the transition shows the overworld's actors under its flash).
 - Phase 2 features (inflation, xBR smoothing, object models, NPC fade) are Modern-only. **Battles (`battle/battleView.ts`) are unchanged in Phase 2**; the inflation API must stay reusable by Phase 3 (no overworld-only types in `InflatedActors` / `SpriteField`).
 - Animation frames stay the game's own (atlas decoded from live OBJ VRAM every synced frame); actors keep facing the camera (yaw only), as today.
 - Flat decals (shadows, ripples, footprints, tracks) and grass overlays keep their current card treatment.
@@ -24,6 +24,7 @@
 - `npx tsc --noEmit` and `npm test` pass at the end of every task; ROM smoke tests a task adds or touches pass (`npx vitest run --config tests/smoke/vitest.smoke.config.ts <file>`).
 - The controller keeps `docs/superpowers/progress/modern-3d.md` up to date; implementers put learnings in their task report, not in the log.
 - Bash heredocs with large content fail in this harness: write files with the editor tools; scratch scripts go in `.scratch/` (gitignored).
+- Implementers work in the main checkout (no isolated git worktree): the ROM, `out/*.state`, `vendor/pokeemerald-src` and `.scratch/` are gitignored and exist only there.
 
 ## Review Focus
 
@@ -40,7 +41,7 @@
 - **D3 ⚑ Scale-free xBR at sampling time instead of a 4× upscaled atlas.** Sprites are magnified 3–8× on screen, so a fixed 4× atlas (4096×2048 RGBA8 = 32 MB) would still need filtering. An xBR-lv2-style filter evaluated per fragment at the actual magnification costs ~21 texel fetches on actor pixels only and no memory. CPU reference in `kit/upscale.ts` + GPU parity self-test. Nearest stays selectable.
 - **D4 Removal animations fall back to the game's sprite.** Cut tree / breakable rock play `ANIM_REMOVE_OBSTACLE` (animNum 1) before the script removes them: while it plays, the object is drawn as its (inflated) sprite — the game's own break frames, ~0.5 s. Pushed boulders and everything else follow the sprite's live position every frame.
 - **D5 Static preview actors from ROM templates.** No save state reaches boulders, rocks, Cut trees or berry trees. The map preview (`?map=G.N&actors=1`) decodes each object template's graphics (ROM `gObjectEventGraphicsInfoPointers`, `sObjectEventSpritePalettes`) into scratch OBJ VRAM and fakes `SpriteSnap`/`ObjectEventSnap`s, so the whole live pipeline (atlas → field → actors → models) runs on any map deterministically.
-- **D6 The moving truck is a model;** its sprite is a 48×48 multi-piece subsprite that today's atlas draws garbled (verified: `out/lr_out.state`). Task 10 composes multi-piece subsprites in the atlas for world sprites (truck, Briney's boat, S.S. Tidal) in **both** styles — a decoding bug fix that changes Retro pixels of those sprites only (**controller to confirm**; Task 10 can be dropped without affecting the others).
+- **D6 The moving truck is a model;** its sprite is a 48×48 multi-piece subsprite (on a 32×32 base OAM) that today's atlas draws garbled (verified: `out/lr_out.state`). Task 10 composes multi-piece subsprites in the atlas for world sprites whose composed image fits a 64×64 slot (the truck) in **both** styles — a decoding bug fix that changes Retro pixels of those sprites only (confirmed by the controller). Briney's boat (gfx 88) is a single 32×32 sprite and is already correct. **Phase 2 known gap:** the oversize multi-piece sprites S.S. Tidal (96×40) and submarine shadow (88×32) exceed a slot and stay drawn from their base OAM, as today.
 - **D7 Optional NPC occlusion fade (Task 11)** limited to the 3 nearest NPCs within 4 cells of the player (the ones you interact with); dropping it leaves the Phase 1 behaviour.
 
 ---
@@ -66,9 +67,9 @@ Created:
 - Tests: `tests/keyNames.test.ts`, `tests/actorLayer.test.ts`, `tests/inflateMath.test.ts`, `tests/spriteField.test.ts`, `tests/inflatedActors.test.ts`, `tests/kitXbr.test.ts`, `tests/objectMap.test.ts`, `tests/spriteColors.test.ts`, `tests/actorModels.test.ts`, `tests/objectModels.test.ts`, `tests/subsprites.test.ts`, `tests/fadeActors.test.ts` (Task 11), `tests/smoke/objectGraphics.test.ts`.
 
 Modified:
-- `src/main.ts` — `?manual=1` stepping API, URL overrides (`style`, `camera`, `spriteFilter`), `emu.step / gpuFrames / selfTest`.
+- `src/main.ts` — `?manual=1` stepping API (fixed RTC), URL overrides (`style`, `camera`, `spriteFilter`), `emu.step / gpuFrames / selfTest`.
 - `src/render/renderer.ts` — `setFixedTimestep`, `stats()`, owns `SpriteField`, sprite filter.
-- `src/render/preview.ts` — `&actors=1`, `&manual=1` + `frames(n)`, `focusGfx/focusObj`, `&removing=1`, atlas + field updates.
+- `src/render/preview.ts` — `&actors=1`, `&manual=1` + `frames(n)` / `gpuFrames(n)`, `stats().programs`, `focusGfx/focusObj`, `&removing=1`, atlas + field updates.
 - `src/render/overworld/overworldView.ts` — delegates sprites to `ActorLayer`; re-exports `hidesGrassOverlay`.
 - `src/render/overworld/billboards.ts` — structural atlas type; `BlobShadows` takes any shadow-geometry source + `setScale`.
 - `src/render/overworld/sky.ts`, `src/render/battle/battleView.ts` — sky time from the view clock (determinism).
@@ -94,9 +95,9 @@ Today's tools hold keys for wall-clock milliseconds and screenshot after a wall-
 - Produces: `keyMask(spec: string): number` — names joined by `+`, case-insensitive (`A B SELECT START RIGHT LEFT UP DOWN R L`), `''` → 0, unknown name throws an Error naming it.
 - Produces: `Renderer.setFixedTimestep(dt: number | null): void` — when set, `render()` uses `dt` seconds per call and a virtual clock (`now += dt*1000`) for `transitionFx`, instead of `performance.now()`.
 - Produces: `Renderer.stats(): { calls: number; triangles: number; programs: number }` — whole-frame totals (`webgl.info.autoReset = false`, `info.reset()` at the start of `render()`), `programs = webgl.info.programs?.length ?? 0`.
-- Produces (`?manual=1`, implies autostart): the rAF loop neither emulates nor renders; `window.emu.step(keys: string, frames: number): void` runs `frames` × { `gba.keys = keyMask(keys)`; `gba.runFrame()`; `renderer.onEmulatedFrame()`; `renderer.render(1000 / 60)` } with `setFixedTimestep(1/60)`; `window.emu.gpuFrames(n: number): Promise<{ gpuMs: number; gpuP90: number; cpuMs: number }>` (n × step('', 1) with an `EXT_disjoint_timer_query_webgl2` query around `renderer.render`, `readPixels` sync after each, medians).
+- Produces (`?manual=1`, implies autostart): the rAF loop neither emulates nor renders; the emulated RTC is fixed (`new Gba(rom, { sampleRate, now: () => new Date(MANUAL_RTC) })`, `MANUAL_RTC = '2026-01-01T10:00:00'` local time) so Emerald's clock re-reads (every 4096 frames, on map crossings) are deterministic; `window.emu.step(keys: string, frames: number): number[]` runs `frames` × { `gba.keys = keyMask(keys)`; `gba.runFrame()`; `renderer.onEmulatedFrame()`; `renderer.render(1000 / 60)` } with `setFixedTimestep(1/60)` and returns, per frame, the CPU time in ms of its `renderer.render` call; `window.emu.gpuFrames(n: number): Promise<{ gpuMs: number; gpuP90: number; cpuMs: number }>` (n × step('', 1) with an `EXT_disjoint_timer_query_webgl2` query around `renderer.render`, `readPixels` sync after each, medians).
 - Produces: URL overrides (not saved): `?style=modern|retro`, `?camera=0..3`, (Task 6) `?spriteFilter=smooth|pixel`.
-- Produces CLI: `npx tsx tools/regress-live.ts --label <name> [--styles modern,retro] [--only a,b] [--dpr 1] [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]` (`--query` is appended to every page URL) → `out/regress-live/<label>/<entry>_<style>.png`, `_sheet_<style>.png` (4 columns), `_crops.png` (per entry: 320×400 centre crops, Modern | Retro side by side — the camera centres on the player), `stats.json` (`{ [entry_style]: { calls, triangles, programs, gpuMs?, gpuP90?, cpuMs?, diff?: { pct, bbox }, selftest? } }`, merged into an existing file of the same label so partial `--only` runs add or replace entries; sheets are rebuilt from all PNGs in the folder).
+- Produces CLI: `npx tsx tools/regress-live.ts --label <name> [--styles modern,retro] [--only a,b] [--dpr 1] [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]` (`--query` is appended to every page URL) → `out/regress-live/<label>/<entry>_<style>.png`, `_sheet_<style>.png` (4 columns), `_crops.png` (per entry: 320×400 centre crops, Modern | Retro side by side — the camera centres on the player), `stats.json` (`{ [entry_style]: { calls, triangles, programs, stepMsMax?, gpuMs?, gpuP90?, cpuMs?, diff?: { pct, bbox }, selftest? } }` — `stepMsMax` = the largest per-frame time `emu.step` returned during the entry's steps (live entries), merged into an existing file of the same label so partial `--only` runs add or replace entries; sheets are rebuilt from all PNGs in the folder).
 
 - [ ] **Step 1: Write the failing test** `tests/keyNames.test.ts`
 
@@ -119,7 +120,7 @@ describe('keyMask', () => {
 ```
 
 - [ ] **Step 2: Run it** — `npx vitest run tests/keyNames.test.ts` → FAIL (module missing).
-- [ ] **Step 3: Implement `keyNames.ts`**, then the manual mode in `main.ts` (skip `waitForGesture`, never start the tick loop, expose `emu.step` / `emu.gpuFrames`), the URL overrides (applied to the in-memory settings before `applySettings`, never saved), `Renderer.setFixedTimestep` / `stats()`, and the sky clock: `Sky.setColors(sky, fog, indoor, time)` sets `uTime = time` (overworld passes `this.time`, battle its `this.time`) — no more `performance.now()` there. GPU timing follows `.scratch/t16_gpu.ts` (query per frame, `readPixels(0,0,1,1)` to sync, poll `QUERY_RESULT_AVAILABLE`, discard if `GPU_DISJOINT_EXT`).
+- [ ] **Step 3: Implement `keyNames.ts`**, then the manual mode in `main.ts` (skip `waitForGesture`, never start the tick loop, fix the RTC to `MANUAL_RTC`, expose `emu.step` (returning per-frame render CPU ms) / `emu.gpuFrames`), the URL overrides (applied to the in-memory settings before `applySettings`, never saved), `Renderer.setFixedTimestep` / `stats()`, and the sky clock: `Sky.setColors(sky, fog, indoor, time)` sets `uTime = time` (overworld passes `this.time`, battle its `this.time`) — no more `performance.now()` there. GPU timing follows `.scratch/t16_gpu.ts` (query per frame, `readPixels(0,0,1,1)` to sync, poll `QUERY_RESULT_AVAILABLE`, discard if `GPU_DISJOINT_EXT`).
 - [ ] **Step 4: Write `tools/regress-live.ts`.** Same server/browser setup as `tools/regress.ts` (Chrome/Edge path list, `--use-angle=d3d11`, viewport 1280×800 × `--dpr`). Per entry and style: `goto /?manual=1&state=/<state>&style=<style>[&camera=..]`, wait until `window.emu?.step` exists, run `eval` (if any), run the steps, screenshot. Entry table (frame counts are starting values — tune them so the scene matches the comment and record the final numbers in the file):
 
 ```ts
@@ -136,13 +137,13 @@ const LIVE: LiveEntry[] = [
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]] },                         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]] },                      // moving boxes (gfx 113)
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
-  { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // must stay unchanged in Phase 2
-  { name: 'transition', state: 'out/wild_transition.state', steps: [['', 20]] },
+  { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // gated 0.00 % in Retro only
+  { name: 'transition', state: 'out/wild_transition.state', steps: [['', 20]] },             // gated 0.00 % in Retro only
 ];
 ```
 
   `--compare <label>`: diff each PNG against `out/regress-live/<label>/<same file>` in the page (two `<img>` → canvases → `getImageData`; a pixel differs when any channel differs by > 8), record `pct` (2 decimals) and the bounding box, print a line per entry. `--gpu`: after the screenshot, `await emu.gpuFrames(60)`. `--static` is wired in Task 2 (no entries yet).
-- [ ] **Step 5: Verify determinism.** `npm run regress:live -- --label det1` then `npm run regress:live -- --label det2 --compare det1` → every entry in both styles 0.00 %. If an entry is not stable, find the remaining wall-clock/random source (e.g. `weather.ts` seeds, only relevant with weather) and fix it or record the entry as "stats only" in the file with the reason.
+- [ ] **Step 5: Verify determinism.** `npm run regress:live -- --label det1` then `npm run regress:live -- --label det2 --compare det1` → every entry in both styles 0.00 %. If an entry is not stable, find the remaining wall-clock/random source (the RTC is already fixed in manual mode; e.g. `weather.ts` seeds, only relevant with weather) and fix it or record the entry as "stats only" in the file with the reason.
 - [ ] **Step 6: Capture the baseline.** `npm run regress:live -- --label p2-base --gpu` (both styles). Open `_sheet_modern.png`, `_sheet_retro.png`, `_crops.png`; check each entry shows its comment's scene. Report calls/triangles/gpuMs per entry in the task report (the controller copies them to the progress log).
 - [ ] **Step 7: Typecheck, test, commit.** `npx tsc --noEmit && npm test`; `git add tools/regress-live.ts src/input/keyNames.ts tests/keyNames.test.ts src/main.ts src/render/renderer.ts src/render/overworld/sky.ts src/render/overworld/overworldView.ts src/render/battle/battleView.ts package.json && git commit -m "tools: deterministic live regression harness (save states stepped per frame, stats, diffs, GPU timing)"`
 
@@ -166,10 +167,12 @@ Makes the map preview draw each map's object events (NPCs, item balls, boulders,
   export interface ObjectGraphicsInfo { graphicsId: number; paletteTag: number; size: number; width: number; height: number;
     paletteSlot: number; inanimate: boolean; oam: number; subspriteTables: number; anims: number; images: number }
   export function readObjectGraphicsInfo(rom: RomReader, graphicsId: number): ObjectGraphicsInfo | null; // null: id ≥ 239 or bad pointer
-  export function readFrameImage(rom: RomReader, info: ObjectGraphicsInfo, frame: number): Uint8Array;    // `size` bytes, 4bpp 1D tiles
+  export function readFrameImage(rom: RomReader, info: ObjectGraphicsInfo, frame: number): Uint8Array;    // the frame's own `SpriteFrameImage.size` bytes, 4bpp 1D tiles
+  /** Image index of the first frame of anim `animNum` (anims[animNum] → first AnimCmd, imageValue = low 16 bits). */
+  export function firstAnimFrame(rom: RomReader, info: ObjectGraphicsInfo, animNum: number): number;
   export function readObjectPalette(rom: RomReader, tag: number): Uint16Array | null;                    // 16 BGR555 colours
   ```
-  Layouts (pokeemerald `global.fieldmap.h`, `sprite.h`): `gObjectEventGraphicsInfoPointers[id]` → struct of 0x24 bytes: tileTag u16 @0, paletteTag u16 @2, reflectionPaletteTag u16 @4, size u16 @6, width s16 @8, height s16 @0xA, byte @0xC = paletteSlot:4 | shadowSize:2 | inanimate:1 | …, oam* @0x10, subspriteTables* @0x14, anims* @0x18, images* @0x1C; `SpriteFrameImage` = { data* u32, size u16 } (8 bytes); `sObjectEventSpritePalettes` = array of { data* u32, tag u16, pad } (8 bytes) ending at tag 0x11FF.
+  Layouts (pokeemerald `global.fieldmap.h`, `sprite.h`): `gObjectEventGraphicsInfoPointers[id]` → struct of 0x24 bytes: tileTag u16 @0, paletteTag u16 @2, reflectionPaletteTag u16 @4, size u16 @6, width s16 @8, height s16 @0xA, byte @0xC = paletteSlot:4 | shadowSize:2 | inanimate:1 | …, oam* @0x10, subspriteTables* @0x14, anims* @0x18, images* @0x1C; `SpriteFrameImage` = { data* u32, size u16 } (8 bytes); `sObjectEventSpritePalettes` = array of { data* u32, tag u16, pad } (8 bytes). The retail ROM ends it with `{}` (tag 0, NULL data; BUGFIX builds: tag 0x11FF): the scan stops at tag 0, a null data pointer or tag 0x11FF, at most 36 entries (`SYM_SIZE.sObjectEventSpritePalettes / 8`).
 - Produces (`previewActors.ts`):
   ```ts
   export function blankSprite(p?: Partial<SpriteSnap>): SpriteSnap;   // every field defaulted (16x32, coordOffset true, …)
@@ -177,8 +180,9 @@ Makes the map preview draw each map's object events (NPCs, item balls, boulders,
   export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Uint16Array,
     templates: readonly ObjectEventTemplate[], opts: { removing: boolean }): PreviewActors;
   ```
-  Rules: skip templates with graphicsId ≥ 239 (VAR ids); tiles of each distinct graphicsId copied once into OBJ VRAM (`vram[0x10000 + tile*32 …]`, tiles allocated sequentially); one OBJ palette slot per distinct tag (`palette[256 + slot*16 …]`, ≤ 16 slots, extra tags reuse slot 15); sprite `i` ↔ object `i` (`spriteId = index = i`); `worldX = x*16 + 8`, `worldY = y*16 + 16` (map-local preview grid, offset 0); berry trees (gfx 60–62): `animNum = localId % 5` (all five stages visible on a map); `opts.removing` sets `animNum = 1` on gfx 82 / 86.
+  Rules: skip templates with graphicsId ≥ 239 (VAR ids); the tiles of each distinct (graphicsId, frame image) copied once into OBJ VRAM (`vram[0x10000 + tile*32 …]`, tiles allocated sequentially; frame 0 except berry trees); one OBJ palette slot per distinct tag (`palette[256 + slot*16 …]`, ≤ 16 slots, extra tags reuse slot 15); sprite `i` ↔ object `i` (`spriteId = index = i`). Placement matches live play (`SetSpritePosToMapCoords` + `centerToCornerVec`): sprite `width/height` = the base OAM shape/size read from `info.oam`, `c2cX = −(info.width >> 1)`, `c2cY = −(info.height >> 1)`, `worldX = x*16 + 8`, `worldY = y*16 + 16 − info.height + oamHeight` (= `y*16 + 16` whenever the OAM equals the image; the truck: `y*16`) (map-local preview grid, offset 0). Berry trees (gfx 60–62): `animNum = localId % 5` (all five stages visible on a map) and the image is that stage's first anim frame (`firstAnimFrame(rom, info, animNum)`) at the frame's own size (dirt pile / sprout 16×16, plants 16×32: height = frame size / 8); `opts.removing` sets `animNum = 1` on gfx 82 / 86.
 - Produces (preview URL): `&actors=1` (fill `fakeState.sprites/objects`, update the sprite atlas every frame with `map2d = false` — object sprites use 1D mapping), `&manual=1` (no rAF loop) + `PreviewApp.frames(n: number): void` (n frames at dt = 1/60), `&focusGfx=G` (camera on the first template with graphicsId G), `&focusObj=N` (on template N), `&removing=1`.
+- Produces (preview stats): `PreviewApp.stats(): { calls; triangles; programs; buildMs }` (`programs = webgl.info.programs?.length ?? 0`) and `PreviewApp.gpuFrames(n: number): Promise<{ gpuMs: number; gpuP90: number; cpuMs: number }>` (n × `frames(1)` with the same timer query and medians as `emu.gpuFrames`); the harness's `--gpu` calls it on static entries.
 - Produces (harness): `STATIC` entries, run with `--static`, in both styles at hour 11 unless stated:
   ```ts
   const STATIC = [
@@ -189,7 +193,7 @@ Makes the map preview draw each map's object events (NPCs, item balls, boulders,
     { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
   ];
   ```
-  (`/?autostart=1&manual=1&actors=1&<q>`, then `preview.frames(60)`, screenshot, `preview.stats()`.)
+  (`/?autostart=1&manual=1&actors=1&<q>`, then `preview.frames(60)`, screenshot, `preview.stats()`; with `--gpu`, `await preview.gpuFrames(60)`.)
 
 - [ ] **Step 1: Write the failing smoke test** `tests/smoke/objectGraphics.test.ts`
 
@@ -216,9 +220,9 @@ describe('object graphics from the ROM', () => {
 ```
 
 - [ ] **Step 2: Run it** — `npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/objectGraphics.test.ts` → FAIL.
-- [ ] **Step 3: Implement** `objectGraphics.ts` (use `SYM.gObjectEventGraphicsInfoPointers`, `SYM.sObjectEventSpritePalettes`), the `SpriteSnap` fields, `previewActors.ts`, and the preview params. Template x/y are map-local and the preview grid has offset 0, so `ObjectEventSnap.x/y` = template x/y.
+- [ ] **Step 3: Implement** `objectGraphics.ts` (use `SYM.gObjectEventGraphicsInfoPointers`, `SYM.sObjectEventSpritePalettes`), the `SpriteSnap` fields, `previewActors.ts`, the preview params and the preview's `stats().programs` / `gpuFrames(n)`. Template x/y are map-local and the preview grid has offset 0, so `ObjectEventSnap.x/y` = template x/y.
 - [ ] **Step 4: Run** the smoke test → PASS; `npx tsc --noEmit && npm test` → PASS.
-- [ ] **Step 5: Look.** `npm run regress:live -- --label t2 --static --compare p2-base` — live entries 0.00 % in both styles (the new `SpriteSnap` fields change nothing). Static entries: NPCs, balls, rocks, boulders, Cut trees, berry trees appear as today's cards on their cells (the truck card is garbled, as in live play). Then add the static baseline without touching the live one: `npm run regress:live -- --label p2-base --static --gpu --only littleroot_npcs,rustboro_npcs,r104_berries,r104_night,r116_cut,r114_rocks,fiery_boulders,r119_items,granite_flash` (pick another `focusObj` for `granite_flash` if Granite Cave 1F has no object near a lit spot; record it).
+- [ ] **Step 5: Look.** `npm run regress:live -- --label t2 --static --compare p2-base` — live entries 0.00 % in both styles (the new `SpriteSnap` fields change nothing). Static entries: NPCs, balls, rocks, boulders, Cut trees, berry trees (one growth stage per tree) appear as today's cards on their cells (the truck card is garbled and placed as in live play). Then add the static baseline without touching the live one: `npm run regress:live -- --label p2-base --static --gpu --only littleroot_npcs,rustboro_npcs,r104_berries,r104_night,r116_cut,r114_rocks,fiery_boulders,r119_items,granite_flash` (pick another `focusObj` for `granite_flash` if Granite Cave 1F has no object near a lit spot; record it).
 - [ ] **Step 6: Commit** — `git add src/game/rom/objectGraphics.ts src/render/previewActors.ts tests/smoke/objectGraphics.test.ts src/game/state.ts src/render/preview.ts tools/regress-live.ts && git commit -m "preview: object-event actors from ROM templates; sprite anim/images/subsprite fields"`
 
 **Acceptance:** every static entry shows its objects at their cells in both styles; live entries unchanged; static baseline captured.
@@ -254,7 +258,8 @@ describe('object graphics from the ROM', () => {
   export class ActorLayer {
     readonly group: THREE.Group;                          // billboards + blob shadows (+ inflated, models later)
     constructor(atlas: ActorAtlas, opts?: ActorLayerOptions);
-    /** Rebuilds every list from scratch; returns the feet of upright actors (grass bending), reusing one array. */
+    /** Rebuilds every list from scratch; returns the grass-bending feet, reusing one array: every non-flat sprite
+     *  drawn — uprights (cards, inflated actors, models) and grass overlays, as today's `specs.filter(b => !b.flat)`. */
     update(state: GameState, f: ActorFrame): readonly { x: number; y: number; z: number }[];
   }
   ```
@@ -317,7 +322,7 @@ Computes, for every used atlas slot, the inflation height of each texel: exact E
 
 **Files:**
 - Create: `src/render/actors/inflateMath.ts`, `src/render/actors/spriteField.ts`, `src/render/actors/selfTest.ts`, `tests/inflateMath.test.ts`, `tests/spriteField.test.ts`
-- Modify: `src/render/spriteAtlas.ts` (accessors), `src/render/renderer.ts` (owns + updates the field; `actorSelfTest()`), `src/render/preview.ts` (same), `src/main.ts` (`emu.selfTest()`), `tools/regress-live.ts` (`--selftest`: run after the steps of `r101_grass`, `birch`, `lr_truck`; write the result into stats and `_field_<entry>.png`)
+- Modify: `src/render/spriteAtlas.ts` (accessors), `src/render/renderer.ts` (owns + updates the field; `actorSelfTest()`), `src/render/preview.ts` (same), `src/render/overworld/overworldView.ts` (constructor param `field?: SpriteField`, passed to the `ActorLayer` options), `src/main.ts` (`emu.selfTest()`), `tools/regress-live.ts` (`--selftest`: run after the steps of `r101_grass`, `birch`, `lr_truck`; write the result into stats and `_field_<entry>.png`)
 
 **Interfaces:**
 - Produces (`inflateMath.ts`, all texel grids row-major `w×h`, rows in atlas order (bottom-up); outside the grid = transparent):
@@ -457,7 +462,7 @@ describe('SpriteField', () => {
 - [ ] **Step 3: Implement** `inflateMath.ts` (the GLSL above in TS; `bruteForceDistance` scans all transparent texels in the grid extended by a one-texel transparent ring), then `SpriteField` (constants injected as `#define`s from `INFLATE`, blur weights as a `float[7]` uniform), the accessors, renderer/preview wiring, `selfTest.ts`, `emu.selfTest()` / `preview.selfTest()` and the harness `--selftest` (also dump the field slots as a grey image: `h / inflateMax()`).
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
 - [ ] **Step 5: GPU parity.** `npm run regress:live -- --label t4 --selftest --static --compare p2-base` → selftest `maxErr ≤ 0.02` px and `fixtureMaxErr ≤ 0.02` on every self-tested entry (these run after walking/animation steps, so a stale or mis-slotted field fails), `gpuMs ≤ 0.3`; the field dumps show soft pillows inside each sprite silhouette; images 0.00 % vs `p2-base` (nothing visible changed); `stats` calls grow by ≤ 4 in Modern, 0 in Retro.
-- [ ] **Step 6: Commit** — `git add src/render/actors/inflateMath.ts src/render/actors/spriteField.ts src/render/actors/selfTest.ts tests/inflateMath.test.ts tests/spriteField.test.ts src/render/spriteAtlas.ts src/render/renderer.ts src/render/preview.ts src/main.ts tools/regress-live.ts && git commit -m "feat(actors): GPU inflation field (exact EDT + sqrt profile + blur) with CPU reference and parity self-test"`
+- [ ] **Step 6: Commit** — `git add src/render/actors/inflateMath.ts src/render/actors/spriteField.ts src/render/actors/selfTest.ts tests/inflateMath.test.ts tests/spriteField.test.ts src/render/spriteAtlas.ts src/render/renderer.ts src/render/preview.ts src/render/overworld/overworldView.ts src/main.ts tools/regress-live.ts && git commit -m "feat(actors): GPU inflation field (exact EDT + sqrt profile + blur) with CPU reference and parity self-test"`
 
 **Acceptance:** parity within 0.02 px on live slots and the bleed fixture; no visible change; field passes skipped in Retro and in battles.
 
@@ -469,7 +474,7 @@ Upright sprites become one instanced, camera-facing grid mesh displaced towards 
 
 **Files:**
 - Create: `src/render/actors/inflatedActors.ts`, `tests/inflatedActors.test.ts`
-- Modify: `src/render/actors/actorLayer.ts` (route `'inflated'` to `InflatedActors`; extra test), `src/render/overworld/billboards.ts` (`BlobShadows(source: { geometryForShadows(): THREE.InstancedBufferGeometry })`, `uScale` uniform default 1 + `setScale(k)`), `src/render/overworld/overworldView.ts` (pass `field` and `kit` to the layer), `src/render/actors/inflateMath.ts` (tuned constants only)
+- Modify: `src/render/actors/actorLayer.ts` (route `'inflated'` to `InflatedActors`; extra test), `src/render/overworld/billboards.ts` (`BlobShadows(source: { geometryForShadows(): THREE.InstancedBufferGeometry })`, `uScale` uniform default 1 + `setScale(k)`), `src/render/overworld/overworldView.ts` (pass `kit` to the layer; `field` is passed since Task 4), `src/render/actors/inflateMath.ts` (tuned constants only)
 
 **Interfaces:**
 - Consumes: `SpriteField.texture` (Task 4), `inflateMax()` (Task 4), `ActorLayer` / `cardSpec` (Task 3), `KitUniforms.uSky` (rim colour).
@@ -487,7 +492,7 @@ Upright sprites become one instanced, camera-facing grid mesh displaced towards 
     geometryForShadows(): THREE.InstancedBufferGeometry; // 4-vertex quad + the shared aFoot/aSize instance attributes
   }
   ```
-  `ActorLayer` in Modern: `'inflated'` sprites → `InflatedActors.set`, plus a second `BlobShadows` over them with `CONTACT`; grass overlays get `grassOffset = 0.06 + inflateMax() / 16` (they must stay in front of the displaced legs); the feet list still contains every upright actor. In Retro the inflated mesh and its contact shadows get an empty list and `visible = false`.
+  `ActorLayer` in Modern: `'inflated'` sprites → `InflatedActors.set`, plus a second `BlobShadows` over them with `CONTACT`; grass overlays get `grassOffset = 0.06 + inflateMax() / 16` (they must stay in front of the displaced legs); the grass-bending feet still contain every upright actor and every drawn grass overlay (as today). In Retro the inflated mesh and its contact shadows get an empty list and `visible = false`.
 
 **Shader sketch** (`MeshStandardMaterial({ roughness: 0.8, metalness: 0 })` + `onBeforeCompile`, `customProgramCacheKey = () => 'actor:inflated:1'`; mesh at identity, `frustumCulled = false`; geometry = `PlaneGeometry(1, 1, 16, 32)` translated to x ∈ [−0.5, 0.5], y ∈ [0, 1], instanced attributes `aFoot` (vec3), `aSize` (vec4: width, height, lift, 0), `aUv` (vec4: u0, v0 top, u1, v1 bottom) exactly as `Billboards`):
 
@@ -582,7 +587,7 @@ it('switching to Retro routes every sprite back to cards and empties the inflate
   - the sun shadow is the character's silhouette (not a blob), feet look grounded (contact shadow), no acne stripes on the characters, tree shadows fall on characters walking under them;
   - brightness: Modern characters are not visibly darker than the Retro crops by day (`r101`, `birch`), at night (`r104_night`), indoors (`vigoroth`, `item_indoor`) and in the Flash cave (`granite_flash`: actors near the focus lit warm by the lantern, never black);
   - `r101_grass`: blades still hide the legs as in Phase 1 (no leg drawn through the blades); `r101_tree`: the player's fade still works;
-  - Retro: 0.00 % vs `p2-base` on every entry; `battle`/`transition` Modern also 0.00 % (battles untouched);
+  - Retro: 0.00 % vs `p2-base` on every entry (`battle`/`transition` are gated in Retro only);
   - budgets: calls ≤ 150, triangles ≤ 1.5 M, `gpuMs` ≤ `p2-base` + 1.0 ms, `cpuMs` ≤ `p2-base` + 0.5 ms on every live Modern entry.
   Record the chosen constants and the measured deltas in the task report.
 - [ ] **Step 6: Commit** — `git add src/render/actors/inflatedActors.ts tests/inflatedActors.test.ts src/render/actors/actorLayer.ts tests/actorLayer.test.ts src/render/overworld/billboards.ts src/render/overworld/overworldView.ts src/render/actors/inflateMath.ts && git commit -m "feat(actors): inflated, lit, rim-lit characters with silhouette shadows (Modern)"`
@@ -668,7 +673,8 @@ describe('xbrSample', () => {
 ```
 
 ```ts
-// tests/settings.test.ts additions
+// tests/settings.test.ts additions; also update the existing defaults assertion (line 7, a full `toEqual`)
+// to include `spriteFilter: 'smooth'`
 it('sprite edges default to HD smooth and reject unknown values', () => {
   expect(parseSettings(null).spriteFilter).toBe('smooth');
   expect(parseSettings('{"spriteFilter":"pixel"}').spriteFilter).toBe('pixel');
@@ -815,7 +821,7 @@ Mapped object events are drawn as instanced procedural models placed where their
 
 **Files:**
 - Create: `src/render/actors/models.ts`, `src/render/actors/objectModels.ts`, `tests/actorModels.test.ts`, `tests/objectModels.test.ts`
-- Modify: `src/render/actors/actorLayer.ts` (sprite → object link, `'model'` route, colours, pixel source, `precompile`), `src/render/overworld/overworldView.ts` (pixel source: live `{ vram: bus.vram, palette: unfaded EWRAM palette (512) }`; precompile once at the first `sync`), `src/render/preview.ts` (pixel source = scratch VRAM + palette; precompile), `src/render/kit/trees.ts` (export `smallTreeGeo(seed: number): THREE.BufferGeometry` = a `blobCrown` + trunk at 0.6× the bushy style, trunk flagged in vertex alpha like the tree styles, `userData.shared`; also export the `TRUNK_HEAD` / `TRUNK_FRAG` hooks)
+- Modify: `src/render/actors/actorLayer.ts` (sprite → object link, `'model'` route, colours, pixel source, `precompile`), `tests/actorLayer.test.ts`, `src/render/overworld/overworldView.ts` (pixel source: live `{ vram: bus.vram, palette: unfaded EWRAM palette (512) }`; precompile once at the first `sync`), `src/render/preview.ts` (pixel source = scratch VRAM + palette; precompile), `src/render/kit/trees.ts` (export `smallTreeGeo(seed: number): THREE.BufferGeometry` = a `blobCrown` + trunk at 0.6× the bushy style, trunk flagged in vertex alpha like the tree styles, `userData.shared`; also export the `TRUNK_HEAD` / `TRUNK_FRAG` hooks)
 
 **Interfaces:**
 - Consumes: `objectModelFor`, `modelImageHeight`, `SpriteColorCache`, `SpritePixelSource` (Task 7); `cardSpec` (Task 3); `kitMaterial` / `KitUniforms` (`kit/materials.ts`); `blobCrown`/`smallTreeGeo` (`kit/trees.ts`); `soften`, `lush`, `toLinear` (`kit/palette.ts`).
@@ -840,12 +846,14 @@ Mapped object events are drawn as instanced procedural models placed where their
     /** Resets every mesh's count, then places the instances (≤ MAX_PER_KIND each); updates a kind's tint uniforms
      *  (uTintA / uTintB) from the first instance's colours, falling back to the defaults below. */
     set(list: readonly ModelInstance[]): void;
+    /** Whether a kind has meshes (Task 8: pokeball, boulder, crackedRock, cutTree, truck; 'berry' from Task 9). */
+    supports(kind: ObjectModelKind): boolean;
     precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void>;
   }
   ```
   Default / derived tints (linear via `toLinear`): pokeball A = accent ?? (0.86, 0.16, 0.16); boulder A = soften(main) ?? (0.55, 0.5, 0.45); crackedRock A = soften(main) ?? (0.6, 0.55, 0.5); cutTree A = lush(green) ?? (0.3, 0.6, 0.3), trunk (uTrunk) = (0.42, 0.3, 0.2); truck A = main ?? (0.92, 0.92, 0.9), B = accent ?? (0.2, 0.35, 0.8). Materials: `kitMaterial(kit, { vertexColors: true, roughness: 0.6 (ball 0.35), uniforms: { uTintA, uTintB }, fragHead, fragColor })` — the `fragColor` hook applies the tint code; created once, never released (not part of a world build).
 - Produces (`ActorLayer`): `setPixelSource(src: SpritePixelSource | null): void` (colours; null → fallback tints) and `precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void>` (delegates to `ObjectModels`).
-- `ActorLayer` (Modern): per frame build `spriteId → ObjectEventSnap` from `state.objects`; an Upright sprite whose object has `objectModelFor(o.graphicsId, s.animNum)` and is not `o.invisible` routes to `'model'`: foot = `cardSpec` foot, except that the foot Z uses the model image's bottom (`worldY − s.height/2 + modelImageHeight(kind, s.height)/2`, in px, then /16 − 0.5 + h) so the 48-px truck stands on its real cells. The sprite is not drawn; the model's foot joins the grass-bending feet. Retro: no models (`group.visible = false`).
+- `ActorLayer` (Modern): per frame build `spriteId → ObjectEventSnap` from `state.objects`; an Upright sprite whose object has `ref = objectModelFor(o.graphicsId, s.animNum)` with `models.supports(ref.kind)` and is not `o.invisible` routes to `'model'` (mapping only routes to models that exist: berry trees stay inflated sprites until Task 9): foot = `cardSpec` foot, except that the foot Z uses the model image's bottom (`worldY − s.height − s.c2cY + modelImageHeight(kind, s.height)/2`, in px — `worldY − s.height − s.c2cY` is the sprite centre, also for the truck whose `c2cY` (−24) differs from −height/2 — then /16 − 0.5 + h) so the 48-px truck stands on its real cells. The sprite is not drawn; the model's foot joins the grass-bending feet. Retro: no models (`group.visible = false`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -923,7 +931,7 @@ describe('ObjectModels', () => {
 });
 ```
 
-  and in `tests/actorLayer.test.ts`: with an object `{ spriteId: 0, graphicsId: 59, invisible: false }` in `state.objects`, Modern `counts()` = `{ cards: 0, inflated: 0, models: 1 }`; the same sprite with `animNum: 1` and `graphicsId: 82` → `{ inflated: 1, models: 0 }`; Retro → `{ cards: 1, models: 0 }`; `invisible: true` object → no model.
+  and in `tests/actorLayer.test.ts`, with a fresh one-sprite state (`sprites: [blankSprite({ index: 0, worldX: 40, worldY: 64 })]`, the classifier returning Upright) and an object `{ spriteId: 0, graphicsId: 59, invisible: false }` in `state.objects`: Modern `counts()` = `{ cards: 0, inflated: 0, models: 1 }`; the same sprite with `animNum: 1` and `graphicsId: 82` → `{ inflated: 1, models: 0 }`; Retro → `{ cards: 1, models: 0 }`; `invisible: true` object → no model; `graphicsId: 60` (berry tree, no mesh yet) → `{ inflated: 1, models: 0 }`.
 - [ ] **Step 2: Run** `npx vitest run tests/actorModels.test.ts tests/objectModels.test.ts tests/actorLayer.test.ts` → FAIL.
 - [ ] **Step 3: Implement** the geometries (seeded via `kit/geom.ts` `rng` / `noise3`; boulder/rock like `blobCrown`'s displaced icospheres, detail ≤ 2), `ObjectModels` (InstancedMesh per kind, `castShadow`/`receiveShadow`, `frustumCulled = false`, `visible = count > 0`), the `ActorLayer` route and `precompile` (`renderer.compileAsync(group, camera, scene)` with every mesh temporarily `visible` and `count = 1`, restored after). For the truck, find which way the GBA image faces with `--static` `littleroot_npcs` in Retro after Task 10 or by decoding its frame with `objectGraphics.ts` + the subsprite table in a `.scratch` script; record it.
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
@@ -939,10 +947,10 @@ describe('ObjectModels', () => {
 Berry trees become 3D plants whose shape follows the live growth stage (soil mound → sprout → sapling → flowering bush → bush with berries); flowers and berries take their colours from the sprite.
 
 **Files:**
-- Modify: `src/render/actors/models.ts`, `src/render/actors/objectModels.ts`, `tests/actorModels.test.ts`, `tests/objectModels.test.ts`
+- Modify: `src/render/actors/models.ts`, `src/render/actors/objectModels.ts`, `tests/actorModels.test.ts`, `tests/objectModels.test.ts`, `tests/actorLayer.test.ts` (the `graphicsId: 60` case now expects `{ inflated: 0, models: 1 }`)
 
 **Interfaces:**
-- Consumes: `objectModelFor` → `{ kind: 'berry', stage }` (Task 7), `ObjectModels` (Task 8).
+- Consumes: `objectModelFor` → `{ kind: 'berry', stage }` (Task 7), `ObjectModels` (Task 8). `ObjectModels.supports('berry')` becomes true, so `ActorLayer` now routes berry trees to models.
 - Produces:
   ```ts
   export type BerryStage = 1 | 2 | 3 | 4 | 5;
@@ -985,6 +993,7 @@ it('draws a body per berry tree and its berries at the anchors', () => {
   expect(count(m, 'berryFlower')).toBe(0);
   m.set([]);
   expect(count(m, 'berryFruit')).toBe(0);
+  expect(m.supports('berry')).toBe(true);
 });
 ```
   (all plants use seed 0 for their geometry so anchors are shared; per-instance yaw keeps them from looking identical.)
@@ -992,20 +1001,20 @@ it('draws a body per berry tree and its berries at the anchors', () => {
 - [ ] **Step 2: Run** `npx vitest run tests/actorModels.test.ts tests/objectModels.test.ts` → FAIL.
 - [ ] **Step 3: Implement** the stage geometries, the extra meshes, anchor transforms (plant matrix × anchor), per-instance colours.
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
-- [ ] **Step 5: Look.** `npm run regress:live -- --label t9 --static --only r104_berries,r104_night,r119_items --compare t8`: all five stages visible (preview stages cycle by localId), plants sit in their soil cells, flowers/berries in sprite colours, readable at night; Retro 0.00 % vs `p2-base`.
-- [ ] **Step 6: Commit** — `git add src/render/actors/models.ts src/render/actors/objectModels.ts tests/actorModels.test.ts tests/objectModels.test.ts && git commit -m "feat(actors): berry plants per growth stage with sprite-coloured flowers and berries"`
+- [ ] **Step 5: Look.** `npm run regress:live -- --label t9 --static --gpu --compare t8` (the full live + static set with GPU timing: Tasks 10–11 compare against it). On `r104_berries`, `r104_night`, `r119_items`: all five stages visible (preview stages cycle by localId), plants sit in their soil cells, flowers/berries in sprite colours, readable at night; entries without berry trees unchanged vs `t8`; live budgets as in Task 5; Retro 0.00 % vs `p2-base`.
+- [ ] **Step 6: Commit** — `git add src/render/actors/models.ts src/render/actors/objectModels.ts tests/actorModels.test.ts tests/objectModels.test.ts tests/actorLayer.test.ts && git commit -m "feat(actors): berry plants per growth stage with sprite-coloured flowers and berries"`
 
 **Acceptance:** Step 5.
 
 ---
 
-### Task 10: Multi-piece subsprites composed in the atlas (both styles) — **controller to confirm**
+### Task 10: Multi-piece subsprites composed in the atlas (both styles) — confirmed by the controller
 
-The GBA builds some world sprites from several OAM pieces (subsprite tables): the 48×48 moving truck, Briney's boat, the S.S. Tidal. The atlas draws only the base OAM shape, so these are garbled today in both styles. This task composes the pieces for world sprites (`coordOffset`), fixing them everywhere — it therefore changes Retro pixels of exactly those sprites. Skip the task if the controller rules Retro must stay byte-identical (Modern still shows the truck model).
+The GBA builds some world sprites from several OAM pieces (subsprite tables) whose image differs from the base OAM shape: the 48×48 moving truck (on a 32×32 base OAM), the S.S. Tidal (96×40) and the submarine shadow (88×32). The atlas draws only the base OAM shape, so these are garbled today in both styles. (Briney's boat, gfx 88, is a single 32×32 sprite and is already correct.) This task composes the pieces for world sprites (`coordOffset`) whose composed image fits a 64×64 slot — the truck — fixing them everywhere; it therefore changes Retro pixels of exactly those sprites. Oversize composed sprites (S.S. Tidal, submarine shadow) stay drawn from their base OAM as today: Phase 2 known gap.
 
 **Files:**
 - Create: `src/game/subsprites.ts`, `tests/subsprites.test.ts`
-- Modify: `src/game/state.ts` (composed size/position + `pieces`), `src/render/spriteAtlas.ts` (one atlas instance per piece), `tests/smoke/objectGraphics.test.ts` (truck table)
+- Modify: `src/game/state.ts` (composed size/position + `pieces`), `src/render/previewActors.ts` (preview sprites carry the graphics info's subsprite table and are composed the same way), `src/render/spriteAtlas.ts` (pieces in a separate instanced attribute; per-slot `aSlotSize` kept), `tests/smoke/objectGraphics.test.ts` (truck table), `tools/regress-live.ts` (static entry `r104_boat`)
 
 **Interfaces:**
 - Produces:
@@ -1021,8 +1030,12 @@ The GBA builds some world sprites from several OAM pieces (subsprite tables): th
   /** Bounds of the pieces after flips (sprite.c AddSubspritesToOamBuffer: hflip x' = −(x + w), vflip y' = −(y + h)). */
   export function composeBounds(pieces: readonly SubspritePiece[], hflip: boolean, vflip: boolean):
     { minX: number; minY: number; width: number; height: number; placed: { x: number; y: number; width: number; height: number; tileOffset: number }[] };
+  /** Composes a world sprite in place when `needsComposition` and the bounds fit 64×64 (else leaves it as today):
+   *  sets `pieces`, `width/height` = bounds, `c2cY = minY`, and moves `worldX/worldY` from the base-OAM placement to
+   *  the composed image. Shared by `GameState` (live) and `previewActors.ts` (static preview). */
+  export function applyComposition(s: SpriteSnap, pieces: readonly SubspritePiece[]): void;
   ```
-  `SpriteSnap` gains `pieces: { x: number; y: number; width: number; height: number; tileOffset: number }[] | null` (offsets inside the composed image); for composed sprites `width/height` = bounds, `worldX = x + x2 + spriteToMapX + minX + width/2`, `worldY = y + spriteToMapY + minY + height` (sprite.y is the centre, see `AddSubspritesToOamBuffer`). The atlas instance attribute stores per instance its pixel origin inside the slot (piece offset) and its own size/tile; a non-composed sprite stays exactly one instance as today.
+  `SpriteSnap` gains `pieces: { x: number; y: number; width: number; height: number; tileOffset: number }[] | null` (offsets inside the composed image); for composed sprites `width/height` = bounds (≤ 64×64), `worldX = x + x2 + spriteToMapX + minX + width/2`, `worldY = y + spriteToMapY + minY + height` (sprite.y is the centre, see `AddSubspritesToOamBuffer`) and `c2cY = minY`, so `worldY − height − c2cY` stays the sprite centre (Task 8's model foot; for the truck `minY = c2cY = −24`). The atlas keeps its per-slot `aSlotSize` attribute (slot x, slot y, composed width, height; one instance per slot), so `slotRects` / `slotCount` and `SpriteField` are unchanged; the pieces go in a separate instanced attribute set drawn by the bake pass (per piece: its slot, pixel origin inside the slot, size, tile/flags); a non-composed sprite is one piece at origin (0, 0) with its own size, baked exactly as today.
 
 - [ ] **Step 1: Write the failing test** `tests/subsprites.test.ts`
 
@@ -1053,12 +1066,12 @@ describe('subsprites', () => {
 ```
 
 - [ ] **Step 2: Run** `npx vitest run tests/subsprites.test.ts` → FAIL.
-- [ ] **Step 3: Implement** (`readSubsprites` through `Mem`, cached per table address; composition only for `coordOffset` sprites with `subspriteMode !== 0` and `needsComposition`; HUD/battle sprites untouched). Smoke: the truck's graphics info (`readObjectGraphicsInfo(rom, 94).subspriteTables`, table 0) composes to 48×48.
+- [ ] **Step 3: Implement** (`readSubsprites` through `Mem`, cached per table address; composition only for `coordOffset` sprites with `subspriteMode !== 0`, `needsComposition` and bounds ≤ 64×64; HUD/battle sprites untouched; the preview sets `subspriteTables` = `info.subspriteTables`, table 0, `subspriteMode = 2` and calls `applyComposition` with the ROM table). Smoke: the truck's graphics info (`readObjectGraphicsInfo(rom, 94).subspriteTables`, table 0) composes to 48×48.
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` and the smoke test → PASS.
-- [ ] **Step 5: Look.** `npm run regress:live -- --label t10 --static --compare t9`: Retro `lr_truck` / `littleroot_npcs` show the real truck image (diff confined to the truck's rectangle); a static entry `r104_boat` (`map=0.19&focusGfx=88`) shows Briney's boat whole in both styles (inflated in Modern); every other entry 0.00 %.
-- [ ] **Step 6: Commit** — `git add src/game/subsprites.ts tests/subsprites.test.ts src/game/state.ts src/render/spriteAtlas.ts tests/smoke/objectGraphics.test.ts tools/regress-live.ts && git commit -m "fix: compose multi-piece world sprites (truck, boats) in the sprite atlas"`
+- [ ] **Step 5: Look.** `npm run regress:live -- --label t10 --static --selftest --compare t9`: Retro `lr_truck` / `littleroot_npcs` show the real truck image (diff confined to the truck's rectangle); a new static entry `r104_boat` (`map=0.19&focusGfx=88`, Briney's boat: a single 32×32 sprite, unaffected) and every other entry 0.00 %; `--selftest` field parity unchanged.
+- [ ] **Step 6: Commit** — `git add src/game/subsprites.ts tests/subsprites.test.ts src/game/state.ts src/render/previewActors.ts src/render/spriteAtlas.ts tests/smoke/objectGraphics.test.ts tools/regress-live.ts && git commit -m "fix: compose multi-piece world sprites (the truck) in the sprite atlas"`
 
-**Acceptance:** Step 5; Retro differs from `p2-base` only on multi-piece sprites.
+**Acceptance:** Step 5; Retro differs from `p2-base` only on composed multi-piece sprites (the truck).
 
 ---
 
@@ -1068,7 +1081,7 @@ Phase 1 fades trees/roofs only between the camera and the player. This extends t
 
 **Files:**
 - Create: `tests/fadeActors.test.ts`
-- Modify: `src/render/kit/materials.ts` (`uFocusExtra`, FADE loop, `setKitFocusExtra`), `src/render/actors/actorLayer.ts` (expose NPC feet), `src/render/overworld/overworldView.ts`
+- Modify: `src/render/kit/materials.ts` (`uFocusExtra`, FADE loop, `setKitFocusExtra`), `src/render/actors/actorLayer.ts` (expose NPC feet: inflated actors only — grass-overlay feet stay in the grass-bending list but never in this one), `src/render/overworld/overworldView.ts`, `tools/regress-live.ts` (static entry `woods_npc`)
 
 **Interfaces:**
 - Produces:
@@ -1103,7 +1116,7 @@ describe('pickFadeActors', () => {
 ```
 
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4:** `npx tsc --noEmit && npm test` → PASS.
-- [ ] **Step 5: Look.** A static entry `woods_npc` (`map=24.11&focusObj=<an NPC standing north of a crown, recorded>&focus=1`) and live `r101_tree`: the NPC stays visible through the crown; canopies elsewhere unchanged; `gpuMs` + ≤ 0.3 ms vs `t9`; Retro 0.00 % vs `p2-base`.
+- [ ] **Step 5: Look.** A static entry `woods_npc` (`map=24.11&focusObj=<an NPC standing north of a crown, recorded>&focus=1`) and live `r101_tree`: the NPC stays visible through the crown; canopies elsewhere unchanged; `gpuMs` + ≤ 0.3 ms vs `t9`; Retro 0.00 % vs `p2-base` (except Task 10's composed truck).
 - [ ] **Step 6: Commit** — `git add tests/fadeActors.test.ts src/render/kit/materials.ts src/render/actors/actorLayer.ts src/render/overworld/overworldView.ts tools/regress-live.ts && git commit -m "feat(kit): occlusion fade also clears nearby NPCs"`
 
 ---
@@ -1113,11 +1126,11 @@ describe('pickFadeActors', () => {
 **Files:**
 - Modify: whatever the checks below require (keep fixes small; anything larger goes back to the controller), `README.md`, `CLAUDE.md`
 
-- [ ] **Step 1: Full run.** `npm run regress:live -- --label p2 --static --gpu --selftest --compare p2-base` (both styles) and `--label p2dpr2 --dpr 2 --styles modern --only r101,birch,lr_truck,r104_berries --static`. Check against the Global Constraints: calls ≤ 150, triangles ≤ 1.5 M, `gpuMs` ≤ `p2-base` + 1.0 ms and `cpuMs` ≤ `p2-base` + 0.5 ms (live Modern entries), Retro 0.00 % (except Task 10's sprites), `battle`/`transition` 0.00 % in both styles, self-tests within tolerance, DPR 2 without page errors and with crisp edges.
+- [ ] **Step 1: Full run.** `npm run regress:live -- --label p2 --static --gpu --selftest --compare p2-base` (both styles) and `--label p2dpr2 --dpr 2 --styles modern --only r101,birch,lr_truck,r104_berries --static`. Check against the Global Constraints: calls ≤ 150, triangles ≤ 1.5 M, `gpuMs` ≤ `p2-base` + 1.0 ms and `cpuMs` ≤ `p2-base` + 0.5 ms (live Modern entries), Retro 0.00 % (except Task 10's composed truck; `battle`/`transition` included — they are gated in Retro only), self-tests within tolerance, DPR 2 without page errors and with crisp edges.
 - [ ] **Step 2: High quality.** One run with `?quality=high` (`--query quality=high --only r101,birch,lr_truck`): the GTAO normal/depth prepass renders with an override material that ignores the actors' instance attributes — if AO artefacts appear (dark quads at the world origin or flat cards), hide the actor and model meshes during that prepass (e.g. `onBeforeRender` checking the GTAO pass's render target) and re-check.
-- [ ] **Step 3: First-use hitch.** In live `r101`, `stats.programs` after 30 frames equals the value after 300 frames of walking into Oldale (`steps: [['UP', 300]]` or the Phase 1 crossing route); no frame in that walk exceeds the `p2-base` maximum by more than 16 ms (record the per-frame CPU times from `emu.step` in the report).
+- [ ] **Step 3: First-use hitch.** In live `r101`, `stats.programs` after 30 frames equals the value after 300 frames of walking into Oldale (`steps: [['UP', 300]]` or the Phase 1 crossing route); no frame in that walk exceeds the `p2-base` `stepMsMax` of `r101` by more than 16 ms (per-frame CPU times as returned by `emu.step`; record them in the report).
 - [ ] **Step 4: Live sanity by eye** (`npx tsx tools/shot3d.ts --state out/r101.state --keys "LEFT:1800,DOWN:300"` and `--keys "UP:4000"`): walking/turning animation frames are the game's, characters face the camera when it orbits (`COMMA`/`PERIOD`), a live Settings switch Modern ↔ Retro ↔ Modern and HD ↔ Pixel applies at once, no console errors.
-- [ ] **Step 5: Docs.** `README.md`: Phase 2 features (inflated actors, HD sprite edges + setting, object models, what stays a sprite), `CLAUDE.md`: `npm run regress:live` usage (`--static`, `--compare`, `--gpu`, `--selftest`, `?manual=1` + `emu.step`), the `p2-base` baseline, preview `&actors=1&focusGfx=`. List in the report every known gap for the controller's progress log (e.g. objects that stay inflated sprites: boats, S.S. Tidal, moving boxes, dolls/cushions; yaw-dependent shadow shape; Phase 3 to reuse `InflatedActors` + `SpriteField` for battlers).
+- [ ] **Step 5: Docs.** `README.md`: Phase 2 features (inflated actors, HD sprite edges + setting, object models, what stays a sprite), `CLAUDE.md`: `npm run regress:live` usage (`--static`, `--compare`, `--gpu`, `--selftest`, `?manual=1` + `emu.step`), the `p2-base` baseline, preview `&actors=1&focusGfx=`. List in the report every known gap for the controller's progress log (e.g. objects that stay inflated sprites: boats, S.S. Tidal, moving boxes, dolls/cushions; oversize multi-piece sprites — S.S. Tidal 96×40, submarine shadow 88×32 — still drawn from their base OAM (garbled); yaw-dependent shadow shape; Phase 3 to reuse `InflatedActors` + `SpriteField` for battlers).
 - [ ] **Step 6: Commit** — `git add -A src tools tests README.md CLAUDE.md && git commit -m "docs+polish: Phase 2 performance checks, harness docs"` (never `out/`, states or the ROM — they are gitignored; check `git status` first).
 
 **Acceptance:** every Global Constraint verified with numbers in the report.
@@ -1128,4 +1141,4 @@ describe('pickFadeActors', () => {
 
 **Spec §6 coverage:** inflated sprites — distance field (Task 4, D1 GPU instead of CPU chamfer), camera-facing 16×32 grid displaced by `k·sqrt(d)` (Task 5, D2 front sheet only), normals from the height gradient lit by the scene lights replacing `charLight` (Task 5), rim light (Task 5), real shape shadows via a custom depth material (Task 5), animation frames the game's own (atlas unchanged), flat decals and grass overlays unchanged (Tasks 3/5). HD edge-smoothing with a nearest setting (Task 6, D3 scale-free instead of a 4× atlas). Object model replacements by graphicsId: item ball, boulder, breakable rock, Cut tree (kit tree geometry), berry trees per stage from the sprite's animation (Tasks 7–9), unmapped objects inflated (Task 5 routing), live position/animation followed and removal animations shown as sprites (Tasks 7–8, D4). Spec §9.1 unit tests: distance field + inflation maths (Task 4), upscaler on fixtures (Task 6), mapping/colours (Task 7). §9.3 save-state shots (Tasks 1–2). §10 budgets (Global Constraints, Tasks 5/8/12). §7 reuse: `SpriteField` / `InflatedActors` take plain textures/specs (Global Constraints). Phase 1 gaps addressed: characters still billboards (Tasks 5–9), NPC occlusion fade (optional Task 11), moving truck (Tasks 8/10), first-use compile hitch for the new materials (Tasks 8/12).
 
-**Interfaces used across tasks:** `blankSprite` (T2 → T3, T5 tests), `routeSprite`/`cardSpec`/`ActorLayer`/`ActorFrame` (T3 → T5, T8, T11), `ActorLayer.counts()` (T5 → T8 tests), `ActorLayer.setPixelSource`/`precompile` (T8), `INFLATE`/`inflateMax`/`SpriteField` (T4 → T5, T6), `InflatedActors.setSmoothing` (T5 → T6), `objectModelFor`/`modelImageHeight`/`SpriteColorCache`/`SpritePixelSource` (T7 → T8, T9), `ObjectModels`/`MAX_PER_KIND`/mesh names by kind (T8 → T9), `SpriteSnap.animNum/images/subsprite*` (T2 → T7, T8, T10).
+**Interfaces used across tasks:** `blankSprite` (T2 → T3, T5 tests), `routeSprite`/`cardSpec`/`ActorLayer`/`ActorFrame` (T3 → T5, T8, T11), `ActorLayer.counts()` (T5 → T8 tests), `ActorLayer.setPixelSource`/`precompile` (T8), `INFLATE`/`inflateMax`/`SpriteField` (T4 → T5, T6), `InflatedActors.setSmoothing` (T5 → T6), `objectModelFor`/`modelImageHeight`/`SpriteColorCache`/`SpritePixelSource` (T7 → T8, T9), `ObjectModels`/`MAX_PER_KIND`/mesh names by kind/`supports(kind)` (T8 → T9; `ActorLayer` routes to a model only when supported), `SpriteSnap.animNum/images/subsprite*` (T2 → T7, T8, T10), `SpriteSnap.c2cY` (live / T2 preview / T10 `applyComposition` → T8 model foot), `emu.step(): number[]` + `stats.stepMsMax` (T1 → T12), `preview.gpuFrames`/`stats().programs` (T2 → harness `--gpu`, T8), per-slot `aSlotSize` = `slotRects` (T4, kept by T10).
