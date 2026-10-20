@@ -197,18 +197,56 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   warm-up build would remove it). In Modern, interiors/caves/battles also get the gentler blur + softer shadows. The cold
   first build in a page (regress `buildMs`) is machine-state dominated on the dev laptop (same code: 41–134 ms in a
   quiet session, 88–245 ms under load; base vs Task 16 equal in interleaved A/B) — see task-16 report.
+- Task 17 (live check, docs): live play from `out/r101.state` (free to walk; `out/s22.state` walks Littleroot before
+  the starter, `lr_out`/`s24`/`s26` are cutscenes or blocked) — Route 101 → Oldale → Route 101 and Route 101 →
+  Littleroot → Route 101 in Modern: one kit group after every crossing, no family failures, no page errors (only the
+  favicon 404), the player never hidden (dithered fade through tree crowns), tall grass parts around the player and
+  NPCs, the GBA grass overlay hidden on blade cells and shown again after a live switch to Retro (and back: the kit
+  rebuilds). Live crossing rebuilds (one per crossing) 20–45 ms once warm, 59–112 ms for the first crossing of a
+  session. **Found:** buildings in a connected map's strip of the live grid are built without that map's events
+  (`liveEvents` reads the current map only): seen from Route 101, Oldale's Pokémon Center is a plain house model and
+  its neighbour stays pixel art; both switch to the right models when you cross. Retro regress = `before` (calls/triangles −1/−2 everywhere: the atlas
+  no longer draws every frame); pixels differ only at shadow edges (the Task 16 PCF `shadow.radius` is set per quality
+  in both styles: slightly softer edges in Retro too) and in water animation phase.
+
+## Phase 1 result (2026-10-20)
+Modern style draws terrain, water, cliffs/ledges, trees, tall grass, flowers, buildings (houses, lab, PC, Mart, gyms,
+special facades) and props (signs, mailboxes, lamps, fences, rocks) on every outdoor map; Retro 3D is the old look.
+- **Stats (regress `phase1`, medium, 1280×800):** max 74 draw calls (Petalburg), max 403,269 triangles (Fortree);
+  budgets 150 / 1.5 M. Warm rebuild ≤ 83 ms on every regression map (Task 16); live crossings 20–45 ms warm,
+  59–112 ms for the first crossing of a session.
+- **Coverage (legacy share, `out/coverage*.txt`):** regression maps 5.3 % average (Littleroot/Oldale 0 %, worst
+  Sootopolis 25.2 %); all 68 outdoor maps 7.9 % of the grid, 15.8 % of map cells.
+- **Tests:** `npm test` 21 files / 410 tests; smoke golden + semantics 15 tests; `tsc` clean.
+- **Known gaps:**
+  - Mountain ridge fields need a 2D height solve (proposed follow-up "terrain height solver v2"): Mt Chimney (65.9 %
+    of map cells legacy), Route 112 (44.9 %), Jagged Pass (39.5 %) are mostly pixel-art rock; Sootopolis' N-S crater
+    wall strips and some 1-row rock walls too.
+  - Caves, interiors (Phase 4) and Dive maps' seabed objects keep the Retro reconstruction.
+  - All outdoor water sits at one level: waterfalls are flat streaked cells; sea currents are not directional;
+    puddles/hot springs are wet ground.
+  - Stairs are per-cell ramps.
+  - Town-tileset fences, bushes and bollards are still pixel art (props only label `gTileset_General` + Rustboro lamps).
+  - Lilycove Department Store is read as water by the analysis (no building); legacy specials: Devon Corp, Battle
+    Pyramid/Pike/Palace, Fan Club, cable car, Battle Frontier gate/Ranking Hall.
+  - Buildings in the connected maps' strips are built without that map's warps (Task 17 above): Pokémon Centers /
+    Marts there are plain houses and null-warp doors can stay pixel art until you cross.
+  - The first 1–2 map rebuilds after boot may hitch (98–193 ms, JIT warm-up); a boot-time warm-up build would fix it.
+  - Pixel-water squares can return under palette effects (drought weather, fades: the Dry cut follows live colours).
+  - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
 
 ## Next step
-- Continue Phase 1 at the first unticked task below (ledger has the exact state).
+- Phase 2 (characters, Pokémon, field objects — spec §6): write its plan in `docs/superpowers/plans/`, then execute.
+  Optional first: the Phase 1 follow-ups above (connected-map events, terrain height solver v2).
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
 - [x] 5 semantic core · [x] 6 terrain · [x] 7 water (+6b terrain colour fix) · [x] 8 cliffs · [x] 9 trees · [x] 10 fade
 - [x] 11 grass/flowers · [x] 12 buildings I · [x] 13 buildings II (+13b walk-in specials) · [x] 14 table/props
-- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [x] 16a polish backlog · [x] 16 polish/perf · [ ] 17 live check/docs
+- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [x] 16a polish backlog · [x] 16 polish/perf · [x] 17 live check/docs
 
 ## Phases
-- [ ] Phase 1 — Foundation + Outdoor environment
+- [x] Phase 1 — Foundation + Outdoor environment (done 2026-10-20, branch `phase1-outdoor`)
 - [ ] Phase 2 — Characters, Pokémon, field objects
 - [ ] Phase 3 — Battles
 - [ ] Phase 4 — Interiors

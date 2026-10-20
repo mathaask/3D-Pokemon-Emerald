@@ -5,6 +5,9 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 
 ## Active work (read this first after a context reset)
 - **Project:** Modern stylized 3D models (replace pixel-textured boxes/cards with real models).
+- **Phase 1 (outdoor environment) is done** (branch `phase1-outdoor`; known gaps in the progress log).
+  **Next: Phase 2 — characters, Pokémon, field objects.** Its plan is not written yet: write it
+  first (`docs/superpowers/plans/`, from spec §6), then execute.
 - **Spec:** `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - **Progress log (source of truth for where we are):** `docs/superpowers/progress/modern-3d.md`
   — update it after every completed task / milestone, and before long-running steps.
@@ -13,10 +16,18 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 ## Commands
 - `npm test` — unit tests (no ROM needed)
 - `npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/<file>` — ROM-driven smoke tests
+- `npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.test.ts tests/smoke/semantics.test.ts`
+  — the renderer smoke set: golden pins legacy `classify()` output per regression map; semantics pins what
+  the model families find on real maps and writes `out/coverage.txt` / `out/coverage-all.txt` (legacy share)
 - `npx tsc --noEmit` — typecheck
+- `npm run regress -- --label x [--style retro] [--only littleroot,oldale] [--hours 11,21]` — visual regression:
+  16 maps → `out/regress/x/` (PNGs, `_sheet_h11.png` / `_sheet_h21.png` contact sheets, `stats.json`
+  calls/triangles/buildMs); compare against `out/regress/before` (pre-Phase-1 baseline) or `phase1`
 - `npx tsx tools/shot3d.ts --query "map=0.9&hour=11" --name x` — screenshot a static map preview → `out/3d/x_0.png`
 - `npx tsx tools/shot3d.ts --batch "name=map=0.9;name2=map=0.10"` — several previews in one run
 - `npx tsx tools/shot3d.ts --state out/littleroot.state --wait 3000` — screenshot live play from a save state
+  (`littleroot.state` is indoors; outdoor states: `r101.state` Route 101 (free to walk), `s22.state` Littleroot;
+  `--eval` runs after the shots)
 
 ## Conventions
 - ROM (`*.gba`), save states, `out/`, `vendor/` are gitignored; never commit Nintendo assets.
