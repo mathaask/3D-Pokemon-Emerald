@@ -290,13 +290,19 @@ interface Pooled {
   local: Local;
   /** The material's own objects for the caller's `uniforms` (its programs were compiled with them). */
   slots: Slots;
-  /** The free list of its kind (same program-affecting options). */
+  /** Creation order (as three's material ids). */
+  seq: number;
+  /** The free list of its kind (same program-affecting options), latest made first: handed out
+   *  oldest first, so a rebuild of a map gets its materials in the order its first build made them
+   *  (three draws opaque objects sorted by material id: the same order, no flicker where surfaces
+   *  meet in one plane as Route 113's ash rebuilds the world each step). */
   free: Pooled[];
   inUse: boolean;
 }
 
 const POOLS = new WeakMap<KitUniforms, Map<string, Pooled[]>>();
 const POOLED = new WeakMap<THREE.Material, Pooled>();
+let made = 0;
 
 /** The options that make a material compile differently (the rest is set per build). */
 function poolKey(programKey: string, o: KitMaterialOptions): string {
@@ -368,7 +374,7 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
     depth.onBeforeCompile = (s) => patchKit(s, u, local, slots, h, false);
     depth.customProgramCacheKey = () => key + ':depth';
   }
-  const p: Pooled = { km: { material, depth }, local, slots, free, inUse: true };
+  const p: Pooled = { km: { material, depth }, local, slots, seq: made++, free, inUse: true };
   configure(p, o);
   POOLED.set(material, p);
   if (depth) POOLED.set(depth, p);
@@ -390,7 +396,9 @@ export function releaseKitMaterial(m: THREE.Material): void {
   p.inUse = false;
   p.km.material.map = null;
   for (const k in p.slots) if ((p.slots[k].value as THREE.Texture | null)?.isTexture) p.slots[k].value = null;
-  p.free.push(p);
+  let at = p.free.length;
+  while (at > 0 && p.free[at - 1].seq < p.seq) at--;
+  p.free.splice(at, 0, p);
 }
 
 /** Assigns a kit material (and its shadow-depth twin) to a mesh. */

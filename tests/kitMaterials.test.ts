@@ -205,6 +205,16 @@ describe('kit material pool (shader programs live for the session)', () => {
     expect(kitMaterial(u, opts(t, t, 1)).material).toBe(a.material);
   });
 
+  it('hands out its materials in the order they were made, whatever the order they came back in', () => {
+    // three draws opaque objects sorted by material id: a rebuild of the same map draws in the same
+    // order (surfaces in the same plane do not flicker as Route 113's ash rebuilds the world each step)
+    const u = createKitUniforms();
+    const t = new THREE.Texture();
+    const made = [0, 1, 2].map(() => kitMaterial(u, opts(t, t, 1)).material);
+    for (const m of [made[1], made[2], made[0]]) releaseKitMaterial(m);
+    expect([0, 1, 2].map(() => kitMaterial(u, opts(t, t, 1)).material)).toEqual(made);
+  });
+
   it("is reused without carrying a water surface's depthWrite to the next user", () => {
     const u = createKitUniforms();
     const a = kitMaterial(u, { transparent: true, depthWrite: false });
