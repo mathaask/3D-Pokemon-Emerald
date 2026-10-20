@@ -116,6 +116,16 @@ export class SpriteAtlas {
     this.scene.add(this.mesh);
   }
 
+  /** Per used slot (instance): slot x, slot y (slot units), width, height (px) of the sprite baked there. */
+  get slotRects(): THREE.InstancedBufferAttribute {
+    return this.slotSize;
+  }
+
+  /** Slots used by the last update (the first `slotCount` of `slotRects`). */
+  get slotCount(): number {
+    return this.geometry.instanceCount;
+  }
+
   /** Bakes the given sprites; `map2d` reflects DISPCNT bit 6 == 0. */
   update(renderer: THREE.WebGLRenderer, sprites: readonly SpriteSnap[], map2d: boolean): void {
     this.slots.clear();

@@ -16,7 +16,13 @@
 // pixels (-1: sizes differ) }). --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
 // (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
-// Exits non-zero when an entry fails, the page logs an error, or --compare lacks a reference shot.
+// --selftest runs the inflation-field self-test (emu/preview.selfTest(): the GPU field vs its CPU reference
+// on the current atlas, the bleed fixture, the GPU ms of one update) on the entries marked `selftest`, in
+// Modern (Retro computes no field), after their steps; it goes into stats and the field's slots into
+// _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). Parity is gated:
+// maxErr and fixtureMaxErr ≤ 0.02 px (SELFTEST_TOL).
+// Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
+// self-test misses parity.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +30,7 @@ import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer, { type Page } from 'puppeteer-core';
 
-interface LiveEntry { name: string; state: string; steps: [string, number][]; query?: string; eval?: string }
+interface LiveEntry { name: string; state: string; steps: [string, number][]; query?: string; eval?: string; selftest?: boolean }
 
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
 // takes 16 frames per cell). r101: standing still, the youngster stays off-screen left, so the
@@ -32,12 +38,12 @@ interface LiveEntry { name: string; state: string; steps: [string, number][]; qu
 // 15; at 40 the spiral wipe starts over the zoomed overworld, its actors still visible.
 const LIVE: LiveEntry[] = [
   { name: 'r101', state: 'out/r101.state', steps: [['LEFT', 48], ['', 30]] },                // Route 101: player, youngster, boy
-  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]] }, // standing in tall grass
+  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true }, // standing in tall grass
   { name: 'r101_tree', state: 'out/r101.state', steps: [['LEFT', 66], ['DOWN', 42], ['', 30]] },   // against the treeline (fade)
   { name: 'r101_low', state: 'out/r101.state', query: 'camera=3', steps: [['', 30]] },         // Low preset: volume visible
   { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]] },
-  { name: 'birch', state: 'out/s27.state', steps: [['', 30]] },                               // Birch, bag, Zigzagoon (a Pokémon)
-  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]] },                         // Littleroot: Mom, truck (gfx 94)
+  { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true },               // Birch, bag, Zigzagoon (a Pokémon)
+  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true },         // Littleroot: Mom, truck (gfx 94)
   { name: 'lr_walk', state: 'out/s22.state', steps: [['', 30]] },                             // Littleroot free walk
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]] },                         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]] },                      // moving boxes (gfx 113)
@@ -56,9 +62,9 @@ const LIVE: LiveEntry[] = [
  * framed patch holds stages 0-2 (r104_berries / r104_night); r123_berries frames Route 123's
  * two rows of six (templates 0-3, 9-16), all five stages.
  */
-interface StaticEntry { name: string; q: string }
+interface StaticEntry { name: string; q: string; selftest?: boolean }
 const STATIC: StaticEntry[] = [
-  { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=17' }, { name: 'rustboro_npcs', q: 'map=0.3' },
+  { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=17', selftest: true }, { name: 'rustboro_npcs', q: 'map=0.3' },
   { name: 'r104_berries', q: 'map=0.19&focusGfx=60' }, { name: 'r104_night', q: 'map=0.19&focusGfx=60&hour=21' },
   { name: 'r123_berries', q: 'map=0.38&focusObj=3' },
   { name: 'r116_cut', q: 'map=0.31&focusGfx=82' }, { name: 'r114_rocks', q: 'map=0.29&focusGfx=86' },
@@ -77,11 +83,16 @@ const VIEW_H = 800;
 const CROP_W = 320;
 const CROP_H = 400;
 
+/** Inflation-field self-test parity tolerance (sprite px) and the field update's GPU target (ms, reported). */
+const SELFTEST_TOL = 0.02;
+const FIELD_GPU_MS = 0.3;
+
+interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
-  diff?: Diff; selftest?: unknown;
+  diff?: Diff; selftest?: SelfTest;
 }
 
 function arg(name: string, def: string): string {
@@ -243,6 +254,7 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   const errored: string[] = []; // entries that logged page errors
   const missingRefs: string[] = [];
+  const selftestFailures: string[] = [];
   let pageErrors = 0;
   const diffs: string[] = [];
   try {
@@ -306,11 +318,18 @@ async function main(): Promise<void> {
             { calls: number; triangles: number; programs: number; buildMs?: number };
           const entry: EntryStats = { ...s };
           if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
-          // (the self-test checks the screenshot's frame; GPU timing then renders 60 more frames)
-          if (selftest) {
-            const r = await page.evaluate(`typeof ${api}.selfTest === "function" ? ${api}.selfTest() : null`);
-            if (r !== null) entry.selftest = r;
-            else console.log(`[${key}] --selftest: the page has no ${api}.selfTest yet`);
+          // (the self-test checks the screenshot's frame, after the steps; GPU timing then renders 60 more frames)
+          let selfLine = '';
+          if (selftest && e.selftest && style === 'modern') {
+            const r = await page.evaluate(`${api}.selfTest()`) as SelfTest;
+            entry.selftest = r;
+            const png = await page.evaluate(`${api}.fieldDump()`) as string;
+            fs.writeFileSync(path.join(outDir, `_field_${e.name}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+            // (NaN arrives as null)
+            const ok = (v: number) => Number.isFinite(v) && v <= SELFTEST_TOL;
+            if (!ok(r.maxErr) || !ok(r.fixtureMaxErr)) selftestFailures.push(key);
+            selfLine = ` | selftest ${r.slots} slots maxErr ${r.maxErr} fixture ${r.fixtureMaxErr} gpu ${round(r.gpuMs, 3)} ms`;
+            if (!(r.gpuMs <= FIELD_GPU_MS)) selfLine += ` (> ${FIELD_GPU_MS} ms target)`;
           }
           if (gpu) {
             const g = await page.evaluate(`${api}.gpuFrames(60)`) as { gpuMs: number; gpuP90: number; cpuMs: number };
@@ -321,6 +340,7 @@ async function main(): Promise<void> {
           let line = `shot ${key.padEnd(24)} calls ${String(s.calls).padStart(4)} tris ${String(s.triangles).padStart(8)} programs ${s.programs}`;
           line += stepMsMax !== undefined ? ` stepMax ${entry.stepMsMax} ms` : ` build ${s.buildMs} ms`;
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
+          line += selfLine;
           if (refDir) {
             const ref = path.join(refDir, `${key}.png`);
             if (fs.existsSync(ref)) {
@@ -342,6 +362,7 @@ async function main(): Promise<void> {
           console.log(`[${key}] FAILED: ${(err as Error).message}`);
           // no stale shot or stats of an earlier run of this label may stand in for the failed entry
           fs.rmSync(path.join(outDir, `${key}.png`), { force: true });
+          if (style === 'modern') fs.rmSync(path.join(outDir, `_field_${e.name}.png`), { force: true });
           delete stats[key];
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
@@ -359,7 +380,8 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
-  if (pageErrors || missingRefs.length || failures.length) process.exitCode = 1;
+  if (selftestFailures.length) console.log(`self-test parity > ${SELFTEST_TOL} px in: ${selftestFailures.join(', ')}`);
+  if (pageErrors || missingRefs.length || failures.length || selftestFailures.length) process.exitCode = 1;
 }
 
 main().catch((e) => {

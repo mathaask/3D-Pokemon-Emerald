@@ -14,6 +14,8 @@ import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
+import { SpriteField } from './actors/spriteField';
+import { fieldDump, fieldSelfTest, type FieldSelfTest } from './actors/selfTest';
 
 export type ViewMode = 'auto' | 'classic';
 
@@ -25,6 +27,8 @@ export class Renderer {
   private screen: ScreenView;
   private gbaTex: GbaTextures;
   private spriteAtlas: SpriteAtlas;
+  /** Inflation field of the sprite atlas (Modern overworld only). */
+  private spriteField: SpriteField;
   readonly overworld: OverworldView;
   readonly battle: BattleView;
   private hud: Hud;
@@ -72,7 +76,8 @@ export class Renderer {
     this.screen = new ScreenView(gba.ppu.framebuffer);
     this.gbaTex = new GbaTextures(gba.bus);
     this.spriteAtlas = new SpriteAtlas(this.gbaTex);
-    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy());
+    this.spriteField = new SpriteField();
+    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField);
     this.battle = new BattleView(this.spriteAtlas);
     this.classifier = new SpriteClassifier(this.state.mem);
     this.overworld.classifier = this.classifier;
@@ -149,6 +154,10 @@ export class Renderer {
       this.overworld.sync(st, this.webgl);
       const dispcnt = this.gba.bus.io16[0];
       this.spriteAtlas.update(this.webgl, st.sprites, (dispcnt & 0x40) === 0);
+      // the inflation field of this same atlas (the actors sample both); Retro draws cards only
+      if (this.overworld.worldStyle === 'modern') {
+        this.spriteField.update(this.webgl, this.spriteAtlas.target.texture, this.spriteAtlas.slotRects, this.spriteAtlas.slotCount);
+      }
       this.hud.updateOverlay();
       this.hud.setSprites(st.sprites.filter((s) => !s.coordOffset && !s.invisible && this.classifier.kind(s) !== SpriteKind.Hidden), this.spriteAtlas);
     } else if (this.presented === 'battle') {
@@ -192,6 +201,25 @@ export class Renderer {
   stats(): { calls: number; triangles: number; programs: number } {
     const info = this.webgl.info;
     return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0 };
+  }
+
+  /** The field is computed in the Modern overworld only: the self-test and the dump need it current. */
+  private checkFieldLive(): void {
+    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
+      throw new Error(`the inflation field is computed in the Modern overworld only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+    }
+  }
+
+  /** Inflation-field self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas. */
+  actorSelfTest(): Promise<FieldSelfTest> {
+    this.checkFieldLive();
+    return fieldSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+  }
+
+  /** The used slots of the inflation field as a grey PNG data URL (harness --selftest: _field_<entry>.png). */
+  actorFieldDump(): string {
+    this.checkFieldLive();
+    return fieldDump(this.webgl, this.spriteAtlas, this.spriteField);
   }
 
   render(_dtMs: number): void {

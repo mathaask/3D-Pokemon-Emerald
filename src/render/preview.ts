@@ -23,11 +23,15 @@ import type { GridData } from './overworld/world';
 import { gridEvents } from './kit/events';
 import { buildPreviewActors } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
+import { SpriteField } from './actors/spriteField';
+import { fieldDump, fieldSelfTest, type FieldSelfTest } from './actors/selfTest';
 
 export class PreviewApp {
   readonly webgl: THREE.WebGLRenderer;
   private view: OverworldView;
   private spriteAtlas: SpriteAtlas;
+  /** Inflation field of the sprite atlas (Modern, with actors). */
+  private spriteField = new SpriteField();
   private post: PostFX;
   private fakeState: GameState;
   /** Object events drawn (&actors=1): the sprite atlas is baked every frame. */
@@ -84,7 +88,7 @@ export class PreviewApp {
 
     const quality = (params.get('quality') as Quality) ?? 'medium';
     this.spriteAtlas = new SpriteAtlas(tex);
-    this.view = new OverworldView(tex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy());
+    this.view = new OverworldView(tex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField);
     this.view.quality = quality;
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
@@ -182,6 +186,25 @@ export class PreviewApp {
     return timeGpuFrames(this.webgl.getContext() as WebGL2RenderingContext, n, () => this.frame(1 / 60));
   }
 
+  /** The field is computed in Modern with actors only: the self-test and the dump need it current. */
+  private checkFieldLive(): void {
+    if (!this.actors || this.view.worldStyle !== 'modern') {
+      throw new Error('the inflation field is computed in Modern with &actors=1 only');
+    }
+  }
+
+  /** Inflation-field self-test (as emu.selfTest): the last frame's field vs the CPU reference of its atlas. */
+  selfTest(): Promise<FieldSelfTest> {
+    this.checkFieldLive();
+    return fieldSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+  }
+
+  /** The used slots of the inflation field as a grey PNG data URL (as emu.fieldDump). */
+  fieldDump(): string {
+    this.checkFieldLive();
+    return fieldDump(this.webgl, this.spriteAtlas, this.spriteField);
+  }
+
   private resize(): void {
     this.webgl.setSize(window.innerWidth, window.innerHeight, false);
     const size = this.webgl.getDrawingBufferSize(new THREE.Vector2());
@@ -226,7 +249,13 @@ export class PreviewApp {
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) this.target.addScaledVector(right, speed);
     this.view.renderAtlas(this.webgl);
     // object sprites use 1D tile mapping (DISPCNT bit 6 set in the field)
-    if (this.actors) this.spriteAtlas.update(this.webgl, this.fakeState.sprites, false);
+    if (this.actors) {
+      this.spriteAtlas.update(this.webgl, this.fakeState.sprites, false);
+      // the inflation field of this same atlas, as live play (Retro draws cards only)
+      if (this.view.worldStyle === 'modern') {
+        this.spriteField.update(this.webgl, this.spriteAtlas.target.texture, this.spriteAtlas.slotRects, this.spriteAtlas.slotCount);
+      }
+    }
     this.view.update(this.fakeState, dt, { yaw: this.yaw, pitch: this.pitch, zoom: this.zoom });
     this.yaw = this.pitch = this.zoom = 0;
     this.post.render(dt);

@@ -42,7 +42,8 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
 /**
  * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
  * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n)` times n
- * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts).
+ * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
+ * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames.
  */
 function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
   renderer.setFixedTimestep(1 / 60);
@@ -208,8 +209,10 @@ async function boot(): Promise<void> {
   shell.hideLoader();
   canvas.focus();
 
+  // inflation-field self-test (between frames, Modern overworld) and its slots as a PNG data URL
+  const debug = { gba, renderer, input, selfTest: () => renderer.actorSelfTest(), fieldDump: () => renderer.actorFieldDump() };
   if (manual) {
-    exposeManual(gba, renderer, { gba, renderer, input });
+    exposeManual(gba, renderer, debug);
     return;
   }
 
@@ -262,7 +265,7 @@ async function boot(): Promise<void> {
   requestAnimationFrame(tick);
 
   // Expose for debugging in the console.
-  (window as unknown as { emu: unknown }).emu = { gba, renderer, input, stats };
+  (window as unknown as { emu: unknown }).emu = { ...debug, stats };
 }
 
 void boot();

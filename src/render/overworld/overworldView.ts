@@ -7,6 +7,7 @@ import type { Bus } from '../../gba/bus';
 import { RomReader } from '../../game/rom/reader';
 import type { GbaTextures } from '../gbaTextures';
 import type { SpriteAtlas } from '../spriteAtlas';
+import type { SpriteField } from '../actors/spriteField';
 import type { Quality } from '../post';
 import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
@@ -119,13 +120,14 @@ export class OverworldView {
     charLight: this.charLight,
   };
 
-  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number) {
+  /** `field`: the sprite atlas's inflation field (Modern), kept up to date by the owner after each atlas bake. */
+  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, field?: SpriteField) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
-    this.actors = new ActorLayer(spriteAtlas);
+    this.actors = new ActorLayer(spriteAtlas, { field });
     this.scene.add(this.world.group);
     this.scene.add(this.actors.group);
 
