@@ -65,7 +65,7 @@ export class PreviewApp {
     this.view = new OverworldView(tex, new SpriteAtlas(tex), this.webgl.capabilities.getMaxAnisotropy());
     this.view.quality = quality;
     this.view.setShadowQuality(quality);
-    this.view.worldStyle = params.get('style') === 'retro' ? 'retro' : 'modern';
+    this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
     const grid: GridData = {

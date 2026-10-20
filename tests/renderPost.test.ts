@@ -60,19 +60,23 @@ describe('tilt-shift by world style', () => {
 });
 
 describe('sun shadow quality', () => {
-  it('map size by quality (low 1024, medium 2048, high 4096)', () => {
-    expect(shadowSettings('low').size).toBe(1024);
-    expect(shadowSettings('medium').size).toBe(2048);
-    expect(shadowSettings('high').size).toBe(4096);
+  it('Retro keeps the pre-Phase-1 shadows at every quality: a 2048 map, three\'s default 1-texel radius', () => {
+    for (const q of ['low', 'medium', 'high'] as const) expect(shadowSettings(q, 'retro')).toEqual({ size: 2048, radius: 1 });
+  });
+
+  it('Modern: map size by quality (low 1024, medium 2048, high 4096)', () => {
+    expect(shadowSettings('low', 'modern').size).toBe(1024);
+    expect(shadowSettings('medium', 'modern').size).toBe(2048);
+    expect(shadowSettings('high', 'modern').size).toBe(4096);
   });
 
   it('soft edges: a filter radius of more than one texel at medium and high', () => {
-    expect(shadowSettings('medium').radius).toBeGreaterThan(1);
-    expect(shadowSettings('high').radius).toBeGreaterThan(1);
+    expect(shadowSettings('medium', 'modern').radius).toBeGreaterThan(1);
+    expect(shadowSettings('high', 'modern').radius).toBeGreaterThan(1);
   });
 
   it('the penumbra is about as wide on the ground at every quality (radius in texels grows with the map)', () => {
-    const world = (q: 'low' | 'medium' | 'high') => shadowSettings(q).radius / shadowSettings(q).size;
+    const world = (q: 'low' | 'medium' | 'high') => shadowSettings(q, 'modern').radius / shadowSettings(q, 'modern').size;
     expect(world('high') / world('medium')).toBeCloseTo(1, 1);
     expect(world('low') / world('medium')).toBeCloseTo(1, 1);
   });

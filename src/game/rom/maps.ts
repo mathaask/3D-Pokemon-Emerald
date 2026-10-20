@@ -348,6 +348,18 @@ export function readMapHeader(
 /** Default gMapGroups address for Emerald BPEE rev 0 (SYM.gMapGroups). */
 export const EMERALD_MAP_GROUPS = 0x08486578;
 
+/**
+ * Address of map (group, num)'s MapHeader, read straight from gMapGroups like the game's
+ * Overworld_GetMapHeaderByGroupAndId (no group-table scan: cheap enough for live play); 0 if the
+ * entry is no plausible header.
+ */
+export function mapHeaderAddr(rom: RomReader, group: number, num: number, gMapGroups = EMERALD_MAP_GROUPS): number {
+  const groupAddr = rom.u32(gMapGroups + group * 4);
+  if (!rom.isRomPtr(groupAddr) || !rom.isRomPtr(groupAddr + num * 4 + 3)) return 0;
+  const addr = rom.u32(groupAddr + num * 4);
+  return isPlausibleMapHeader(rom, addr) ? addr : 0;
+}
+
 /** Loads one map by (group, num). */
 export function loadMap(rom: RomReader, group: number, num: number, gMapGroups = EMERALD_MAP_GROUPS): MapInfo {
   const table = readMapGroups(rom, gMapGroups);

@@ -4,12 +4,11 @@ import * as THREE from 'three';
 import { MAP_OFFSET, type GameState, type SpriteSnap } from '../../game/state';
 import type { Mem } from '../../game/mem';
 import type { Bus } from '../../gba/bus';
-import { readEvents } from '../../game/rom/maps';
 import { RomReader } from '../../game/rom/reader';
 import type { GbaTextures } from '../gbaTextures';
 import type { SpriteAtlas } from '../spriteAtlas';
 import type { Quality } from '../post';
-import { gridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
+import { liveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldStyle } from './world';
 import { Billboards, BlobShadows, type BillboardSpec } from './billboards';
@@ -50,11 +49,13 @@ const SHADOW_SPAN = 24;
 const SHADOW_SOFTNESS = 0.06;
 
 /**
- * Sun shadow map size by quality (low 1024, medium 2048, high 4096) and its PCF filter radius in
- * texels (three's PCF samples a disc of shadow.radius texels: soft edges, as wide on the ground
- * at every quality).
+ * Sun shadow map size and PCF filter radius in texels (three's PCF samples a disc of shadow.radius
+ * texels). Modern: by quality (low 1024, medium 2048, high 4096), the radius keeping the soft edge
+ * as wide on the ground at every quality. Retro: the pre-Phase-1 shadows at every quality (2048,
+ * three's default radius 1), so Retro looks as it did.
  */
-export function shadowSettings(q: Quality): { size: number; radius: number } {
+export function shadowSettings(q: Quality, style: WorldStyle): { size: number; radius: number } {
+  if (style === 'retro') return { size: 2048, radius: 1 };
   const size = q === 'low' ? 1024 : q === 'high' ? 4096 : 2048;
   return { size, radius: (SHADOW_SOFTNESS * size) / (2 * SHADOW_SPAN) };
 }
@@ -84,10 +85,11 @@ export class OverworldView {
   private gridKey = '';
   private lastGrid: Uint16Array | null = null;
   private haveWorld = false;
-  worldStyle: WorldStyle = 'modern';
+  private style: WorldStyle = 'modern';
   quality: Quality = 'medium';
+  private shadowQuality: Quality = 'medium';
   private romReader: RomReader | null = null;
-  private eventsCache: { addr: number; events: GridEvents } = { addr: -1, events: NO_EVENTS };
+  private eventsCache: { key: string; events: GridEvents } = { key: '', events: NO_EVENTS };
 
   // camera rig state
   presetIndex = 0;
@@ -127,7 +129,7 @@ export class OverworldView {
     this.scene.add(this.blobs.mesh);
 
     this.sun.castShadow = true;
-    this.setShadowQuality(this.quality);
+    this.applyShadowSettings();
     this.sun.shadow.bias = -0.0008;
     this.sun.shadow.normalBias = 0.03;
     const sc = this.sun.shadow.camera;
@@ -149,9 +151,18 @@ export class OverworldView {
     this.zoom = 1;
   }
 
-  /** Sun shadow resolution and softness by quality (low 1024, medium 2048, high 4096). */
+  get worldStyle(): WorldStyle {
+    return this.style;
+  }
+
+  /** Sun shadow resolution and softness for a quality (Modern: low 1024, medium 2048, high 4096). */
   setShadowQuality(q: Quality): void {
-    const { size, radius } = shadowSettings(q);
+    this.shadowQuality = q;
+    this.applyShadowSettings();
+  }
+
+  private applyShadowSettings(): void {
+    const { size, radius } = shadowSettings(this.shadowQuality, this.style);
     this.sun.shadow.radius = radius;
     if (this.sun.shadow.mapSize.x === size) return;
     this.sun.shadow.mapSize.set(size, size);
@@ -159,19 +170,26 @@ export class OverworldView {
     this.sun.shadow.map = null;
   }
 
-  /** Switches Modern/Retro; the world is rebuilt on the next sync. */
+  /** Switches Modern/Retro (and their shadows); the world is rebuilt on the next sync. */
   setWorldStyle(s: WorldStyle): void {
-    if (s === this.worldStyle) return;
-    this.worldStyle = s;
+    if (s === this.style) return;
+    this.style = s;
     this.gridKey = '';
+    this.applyShadowSettings();
   }
 
-  /** Warps and signs of the current map in backup-grid coordinates (cached per events table). */
+  /**
+   * Warps and signs in backup-grid coordinates: the current map's and those in the strips of the
+   * maps connected to it (cached per events table, connections table and layout).
+   */
   private liveEvents(state: GameState): GridEvents {
-    const addr = state.header?.events ?? 0;
-    if (addr !== this.eventsCache.addr) {
+    const h = state.header;
+    const l = state.layout;
+    if (!h || !l) return NO_EVENTS;
+    const key = `${h.events}.${h.connections}.${h.layout}.${l.width}x${l.height}`;
+    if (key !== this.eventsCache.key) {
       this.romReader ??= new RomReader(state.mem.bus.rom);
-      this.eventsCache = { addr, events: gridEvents(readEvents(this.romReader, addr), MAP_OFFSET) };
+      this.eventsCache = { key, events: liveGridEvents(this.romReader, h.events, h.connections, l, MAP_OFFSET) };
     }
     return this.eventsCache.events;
   }
