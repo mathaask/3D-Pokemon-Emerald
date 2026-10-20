@@ -463,6 +463,16 @@ export const treeFamily: Family<TreePlacement[]> = {
       }
     }
     for (const j of halves) tree[j] = 1;
+    // The cells running north from a warp that the analysis took for trees by their colour (not
+    // General tree ids) are the passage beyond it: Petalburg Woods' north exit, Mt Pyre's summit
+    // path, a cave door's lintel. They keep their legacy art (like the blocks of doorStructures).
+    for (const w of events.warps) {
+      for (let y = w.y - 1; a.inside(w.x, y); y--) {
+        const i = idx(w.x, y);
+        if (!tree[i] || kind[i] !== K.Tree || a.isGeneralId(mt[i])) break;
+        tree[i] = 0;
+      }
+    }
     // (a secret-base spot, a shrub or tree the player opens a base in, keeps its legacy art: it
     // breaks the tree runs, and its crown drawn on the cell above stays too)
     const spotBelow = new Uint8Array(a.N);

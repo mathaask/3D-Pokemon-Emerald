@@ -225,6 +225,24 @@ describe('tree extract', () => {
     for (const y of [1, 2, 3]) expect(sc[c.idx(1, y)]).toBe(0);
   });
 
+  it("leaves the path beyond a warp to the legacy art: the analysis' colour-guessed trees north of it", () => {
+    // a warp at (1, 4) under a column of secondary-tileset "tree" cells (Petalburg Woods' north exit,
+    // Mt Pyre's summit path: green blocking art) topped by a General round tree (a real tree)
+    const a = map(['.R.', '.T.', '.T.', '.T.', '...', '...']);
+    const events = { warps: [{ x: 1, y: 4, dest: 'Route104' }], signs: [] };
+    const claims = new Claims(a.N);
+    treeFamily.extract({ a, events, quality: 'medium' }, claims);
+    for (const y of [1, 2, 3]) expect(claims.has(a.idx(1, y), CLAIM_OBJECT), `1,${y}`).toBe(false);
+    expect(claims.has(a.idx(1, 0), CLAIM_OBJECT)).toBe(true);
+    // without the warp they are trees
+    for (const y of [1, 2, 3]) expect(extract(a).claims.has(a.idx(1, y), CLAIM_OBJECT)).toBe(true);
+    // General tree ids are trees, warp or not
+    const b = map(['...', '.N.', '.N.', '...']);
+    const nb = new Claims(b.N);
+    treeFamily.extract({ a: b, events: { warps: [{ x: 1, y: 3, dest: 'X' }], signs: [] }, quality: 'medium' }, nb);
+    expect(nb.has(b.idx(1, 2), CLAIM_OBJECT)).toBe(true);
+  });
+
   it('turns a border forest the analysis left as blocks (ash trees) into round trees', () => {
     const a = map(['......', '.AaAa.', '.aAaA.', '......', '.#Aa..', '......'], { margin: 2, border: [ASH_A, ASH_B, ASH_B, ASH_A] });
     expect(a.kind[a.idx(1, 1)]).toBe(K.Block);
