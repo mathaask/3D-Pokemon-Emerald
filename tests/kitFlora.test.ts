@@ -422,3 +422,13 @@ describe('flower build', () => {
     expect(buildFlowers([])).toBeNull();
   });
 });
+
+describe('flower extract: secret-base spots', () => {
+  it('plants no flowers and claims nothing on a secret-base spot drawing flower art', () => {
+    const a = map(['.f.']);
+    a.beh[a.idx(1, 0)] = MB.SECRET_BASE_SPOT_SHRUB_OPEN;
+    const claims = new Claims(a.N);
+    expect(flowerFamily.extract(ctxOf(a), claims)).toEqual([]);
+    expect(claims.bits[a.idx(1, 0)]).toBe(0);
+  });
+});

@@ -10,7 +10,7 @@ import { CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { dominantColor, luma, toLinear, type RGB } from './palette';
 import { hashCell } from './geom';
 import { kitMaterial } from './materials';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 export interface WaterCell { i: number; level: number; fall: boolean }
 export interface WaterPlacement {
@@ -257,7 +257,7 @@ export const waterFamily: Family<WaterPlacement> = {
     // Sea rocks: found by their bottom-left metatile, centred on its north-east corner; their four
     // cells become water under the boulder. A rock is taken only if all four cells can be claimed
     // (water, no overhang, unclaimed); otherwise its cells follow the rules below like any other.
-    const claimable = (j: number) => a.kind[j] === K.Water && !a.hasTop(j) && !claims.has(j, CLAIM_SURFACE);
+    const claimable = (j: number) => a.kind[j] === K.Water && !a.hasTop(j) && !claims.has(j, CLAIM_SURFACE) && !isSecretBaseSpot(a, j);
     const rockCell = new Uint8Array(a.N);
     for (let i = W; i < a.N - 1; i++) {
       const m = a.mt[i];
@@ -271,7 +271,8 @@ export const waterFamily: Family<WaterPlacement> = {
       // Overhangs drawn over water (bridge decks, roof eaves, canopy edges) keep their legacy art,
       // and so do objects the analysis laid flat on the water (boats, buoys, bank edges: blocked,
       // not water by behaviour, with top-layer art) unless they are a sea rock.
-      if (a.kind[i] !== K.Water || a.hasTop(i) || claims.has(i, CLAIM_SURFACE)) continue;
+      // (nor a secret-base spot: it keeps its legacy art)
+      if (a.kind[i] !== K.Water || a.hasTop(i) || claims.has(i, CLAIM_SURFACE) || isSecretBaseSpot(a, i)) continue;
       const m = a.mt[i];
       if (!rockCell[i] && a.info.topCover[m] > 0 && !WATER_BEHAVIORS.has(a.beh[i])) continue;
       cells.push({ i, level: a.height[i], fall: a.beh[i] === MB.WATERFALL });

@@ -432,4 +432,29 @@ describe('secret-base spots', () => {
     const drawn = new Set([...legacy.quads, ...legacy.trees].map((q) => q.metatile));
     for (const m of [HOLE, OPEN, 0x026, 0x027, SHRUB]) expect(drawn.has(m)).toBe(true);
   });
+  it("nor an opened spot with overhang art on the row behind a house's roof", () => {
+    const OPENED = 0x1a2;
+    const rows = [
+      '......',
+      '.v....',
+      '.RRR..',
+      '.WDW..',
+      '......',
+    ];
+    const a = world(rows, { R: T.roof, W: T.wall, D: T.door, v: OPENED }, {
+      open: 'v',
+      paint: (info) => {
+        info.both.fill(px(14, 24, 20), OPENED * 256, OPENED * 256 + 256); info.bottom.fill(px(14, 24, 20), OPENED * 256, OPENED * 256 + 256);
+        info.both.fill(px(26, 9, 8), OPENED * 256, OPENED * 256 + 64); info.topCover[OPENED] = 64; // (roof-coloured overhang)
+        info.attributes[OPENED] = MB.SECRET_BASE_SPOT_TREE_RIGHT_OPEN;
+      },
+    });
+    expect(a.hasTop(a.idx(1, 1))).toBe(true);
+    const claims = new Claims(a.N);
+    const ctx = { a, events: ev([[2, 3, 'LittlerootTown_BrendansHouse_1F']]), quality: 'medium' as const };
+    const payload = new Map<string, unknown>();
+    for (const f of FAMILIES) payload.set(f.name, f.extract(ctx, claims));
+    expect((payload.get('buildings') as unknown[]).length).toBe(1);
+    expect(claims.bits[a.idx(1, 1)]).toBe(0);
+  });
 });

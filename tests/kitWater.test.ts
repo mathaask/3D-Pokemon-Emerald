@@ -122,3 +122,17 @@ describe('water extract', () => {
     expect((tex.image.data as Uint8Array)[a.idx(3, 2) * 4 + 3]).toBe(255); // rock flag on the corner's SE cell
   });
 });
+
+describe('water extract: secret-base spots', () => {
+  it('claims no secret-base spot the analysis lays flat as water, nor a sea rock standing on one', () => {
+    const a = sea(['.wwww', '.wpww', '.TUww', '.BNww']);
+    a.beh[a.idx(2, 1)] = MB.SECRET_BASE_SPOT_BLUE_CAVE_OPEN; // (plain blocked water art)
+    a.beh[a.idx(2, 3)] = MB.SECRET_BASE_SPOT_BLUE_CAVE; // (the rock's bottom-right cell)
+    const claims = new Claims(a.N);
+    const p = waterFamily.extract(ctx(a), claims);
+    expect(claims.bits[a.idx(2, 1)]).toBe(0);
+    expect(claims.bits[a.idx(2, 3)]).toBe(0);
+    expect(p.rocks).toEqual([]);
+    expect(claims.has(a.idx(1, 0), CLAIM_SURFACE)).toBe(true);
+  });
+});

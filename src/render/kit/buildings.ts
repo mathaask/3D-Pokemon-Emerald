@@ -10,7 +10,7 @@ import { bgr555ToSrgb, luma, mix, saturation, scale, soften, toLinear, type RGB 
 import { MeshBuilder, type V3 } from './geom';
 import { buildingKind, buildingLayout, TERRAIN, type BuildingKind } from './footprints';
 import { kitMaterial } from './materials';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 import { pokeballTexture, signTexture, SIGN_ASPECT } from './text';
 import { scale4x } from './upscale';
 
@@ -246,7 +246,8 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
             claims.groundMt[i] = ground;
           }
           // overhang art on the walkable row behind (and on walkable cells inside): the 3D roof replaces it
-          if (a.kind[i] === K.Floor && a.hasTop(i)) claims.claim(i, CLAIM_TOP);
+          // (not an opened secret-base spot's: it keeps its legacy art)
+          if (a.kind[i] === K.Floor && a.hasTop(i) && !isSecretBaseSpot(a, i)) claims.claim(i, CLAIM_TOP);
         }
       }
       out.push({

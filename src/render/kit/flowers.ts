@@ -17,7 +17,7 @@ import { hashCell, rng } from './geom';
 import { GRASS_BEHAVIORS } from './grass';
 import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
 import { SECONDARY_FLOWERS } from './tables/secondary';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 export interface FlowerCell {
   x: number; y: number; h: number; petals: [RGB, RGB];
@@ -273,7 +273,7 @@ export const flowerFamily: Family<FlowerCell[]> = {
     const cache = new Map<number, FlowerLook | null>();
     for (let i = 0; i < a.N; i++) {
       const k = a.kind[i];
-      if ((k !== K.Floor && k !== K.Stairs) || claims.has(i, CLAIM_OBJECT) || GRASS_BEHAVIORS.has(a.beh[i])) continue;
+      if ((k !== K.Floor && k !== K.Stairs) || claims.has(i, CLAIM_OBJECT) || GRASS_BEHAVIORS.has(a.beh[i]) || isSecretBaseSpot(a, i)) continue;
       const m = a.mt[i];
       let look = cache.get(m);
       if (look === undefined) {

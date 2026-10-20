@@ -222,7 +222,8 @@ export const propFamily: Family<PropPlacement[]> = {
       take(x, y, y, h, j);
       // its top drawn as an overhang on the walkable cell above (a lamp's lantern): the model's
       const above = at(x, y - 1);
-      if (above >= 0 && (kind[above] === K.Floor || kind[above] === K.Stairs) && a.hasTop(above) && tableKind(above) === pk) {
+      if (above >= 0 && (kind[above] === K.Floor || kind[above] === K.Stairs) && a.hasTop(above) && tableKind(above) === pk &&
+        !isSecretBaseSpot(a, above)) {
         claims.claim(above, CLAIM_TOP);
       }
     };
