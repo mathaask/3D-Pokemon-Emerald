@@ -171,7 +171,9 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
       // (InitObjectPriorityByElevation: whether or not there are tables)
       subspriteTableNum: ELEVATION_TO_SUBSPRITE_TABLE[elevation],
       // subsprites are switched on at spawn only if the spawn graphics have tables (SetSubspriteTables):
-      // a berry tree spawns as gfx 60 (none); ObjectEventSetGraphicsId swaps tables, not the mode
+      // a berry tree spawns as gfx 60 (none); ObjectEventSetGraphicsId swaps tables, not the mode. This is
+      // the map-entry state only: after a return to field (SpawnObjectEventOnReturnToField) live play respawns
+      // berry trees from gfx 61/62 with subsprites on
       subspriteMode: spawnInfo.subspriteTables ? SUBSPRITES_ON : SUBSPRITES_OFF,
     }));
     objects.push({

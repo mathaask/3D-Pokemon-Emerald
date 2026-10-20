@@ -5,9 +5,12 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 
 ## Active work (read this first after a context reset)
 - **Project:** Modern stylized 3D models (replace pixel-textured boxes/cards with real models).
-- **Phase 1 (outdoor environment) is done** (branch `phase1-outdoor`; known gaps in the progress log).
-  **Next: Phase 2 — characters, Pokémon, field objects.** Its plan is not written yet: write it
-  first (`docs/superpowers/plans/`, from spec §6), then execute.
+- **Phase 1 (outdoor environment) is done** (merged to `main`; known gaps in the progress log).
+- **Phase 2 — characters, Pokémon, field objects — in progress** on branch `phase2-characters`,
+  plan `docs/superpowers/plans/2026-10-20-phase2-characters.md` (12 tasks), executed subagent-driven.
+  Resume from the SDD ledger `.superpowers/sdd/2026-10-20-phase2-characters/progress.md` (gitignored;
+  tasks with a `Task N: complete` line are done) and the Phase 2 checklist in the progress log.
+  Show the user a phase progress bar in every update (they write Norwegian; reply in Norwegian).
 - **Spec:** `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - **Progress log (source of truth for where we are):** `docs/superpowers/progress/modern-3d.md`
   — update it after every completed task / milestone, and before long-running steps.
@@ -23,6 +26,9 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - `npm run regress -- --label x [--style retro] [--only littleroot,oldale] [--hours 11,21]` — visual regression:
   16 maps → `out/regress/x/` (PNGs, `_sheet_h11.png` / `_sheet_h21.png` contact sheets, `stats.json`
   calls/triangles/buildMs, plus rebuildMs/firstFrameMs = a map crossing's cost); compare against `out/regress/before` (pre-Phase-1 baseline) or `phase1`
+- `npx tsx tools/regress-live.ts --label x [--static] [--gpu] [--compare p2-base] [--only a,b]` — deterministic
+  live regression from save states (`?manual=1`, fixed RTC) + static actor previews (`?map=G.N&actors=1`)
+  → `out/regress-live/x/` (contact sheets, `stats.json` with pixel diffs); Retro must stay 0 px vs `p2-base`
 - `npx tsx tools/shot3d.ts --query "map=0.9&hour=11" --name x` — screenshot a static map preview → `out/3d/x_0.png`
 - `npx tsx tools/shot3d.ts --batch "name=map=0.9;name2=map=0.10"` — several previews in one run
 - `npx tsx tools/shot3d.ts --state out/r101.state --wait 3000 --keys "LEFT:600"` — screenshot live play from a save

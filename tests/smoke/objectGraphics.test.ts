@@ -71,7 +71,8 @@ describe('preview actors from map templates', () => {
       expect(s.animNum).toBe(o.localId % 5);
       stages.add(s.animNum);
       // SetBerryTreeGraphics: early stages gfx 61 (16x16), late stages gfx 62 (16x32), their tables;
-      // subsprites stay off (spawned as gfx 60, which has none); the table number follows elevation
+      // subsprites stay off on map entry (spawned as gfx 60, which has none; live play turns them on after
+      // a return to field); the table number follows elevation
       const stageGfx = s.animNum < 2 ? 61 : 62;
       expect(o.graphicsId).toBe(stageGfx);
       const info = readObjectGraphicsInfo(rom, stageGfx)!;

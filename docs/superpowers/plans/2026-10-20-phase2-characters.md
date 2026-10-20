@@ -1001,7 +1001,7 @@ it('draws a body per berry tree and its berries at the anchors', () => {
 - [ ] **Step 2: Run** `npx vitest run tests/actorModels.test.ts tests/objectModels.test.ts` → FAIL.
 - [ ] **Step 3: Implement** the stage geometries, the extra meshes, anchor transforms (plant matrix × anchor), per-instance colours.
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
-- [ ] **Step 5: Look.** `npm run regress:live -- --label t9 --static --gpu --compare t8` (the full live + static set with GPU timing: Tasks 10–11 compare against it). On `r104_berries`, `r104_night`, `r119_items`: all five stages visible (preview stages cycle by localId), plants sit in their soil cells, flowers/berries in sprite colours, readable at night; entries without berry trees unchanged vs `t8`; live budgets as in Task 5; Retro 0.00 % vs `p2-base`.
+- [ ] **Step 5: Look.** `npm run regress:live -- --label t9 --static --gpu --compare t8` (the full live + static set with GPU timing: Tasks 10–11 compare against it). On `r123_berries` (all five stages; Route 104 frames only stages 0-2), `r104_berries`, `r104_night`, `r119_items`: every stage in frame visible (preview stages cycle by localId), plants sit in their soil cells, flowers/berries in sprite colours, readable at night; entries without berry trees unchanged vs `t8`; live budgets as in Task 5; Retro 0.00 % vs `p2-base`.
 - [ ] **Step 6: Commit** — `git add src/render/actors/models.ts src/render/actors/objectModels.ts tests/actorModels.test.ts tests/objectModels.test.ts tests/actorLayer.test.ts && git commit -m "feat(actors): berry plants per growth stage with sprite-coloured flowers and berries"`
 
 **Acceptance:** Step 5.

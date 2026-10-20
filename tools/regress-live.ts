@@ -53,7 +53,7 @@ const LIVE: LiveEntry[] = [
  * template with graphics id G (focusGfx) or at template N (focusObj); one naming no template fails
  * the entry. littleroot_npcs looks at the fat man (12,13): Birch, the twin, the boy and a truck are
  * in frame too (Mom's cell is inside her house). Berry trees show stage localId % 5: Route 104's
- * patches hold 3 stages each (r104_berries / r104_night: stages 0-2); r123_berries frames Route 123's
+ * framed patch holds stages 0-2 (r104_berries / r104_night); r123_berries frames Route 123's
  * two rows of six (templates 0-3, 9-16), all five stages.
  */
 interface StaticEntry { name: string; q: string }
