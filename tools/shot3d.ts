@@ -1,6 +1,7 @@
 // Renders the real app in headless Chrome and saves screenshots.
 //
 //   npx tsx tools/shot3d.ts --state out/littleroot.state --wait 3000 --shots 2 --keys "RIGHT:600"
+//   --dpr 2: a HiDPI screen (device pixel ratio; screenshots are width x dpr pixels wide)
 //
 // Starts a Vite dev server, opens /?state=...&autostart, optionally holds keys, and writes
 // out/3d/<name>_<n>.png. Console errors from the page are printed.
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   const keys = arg('keys', '');
   const width = parseInt(arg('width', '1280'), 10);
   const height = parseInt(arg('height', '800'), 10);
+  const dpr = parseFloat(arg('dpr', '1'));
   const extra = arg('query', '');
   const evalExpr = arg('eval', '');
   const batch = arg('batch', ''); // 'name=query;name=query' — one page per entry
@@ -48,7 +50,7 @@ async function main(): Promise<void> {
     executablePath: exe,
     headless: true,
     args: ['--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=d3d11', '--autoplay-policy=no-user-gesture-required'],
-    defaultViewport: { width, height },
+    defaultViewport: { width, height, deviceScaleFactor: dpr },
   });
   try {
     const page = await browser.newPage();
