@@ -303,7 +303,7 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
 
 ## Phase 2 status
 - [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)
-- [ ] 1 live regress harness · [ ] 2 preview actors · [ ] 3 ActorLayer · [ ] 4 inflation field
+- [x] 1 live regress harness · [ ] 2 preview actors · [ ] 3 ActorLayer · [ ] 4 inflation field
 - [ ] 5 inflated actors · [ ] 6 xBR edges · [ ] 7 gfx mapping · [ ] 8 models I · [ ] 9 berry plants
 - [ ] 10 multi-piece sprites · [ ] 11 NPC fade · [ ] 12 perf/robustness/docs
 
