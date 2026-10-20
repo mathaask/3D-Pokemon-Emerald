@@ -12,3 +12,32 @@ export const SECONDARY_PROPS: ReadonlyMap<number, ReadonlyMap<number, PropKind>>
   // over the paving of the walkable cell above it (two paving variants).
   [SYM.gTileset_Rustboro, new Map<number, PropKind>([[0x21a, 'lamp'], [0x212, 'lamp'], [0x213, 'lamp']])],
 ]);
+
+/**
+ * Rock (for the cliffs) that the colour heuristics cannot tell from paving, by tileset. For a tileset
+ * listed here the table decides: its other ids are never rock, whatever their colour.
+ */
+export const SECONDARY_ROCK: ReadonlyMap<number, ReadonlySet<number>> = new Map<number, ReadonlySet<number>>([
+  // Sootopolis' crater: the white rock top (also the walkways; 0x2d9), its rims and corners, the
+  // white slope down to the lake's pink rim (0x2eb, 0x2ed); the grey-cream faces (straight, ends,
+  // edges, over water or the pink rim).
+  // Not the houses, the white railings and walls (0x200-0x2bf), the Cave of Origin's mouth (0x2f1,
+  // 0x2f9), the brown rock standing in the lake (0x2ee, 0x2ef) or the brown tiles among the lake's
+  // trees (0x2de, 0x2df).
+  [SYM.gTileset_Sootopolis, new Set<number>([
+    0x2d0, 0x2d1, 0x2d2, 0x2d9, 0x2db, 0x2dc, 0x2ec, 0x2eb, 0x2ed,
+    0x2cd, 0x2ce, 0x2d3, 0x2d4, 0x2d6, 0x2d8, 0x2da, 0x2e0, 0x2e1, 0x2e2,
+    0x2f0, 0x2f2, 0x2f3, 0x2f5, 0x2f8, 0x2fa, 0x2fb, 0x2fd,
+  ])],
+]);
+
+/**
+ * The tops of rock masses (rock, and a mass's top whatever the colour of the map's ground), by
+ * tileset; their other ids keep the colour heuristics.
+ */
+export const SECONDARY_ROCK_TOPS: ReadonlyMap<number, ReadonlySet<number>> = new Map<number, ReadonlySet<number>>([
+  // Lavaridge's pink mountain (Lavaridge Town, Mt Chimney, Jagged Pass, Route 112): the plain top
+  // (0x271, also the mountain maps' walkable ground), its rims and corners. In Lavaridge Town the
+  // ground is grass and sand, so the colour of the ground does not tell the top there.
+  [SYM.gTileset_Lavaridge, new Set<number>([0x268, 0x269, 0x26a, 0x26c, 0x271, 0x27d, 0x27e, 0x27f])],
+]);

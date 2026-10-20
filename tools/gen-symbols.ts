@@ -15,7 +15,7 @@ const WANTED = [
   'gWeather', 'gWeatherPtr', 'gMapGroups', 'gMapLayouts', 'gObjectEventGraphicsInfoPointers',
   'gFieldEffectObjectTemplatePointers', 'sObjectEventSpritePalettes', 'gFieldEffectArguments',
   'gMapObjects', 'gSelectedObjectEvent', 'gGlobalFieldTintMode', 'sCurrentMapName',
-  'gTilesetAnimTable', 'gTileset_General', 'gTileset_Petalburg', 'gTileset_Rustboro', 'sPrimaryTilesetAnimCounter',
+  'gTilesetAnimTable', 'gTileset_General', 'gTileset_Petalburg', 'gTileset_Rustboro', 'gTileset_Lavaridge', 'gTileset_Sootopolis', 'sPrimaryTilesetAnimCounter',
   'gBGTilemapBuffers1', 'gBGTilemapBuffers2', 'gBGTilemapBuffers3', 'gFlashEffectActive',
   // callbacks used for scene detection
   'CB1_Overworld', 'CB2_Overworld', 'CB2_OverworldBasic', 'BattleMainCB2', 'BattleMainCB1',

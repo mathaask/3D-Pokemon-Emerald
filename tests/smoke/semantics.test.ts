@@ -20,6 +20,10 @@ import type { BuildingPlacement, BuildingKind } from '../../src/render/kit/build
 import type { CliffPlacement } from '../../src/render/kit/cliffs';
 import type { WaterPlacement } from '../../src/render/kit/water';
 import type { TerrainPlacement } from '../../src/render/kit/terrain';
+import { GENERAL_SEA_ROCK } from '../../src/render/kit/tables/general';
+import { SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
+import { SYM } from '../../src/game/symbols';
+import { luma } from '../../src/render/kit/palette';
 
 const OUT = path.resolve(import.meta.dirname, '../../out');
 
@@ -154,6 +158,25 @@ describe('semantics on real maps', () => {
     }
   });
 
+  it('mountain maps and Sootopolis: their rock is 3D, the crater walls in their own cream', () => {
+    // (legacy share of the whole grid, with some slack over the Task 15b numbers; before it: Mt Chimney
+    // 90 %, Jagged Pass 81 %, Route 112 80 %, Route 111 62 %, Lavaridge 88 %, Sootopolis 78 %)
+    const limits: [number, number, number][] = [[24, 12, 0.5], [24, 13, 0.3], [0, 27, 0.3], [0, 26, 0.2], [0, 12, 0.25], [0, 7, 0.3]];
+    for (const [g, n, max] of limits) {
+      const r = run(g, n);
+      expect(coverage(r).share, r.name).toBeLessThanOrEqual(max);
+    }
+    // Sootopolis: the walls of its crater rock (its own table's ids) are light, not brown
+    const r = run(0, 7);
+    const soot = SECONDARY_ROCK.get(SYM.gTileset_Sootopolis)!;
+    const crater = payload<CliffPlacement>(r.ex, 'cliffs').runs.filter((c) => {
+      const i = r.a.idx(c.x, Math.round(c.zf - 1 - Math.max(c.hB, 0)));
+      return r.a.inside(c.x, r.a.cellY(i)) && soot.has(r.a.mt[i]);
+    });
+    expect(crater.length).toBeGreaterThan(50);
+    for (const c of crater) expect(luma(c.tint), `${c.x},${c.zf}`).toBeGreaterThan(0.6);
+  });
+
   it('no family fails on the regression maps; legacy coverage report', () => {
     const lines = ['Legacy coverage, regression maps: share of cells still drawn with the legacy pixel geometry',
       '("all": the map and its 14-cell border margin; "map": the map\'s own cells). Approximate: overhang cards',
@@ -184,6 +207,7 @@ describe('semantics on real maps', () => {
     expect(maps.length).toBeGreaterThanOrEqual(68);
     const rows: { share: number; line: string }[] = [];
     let sum = 0, mapSum = 0, spots = 0, spotMaps = 0, claimedSpots = 0, bases = 0, nonTreeMap = 0, nonTreeBorder = 0;
+    const seaCliffs: string[] = [];
     for (const m of maps) {
       const r = run(m.group, m.num);
       const { a, ex } = r;
@@ -204,6 +228,11 @@ describe('semantics on real maps', () => {
       }
       spots += mapSpots;
       if (mapSpots) spotMaps++;
+      // Brown rock standing in the sea is never a cliff box: it keeps its legacy art.
+      const cliffs = ex!.added.get('cliffs')!;
+      for (let i = 0; i < a.N; i++) {
+        if (a.isGeneralId(a.mt[i]) && GENERAL_SEA_ROCK.has(a.mt[i]) && cliffs[i]) seaCliffs.push(`${m.name} ${a.cellX(i)},${a.cellY(i)}`);
+      }
       // No tree stands right in front of a warp's passage (Petalburg Woods' north exit, Mt Pyre's
       // summit path, the Trainer Hill door on Route 111). A fact about this ROM, not a guarantee of the
       // code: trees.ts only clears the analysis' colour-guessed trees there (General tree ids and
@@ -259,5 +288,6 @@ describe('semantics on real maps', () => {
     expect(bases).toBeGreaterThan(50); // (the check below is not vacuous)
     expect(spots).toBeGreaterThanOrEqual(bases);
     expect(claimedSpots).toBe(0);
+    expect(seaCliffs).toEqual([]);
   });
 });

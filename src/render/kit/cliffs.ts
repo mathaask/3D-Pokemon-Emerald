@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
+import { attrLayerType, LayerType } from '../../game/rom/tileset';
 import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { buildingLayout } from './footprints';
@@ -13,9 +14,11 @@ import { hashCell, noise2, QuadWriter, type V3 } from './geom';
 import { kitMaterial } from './materials';
 import { cellLook, GroundMat, type CellLook } from './terrain';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
+import { SECONDARY_ROCK, SECONDARY_ROCK_TOPS } from './tables/secondary';
 
-/** A face column: a vertical wall at Z = zf from its foot hB up to topH (X from x to x + 1). */
-export interface CliffRun { x: number; zf: number; hB: number; topH: number; tint: RGB; lip: RGB | null }
+/** A face column: a vertical wall at Z = zf from its foot hB up to topH (X from x to x + 1).
+ *  `wall`: free-standing, with ground of its foot's level behind it (a capped slab, no plateau). */
+export interface CliffRun { x: number; zf: number; hB: number; topH: number; tint: RGB; lip: RGB | null; wall?: boolean }
 /** A side wall at X = px facing `dir` (±1): its top edge spans Z [zt, zb] at height y1 and slides
  *  down at 45° (the un-projection's slant, like the terrain banks) to height y0. */
 export interface SidePanel { px: number; dir: number; zb: number; zt: number; y0: number; y1: number; tint: RGB }
@@ -25,17 +28,42 @@ export interface CliffPlacement { runs: CliffRun[]; sides: SidePanel[]; ledges: 
 /** Curated rock ids (set by the General table, Task 14). */
 export let rockIds: (m: number) => boolean = () => false;
 export function setRockIds(f: (m: number) => boolean): void { rockIds = f; }
+/** General ids of brown rock standing in the sea (set by the General table). */
+export let seaRockIds: (m: number) => boolean = () => false;
+export function setSeaRockIds(f: (m: number) => boolean): void { seaRockIds = f; }
 
 /** Tiles with this fraction of green pixels hold foliage (tree crowns, grass rims), not bare rock. */
 const FOLIAGE = 0.2;
+/** The tallest face of one terrace step, in rows (as a block mass's face). */
+const MAX_STEP = 3;
+/** Thickness of a free-standing wall (its cap covers this much of the ground behind it on screen). */
+const WALL_T = 0.3;
+
+/** Rock by a curated table: the General rock ids, or the map's secondary tileset's (Sootopolis'
+ *  white crater rock, which its colours alone would call paving). */
+export function curatedRock(a: MapAnalysis, m: number): boolean {
+  return (a.isGeneralId(m) && rockIds(m)) || (m >= 512 && !!SECONDARY_ROCK.get(a.opts.secondaryTileset ?? 0)?.has(m));
+}
+
+/** A rock mass's top by its tileset's table (Lavaridge's pink top, whatever the ground's colour). */
+const tableTop = (a: MapAnalysis, m: number) => m >= 512 && !!SECONDARY_ROCK_TOPS.get(a.opts.secondaryTileset ?? 0)?.has(m);
+
+/** A secondary id of a tileset with a rock table that the table does not list: never rock, whatever
+ *  its colour (Sootopolis' houses, fences and railings in the crater's colours). */
+const unlisted = (a: MapAnalysis, m: number) => m >= 512 && !(SECONDARY_ROCK.get(a.opts.secondaryTileset ?? 0)?.has(m) ?? true);
+
+/** Brown rock standing in the sea (General): never a cliff, it keeps its legacy art. */
+const isSeaRock = (a: MapAnalysis, m: number) => a.isGeneralId(m) && seaRockIds(m);
 
 /** Rock-looking metatile: brown/grey/beige or a muted dark rock shade, little foliage, not water.
  *  `dom`: its dominant lit colour, if already known. */
 export function isRocky(a: MapAnalysis, m: number, dom = litDominant(a, m)): boolean {
-  if (a.isGeneralId(m) && rockIds(m)) return true;
+  if (isSeaRock(a, m) || unlisted(a, m)) return false;
+  if (curatedRock(a, m) || tableTop(a, m)) return true;
   if (a.info.green[m] >= FOLIAGE) return false;
   const c = dom;
-  if (!c) return false;
+  // (and not molten: Mt Chimney's lava is far more saturated than any rock, which stays under 0.5)
+  if (!c || saturation(c) > 0.6) return false;
   const cls = classifyGroundColor(c);
   if (cls === 'dirt' || cls === 'rock' || cls === 'gravel') return true;
   // The shadow side of a rock mass: dark and muted, reddish-grey (not a navy window or a green shade).
@@ -81,6 +109,9 @@ export function doorStructures(a: MapAnalysis, events: GridEvents): Uint8Array {
   return out;
 }
 
+/** Two colours are one tile colour (within one BGR555 step per channel). */
+const near = (c: RGB, g: RGB) => Math.max(Math.abs(c[0] - g[0]), Math.abs(c[1] - g[1]), Math.abs(c[2] - g[2])) < 0.04;
+
 /** Most frequent colour of a metatile, outlines excluded. */
 const litDominant = (a: MapAnalysis, m: number) => dominantColor(a.info.both, [m], (k) => luma(k) > 0.15);
 
@@ -101,6 +132,20 @@ interface Run {
   /** Metatile of the plateau above a face between two levels (-1: a free-standing rock mass). */
   above: number;
   mts: number[];
+  /** A band of a terraced mass topped in its ground's colour: index of the band it stands on in
+   *  its column (-1: the lowest); undefined for every other run. */
+  below?: number;
+}
+
+/** Roles of a block tile in a rock mass. */
+const enum Role {
+  Other,
+  /** In the colour of the map's ground (no foliage): a mass's top, or something standing on the ground. */
+  Top,
+  /** Rock face: a band of these raises the mass. */
+  Face,
+  /** Rock drawn in vertical strips (a terrace's east or west edge): part of the top it borders. */
+  Side,
 }
 
 /** Mean colour of the lit, earthy pixels of `mts` (outlines, foliage and water excluded). */
@@ -149,8 +194,22 @@ export const cliffFamily: Family<CliffPlacement> = {
     // Sign posts stand on the ground in front of a wall: the ground, for the run above them.
     const sign = new Uint8Array(a.N);
     for (const s of events.signs) if (inside(s.x, s.y) && kind[idx(s.x, s.y)] === K.Block) sign[idx(s.x, s.y)] = 1;
-    // (a secret-base spot breaks a run: the hole in the rock keeps its legacy art)
-    const isBlock = (i: number) => kind[i] === K.Block && !claims.has(i, CLAIM_OBJECT) && !structure[i] && !sign[i] && !isSecretBaseSpot(a, i);
+    // Blocks, and listed rock of a tileset's table that a door's flood fill swallowed outside the
+    // building the buildings family modelled (Sootopolis' crater walls by its houses; a building left
+    // to the legacy art keeps its whole flood fill). A secret-base spot breaks a run (the hole in the
+    // rock keeps its legacy art), and so do a sea rock and what a tileset's rock table leaves out.
+    const { stray } = buildingLayout(a, events);
+    const modelled = a.buildings.map((b) => b.cells.some((c) => claims.has(c, CLAIM_OBJECT)));
+    const blockKind = (i: number) => kind[i] === K.Block ||
+      (stray[i] === 1 && modelled[a.building[i]] && a.mt[i] >= 512 && (curatedRock(a, a.mt[i]) || tableTop(a, a.mt[i])));
+    const breaks = new Uint8Array(1024);
+    for (let m = 0; m < 1024; m++) breaks[m] = isSeaRock(a, m) || unlisted(a, m) ? 1 : 0;
+    // (the earlier families' claims, once; the cliffs' own claims are checked as they are made)
+    const blocks = new Uint8Array(a.N);
+    for (let i = 0; i < a.N; i++) {
+      blocks[i] = blockKind(i) && !claims.has(i, CLAIM_OBJECT) && !structure[i] && !sign[i] && !isSecretBaseSpot(a, i) && !breaks[a.mt[i]] ? 1 : 0;
+    }
+    const isBlock = (i: number) => blocks[i] === 1 && !claims.has(i, CLAIM_OBJECT);
     const walk = (i: number) => i >= 0 && (kind[i] === K.Floor || kind[i] === K.Stairs || kind[i] === K.Water || kind[i] === K.Ledge || sign[i] === 1);
     /** Ground height of a walkable cell (a sign's: the ground it stands on). */
     const groundOf = (i: number) => (sign[i] ? a.groundH[i] : height[i]);
@@ -164,21 +223,100 @@ export const cliffFamily: Family<CliffPlacement> = {
       floorCount.set(a.mt[i], (floorCount.get(a.mt[i]) ?? 0) + 1);
     }
     const ground: RGB[] = [];
+    /** The common walkable floor tiles (a mountain's rock top is often one of them). */
+    const floorIds = new Set<number>();
     for (const [m, n] of floorCount) {
-      const c = n >= floors * 0.03 ? dom(m) : null;
+      if (n < floors * 0.03) continue;
+      floorIds.add(m);
+      const c = dom(m);
       if (c) ground.push(c);
     }
-    const isGround = (c: RGB | null) =>
-      !!c && ground.some((g) => Math.max(Math.abs(c[0] - g[0]), Math.abs(c[1] - g[1]), Math.abs(c[2] - g[2])) < 0.04);
-    const rockFace = (m: number) => (a.isGeneralId(m) && rockIds(m)) || (rock(m) && !isGround(dom(m)));
-    /** Most rows of column x from y to e have rock beside them (a mass, not a 1-wide strip). */
-    const wide = (x: number, y: number, e: number) => {
+    const isGround = (c: RGB | null) => !!c && ground.some((g) => near(c, g));
+    const rockFace = (m: number) => curatedRock(a, m) || (rock(m) && !isGround(dom(m)));
+    /** Most rows of column x from y to e have rock (`rocky`) beside them (a mass, not a 1-wide strip). */
+    const wide = (x: number, y: number, e: number, rocky = rockFace) => {
       let n = 0;
       for (let r = y; r <= e; r++) {
-        const side = (nx: number) => inside(nx, r) && kind[idx(nx, r)] === K.Block && rockFace(a.mt[idx(nx, r)]);
+        const side = (nx: number) => inside(nx, r) && blockKind(idx(nx, r)) && rocky(a.mt[idx(nx, r)]);
         if (side(x - 1) || side(x + 1)) n++;
       }
       return n * 2 > e - y + 1;
+    };
+
+    // Tile roles in a rock mass. A tile in the ground's colour counts as rock only where it stands
+    // on a rock face (the top of a mass: Mt Chimney's pink, Sootopolis' white, the General mountain
+    // top): the same colour at a run's foot is a trunk, a boulder or the ground itself.
+    // Not water-coloured (Sky Pillar's cloud backdrop, which is also a floor tile there); and if it
+    // has art over its sprites (a top layer drawn above them), its ground layer shows that colour too:
+    // not other ground under rock art standing up (Route 134's rock ridges drawn over a shoal).
+    const isTop = (m: number) => {
+      if (tableTop(a, m)) return true;
+      const c = dom(m);
+      if (a.info.green[m] >= FOLIAGE || !isGround(c) || classifyGroundColor(c!) === 'water') return false;
+      if (attrLayerType(a.info.attributes[m]) === LayerType.COVERED || !a.info.topCover[m]) return true;
+      const g = dominantColor(a.info.bottom, [m], (k) => luma(k) > 0.15);
+      return !!g && near(c!, g);
+    };
+    // (cached per metatile: 0 not known yet, 1 no, 2 yes)
+    const topCache = new Uint8Array(1024), faceCache = new Uint8Array(1024);
+    const top = (m: number) => (topCache[m] ||= isTop(m) ? 2 : 1) === 2;
+    const faceTile = (m: number) => (faceCache[m] ||= rockFace(m) && !top(m) ? 2 : 1) === 2;
+    // A face tile drawn in vertical strips (no face beside it in most of its cells) is a terrace's
+    // east or west edge: it does not raise the mass.
+    const faceCells = new Map<number, number>(), besideFace = new Map<number, number>();
+    const blockFace = (x: number, y: number) => inside(x, y) && isBlock(idx(x, y)) && faceTile(a.mt[idx(x, y)]);
+    for (let i = 0; i < a.N; i++) {
+      if (!faceTile(a.mt[i]) || !isBlock(i)) continue;
+      const m = a.mt[i], x = a.cellX(i), y = a.cellY(i);
+      faceCells.set(m, (faceCells.get(m) ?? 0) + 1);
+      if (blockFace(x - 1, y) || blockFace(x + 1, y)) besideFace.set(m, (besideFace.get(m) ?? 0) + 1);
+    }
+    const roles = new Map<number, Role>();
+    const role = (m: number) => {
+      let v = roles.get(m);
+      if (v === undefined) {
+        v = top(m) ? Role.Top : !faceTile(m) ? Role.Other : (besideFace.get(m) ?? 0) * 2 < (faceCells.get(m) ?? 0) ? Role.Side : Role.Face;
+        roles.set(m, v);
+      }
+      return v;
+    };
+    const massTile = (m: number) => role(m) !== Role.Other;
+
+    /** A terraced mass standing on its face (rows y..e of column x, foot at hB): from the foot up,
+     *  each band of face rows rises from the height reached so far and carries the top rows above it
+     *  (the ground-coloured top, side strips). Stops at anything else. Rock that makes no step of its
+     *  own (the face the run ends on; a face taller than a step: ridge edges zigzagging down one
+     *  column) is part of the flat top of the band below, up to anything that is not rock. */
+    const bands = (x: number, y: number, e: number, hB: number, foot: number): Run[] => {
+      const list: Run[] = [];
+      const at = (r: number) => role(a.mt[idx(x, r)]);
+      /** The last band's top runs on from row r up through the rock above it. */
+      const flatten = (r: number) => {
+        const last = list[list.length - 1];
+        if (!last) return;
+        let t = r;
+        while (t >= y && at(t) !== Role.Other) t--;
+        for (let k = last.y - 1; k > t; k--) last.mts.unshift(a.mt[idx(x, k)]);
+        last.y = t + 1;
+      };
+      let h = hB, r = e;
+      while (r >= y && at(r) === Role.Face) {
+        let f = r;
+        while (f - 1 >= y && at(f - 1) === Role.Face) f--;
+        if (r - f + 1 > MAX_STEP) { flatten(r); break; }
+        let t = f - 1;
+        while (t >= y && (at(t) === Role.Top || at(t) === Role.Side)) t--;
+        if (t + 1 > f - 1) {
+          if (t < y) flatten(r);
+          break;
+        }
+        const F = r - f + 1, mts: number[] = [];
+        for (let k = t + 1; k <= r; k++) mts.push(a.mt[idx(x, k)]);
+        list.push({ r: { x, zf: r + 1 + h, hB: list.length ? h : foot, topH: h + F, tint: [0, 0, 0], lip: null }, y: t + 1, e: r, F, above: -1, mts, below: -1 });
+        h += F;
+        r = t;
+      }
+      return list;
     };
 
     // 1. Runs: block runs down each column with walkable ground below.
@@ -209,8 +347,30 @@ export const cliffFamily: Family<CliffPlacement> = {
         }
         const mts: number[] = [];
         for (let r = y; r <= e; r++) mts.push(a.mt[idx(x, r)]);
-        const nRock = mts.filter(rockFace).length;
+        // (tops in the ground's colour count where the run stands on a rock face)
+        const onFace = faceTile(mts[L - 1]);
+        const nRock = mts.filter((m) => rockFace(m) || (onFace && top(m))).length;
         const level = !Number.isNaN(hA) && !Number.isNaN(hB) && hA > hB + 0.01;
+        // A face over water reaches down to the water surface.
+        const foot = bi >= 0 && kind[bi] === K.Water ? Math.min(hB, height[bi]) : hB;
+        // A free-standing mass topped in the colour of its ground (the walkable ground's own tile, on
+        // mountain maps) or edged with strips: its terraces, if it stands on a face and is a mass, not
+        // a 1-wide strip.
+        if (!Number.isNaN(hB) && !level && mts.some((m) => role(m) === Role.Top || role(m) === Role.Side)) {
+          const list = bands(x, y, e, hB, foot);
+          if (list.length && wide(x, list[list.length - 1].y, e, massTile)) {
+            list.forEach((b, k) => { b.below = k ? cands.length - 1 : -1; cands.push(b); });
+            y = e + 1;
+            continue;
+          }
+        }
+        // A one-row wall of a tileset's listed rock between two walkways the analysis put at one level
+        // (Sootopolis' terraces): a free-standing rock wall, a level tall.
+        if (L === 1 && !Number.isNaN(hB) && walk(ai) && !level && mts[0] >= 512 && curatedRock(a, mts[0]) && role(mts[0]) === Role.Face) {
+          cands.push({ r: { x, zf: e + 1 + hB, hB: foot, topH: hB + 1, tint: [0, 0, 0], lip: null, wall: true }, y, e, F: 1, above: -1, mts });
+          y = e + 1;
+          continue;
+        }
         let F = 0;
         // A face between two levels: mostly rock (and, if the face is shorter than the run, a
         // mass rather than a 1-wide ridge: the edge of a terrace wall). A free-standing block mass
@@ -219,24 +379,45 @@ export const cliffFamily: Family<CliffPlacement> = {
         if (!Number.isNaN(hB) && level && nRock * 2 >= L) {
           F = Math.min(L, Math.max(1, Math.round(hA - hB)));
           if (L - F >= 2 && !wide(x, y, e)) F = 0;
-        } else if (!Number.isNaN(hB) && L >= 2 && nRock * 3 >= L * 2 && wide(x, y, e)) {
+        } else if (!Number.isNaN(hB) && L >= 2 && mts.filter(rockFace).length * 3 >= L * 2 && wide(x, y, e)) {
           F = Math.min(L, Math.max(1, Math.min(3, Math.round(L / 2))));
           if (mts.slice(-F).some((m) => a.info.green[m] >= FOLIAGE)) F = 0;
         }
         if (F === 0) { y = e + 1; continue; }
         const topH = hB + F;
-        // A face over water reaches down to the water surface.
-        const foot = bi >= 0 && kind[bi] === K.Water ? Math.min(hB, height[bi]) : hB;
         cands.push({ r: { x, zf: e + 1 + hB, hB: foot, topH, tint: [0, 0, 0], lip: null }, y, e, F, above: level ? above : -1, mts });
         y = e + 1;
       }
     }
 
     // A wall stands on a line: keep runs with a neighbour column whose face has the same foot.
-    // Diagonal staircases of short runs (Mossdeep's rock ridges) and lone columns stay legacy.
+    // Diagonal staircases of short runs (Mossdeep's rock ridges) and lone columns stay legacy. A
+    // terrace band without such a neighbour joins the top of the band it stands on (its rows and
+    // every band above it: a flat top, as a mass without terraces), unless it is the lowest.
     const footing = (x: number, e: number, hB: number) => `${x},${e},${hB}`;
-    const feet = new Set(cands.map((c) => footing(c.r.x, c.e, c.r.hB)));
-    const runs = cands.filter((c) => feet.has(footing(c.r.x - 1, c.e, c.r.hB)) || feet.has(footing(c.r.x + 1, c.e, c.r.hB)));
+    const keep = cands.map(() => true);
+    const up = new Int32Array(cands.length).fill(-1);
+    cands.forEach((c, k) => { if (c.below !== undefined && c.below >= 0) up[c.below] = k; });
+    for (let changed = true; changed;) {
+      changed = false;
+      const feet = new Set(cands.filter((_, k) => keep[k]).map((c) => footing(c.r.x, c.e, c.r.hB)));
+      cands.forEach((c, k) => {
+        if (!keep[k] || feet.has(footing(c.r.x - 1, c.e, c.r.hB)) || feet.has(footing(c.r.x + 1, c.e, c.r.hB))) return;
+        changed = true;
+        let t = k;
+        for (let u = k; u >= 0; u = up[u]) { keep[u] = false; t = u; }
+        const b = c.below !== undefined && c.below >= 0 ? cands[c.below] : null;
+        if (!b) return;
+        // (the band below now tops out where its column's bands did)
+        b.y = cands[t].y;
+        b.mts = [];
+        for (let r = b.y; r <= b.e; r++) b.mts.push(a.mt[idx(b.r.x, r)]);
+        up[c.below!] = -1;
+      });
+    }
+    const runIndex = new Int32Array(cands.length).fill(-1);
+    const runs: Run[] = [];
+    cands.forEach((c, k) => { if (keep[k]) { runIndex[k] = runs.length; runs.push(c); } });
     /** Per cell: index of the run whose face covers it (-1 = none). */
     const faceRun = new Int32Array(a.N).fill(-1);
     /** Per cell: index of the run whose top rows include it (-1 = none). */
@@ -247,7 +428,7 @@ export const cliffFamily: Family<CliffPlacement> = {
     });
 
     // 2. Cliffs: runs side by side whose faces share a row are one wall, in one rock colour (the
-    // tiles' own shading would change it column by column).
+    // tiles' own shading would change it column by column); so are a terrace's bands.
     const parent = Int32Array.from(runs, (_, k) => k);
     const find = (k: number): number => { while (parent[k] !== k) k = parent[k] = parent[parent[k]]; return k; };
     for (let i = 0; i < a.N; i++) {
@@ -256,6 +437,7 @@ export const cliffFamily: Family<CliffPlacement> = {
       const j = faceRun[i + 1];
       if (j >= 0) parent[find(k)] = find(j);
     }
+    runs.forEach((run, k) => { if (run.below !== undefined && run.below >= 0) parent[find(k)] = find(runIndex[run.below]); });
     const groups = new Map<number, number[]>();
     const sums = new Map<number, Float64Array>();
     for (let k = 0; k < runs.length; k++) {
@@ -264,20 +446,33 @@ export const cliffFamily: Family<CliffPlacement> = {
       list.push(k);
       groups.set(g, list);
     }
+    /** Most frequent key of a count map (-1: none). */
+    const most = (counts: Map<number, number>) => {
+      let m = -1, best = 0;
+      for (const [k, n] of counts) if (n > best) { best = n; m = k; }
+      return m;
+    };
+    const count = (counts: Map<number, number>, m: number) => counts.set(m, (counts.get(m) ?? 0) + 1);
     for (const list of groups.values()) {
       const faceMts: number[] = [];
-      const tops = new Map<number, number>();
+      const tops = new Map<number, number>(), floorTops = new Map<number, number>(), groundTops = new Map<number, number>();
       for (const k of list) {
         const run = runs[k];
         faceMts.push(...run.mts.slice(-run.F));
         // a rock mass's top: its rock tile whose ground layer shows rock (not the ground under the rim art)
-        if (run.above < 0) for (const m of run.mts) if (rockFace(m) && !isGround(cellLook(a, m, looks).tint)) tops.set(m, (tops.get(m) ?? 0) + 1);
+        if (run.below === undefined && run.above < 0) for (const m of run.mts) if (rockFace(m) && !isGround(cellLook(a, m, looks).tint)) count(tops, m);
+        // a terrace topped in the colour of its ground: the walkable ground's own tile, else its top tile
+        if (run.below !== undefined) {
+          for (const m of run.mts.slice(0, -run.F)) {
+            if (floorIds.has(m)) count(floorTops, m);
+            else if (top(m)) count(groundTops, m);
+          }
+        }
       }
       // lifted a little: the shaded, strata-banded wall reads darker than the tiles' flat pixels
       const mean = rockColor(a.info.both, faceMts.filter(rockFace), sums) ?? rockColor(a.info.both, faceMts, sums) ?? [0.6, 0.5, 0.4];
       const tint = soften(mean.map((v) => Math.min(1, v * 1.12)) as RGB);
-      let top = -1, best = 0;
-      for (const [m, n] of tops) if (n > best) { best = n; top = m; }
+      const rockTop = most(tops), terraceTop = floorTops.size ? most(floorTops) : most(groundTops);
       for (const k of list) {
         const run = runs[k];
         run.r.tint = tint;
@@ -285,12 +480,60 @@ export const cliffFamily: Family<CliffPlacement> = {
           const i = idx(run.r.x, r);
           claims.claim(i, CLAIM_OBJECT);
           claims.groundY[i] = run.r.topH;
-          // the plateau above runs on to the face; a rock mass is rock on top
-          claims.groundMt[i] = run.above >= 0 ? run.above : top >= 0 ? top : a.mt[i];
+          // the plateau above runs on to the face; a rock mass is rock on top, a terrace its ground
+          claims.groundMt[i] = run.above >= 0 ? run.above : run.below !== undefined ? (terraceTop >= 0 ? terraceTop : a.mt[i])
+            : rockTop >= 0 ? rockTop : a.mt[i];
         }
         for (let r = run.e - run.F + 1; r <= run.e; r++) claims.claim(idx(run.r.x, r), CLAIM_OBJECT | CLAIM_SURFACE);
       }
     }
+    // Footless mass tops: a block run with nothing in front of it (it runs off the map's edge, or
+    // into a tree or another family's model) all in the ground's colour (a mountain's top, the
+    // border beyond the map) is ground, at the level legacy lays it flat at: the level behind it,
+    // else its ground's. It takes the ground's look: the floor tile of its colour.
+    const byCount = [...floorIds].sort((p, q) => floorCount.get(q)! - floorCount.get(p)!);
+    const looksOf = new Map<number, number>();
+    /** The ground's look for a tile in its colour: itself if it is a floor tile, else the most common
+     *  floor tile of its colour. */
+    const lookOf = (m: number) => {
+      let v = looksOf.get(m);
+      if (v === undefined) {
+        const c = dom(m);
+        v = floorIds.has(m) || !c ? m : byCount.find((n) => { const g = dom(n); return !!g && near(c, g); }) ?? m;
+        looksOf.set(m, v);
+      }
+      return v;
+    };
+    for (let x = a.minX; x < a.maxX; x++) {
+      let y = a.minY;
+      while (y < a.maxY) {
+        if (!isBlock(idx(x, y))) { y++; continue; }
+        let e = y;
+        while (e + 1 < a.maxY && isBlock(idx(x, e + 1))) e++;
+        const bi = e + 1 < a.maxY ? idx(x, e + 1) : -1;
+        const ai = y > a.minY ? idx(x, y - 1) : -1;
+        const front = bi < 0 || kind[bi] === K.Tree || (claims.has(bi, CLAIM_OBJECT) && faceRun[bi] < 0 && topRun[bi] < 0);
+        let tops = 0, clean = front;
+        for (let r = y; r <= e && clean; r++) {
+          const v = role(a.mt[idx(x, r)]);
+          if (v === Role.Top) tops++;
+          else if (v !== Role.Side) clean = false;
+        }
+        if (clean && tops) {
+          const h = walk(ai) ? Math.max(groundOf(ai), 0) : a.groundH[idx(x, e)];
+          let look = -1;
+          for (let r = y; r <= e && look < 0; r++) if (role(a.mt[idx(x, r)]) === Role.Top) look = lookOf(a.mt[idx(x, r)]);
+          for (let r = y; r <= e; r++) {
+            const i = idx(x, r);
+            claims.claim(i, CLAIM_OBJECT);
+            claims.groundY[i] = h;
+            claims.groundMt[i] = role(a.mt[i]) === Role.Top ? lookOf(a.mt[i]) : look;
+          }
+        }
+        y = e + 1;
+      }
+    }
+
     // A grass lip where the wall's top tile or the plateau above is grass.
     const grass = (m: number) => {
       if (a.info.green[m] < FOLIAGE) return null; // (no grass to speak of: skips the colour sampling)
@@ -379,6 +622,12 @@ export const cliffFamily: Family<CliffPlacement> = {
         const cy = (ys[v] + ys[v + 1]) / 2;
         const k = base(cy - r.hB) * strata(r.x + 0.5, cy); // one band per row and column
         for (let u = 0; u < NX; u++) quads.quad(P(u, v + 1), P(u + 1, v + 1), P(u + 1, v), P(u, v), FACE_N, tint, k);
+      }
+      // A free-standing wall: a slab behind its face, capped (the face's top edge is its front).
+      if (r.wall) {
+        const k = base(r.topH - r.hB) * strata(r.x + 0.5, r.topH);
+        quads.box(r.x, r.x + 1, r.hB, r.topH, r.zf - WALL_T, r.zf, [tint[0] * k, tint[1] * k, tint[2] * k]);
+        continue;
       }
       // Side wedges: from the face's (displaced) edge back along the 45° slant under the plateau,
       // closing the wall where the neighbouring column is lower.

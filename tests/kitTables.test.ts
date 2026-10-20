@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { propFamily, blockRun, type PropPlacement } from '../src/render/kit/props';
 import {
-  GENERAL_BIG_ROCKS, GENERAL_FENCE_SHAPES, GENERAL_FLOWERS, GENERAL_PINE, GENERAL_PROPS, GENERAL_ROCK, installGeneralTables,
+  GENERAL_BIG_ROCKS, GENERAL_FENCE_SHAPES, GENERAL_FLOWERS, GENERAL_PINE, GENERAL_PROPS, GENERAL_ROCK, GENERAL_SEA_ROCK, installGeneralTables,
 } from '../src/render/kit/tables/general';
 import { isRocky } from '../src/render/kit/cliffs';
 import { treeFamily } from '../src/render/kit/trees';
@@ -16,6 +16,7 @@ import { FAMILIES } from '../src/render/kit';
 import { emitLegacy } from '../src/render/overworld/legacyQuads';
 import type { TileInfo } from '../src/render/overworld/tileInfo';
 import { SYM } from '../src/game/symbols';
+import { SECONDARY_ROCK } from '../src/render/kit/tables/secondary';
 import { fakeInfo } from './helpers/fakeMap';
 
 function map(rows: string[], ids: Record<string, number>, generalPrimary: boolean) {
@@ -319,7 +320,7 @@ describe('props build', () => {
 
 describe('General tables', () => {
   it('are General ids, and every fence piece has a shape', () => {
-    for (const s of [GENERAL_ROCK, GENERAL_PINE, GENERAL_FLOWERS, new Set(GENERAL_PROPS.keys())]) for (const m of s) expect(m).toBeLessThan(512);
+    for (const s of [GENERAL_ROCK, GENERAL_SEA_ROCK, GENERAL_PINE, GENERAL_FLOWERS, new Set(GENERAL_PROPS.keys())]) for (const m of s) expect(m).toBeLessThan(512);
     for (const [m, k] of GENERAL_PROPS) if (k.startsWith('fence')) expect(GENERAL_FENCE_SHAPES.has(m)).toBe(true);
     for (const m of GENERAL_FENCE_SHAPES.keys()) expect(GENERAL_PROPS.get(m)?.startsWith('fence')).toBe(true);
     expect(GENERAL_FLOWERS.has(0x004)).toBe(true);
@@ -336,6 +337,26 @@ describe('General tables', () => {
     expect(isRocky(b, 0x079)).toBe(false);
   });
 
+  it('installs the sea rocks into the cliffs: brown rock standing in the sea is never rock', () => {
+    for (const m of GENERAL_SEA_ROCK) expect(GENERAL_ROCK.has(m)).toBe(false);
+    expect([0x172, 0x17a, 0x17f, 0x182, 0x184, 0x15e, 0x16e].every((m) => GENERAL_SEA_ROCK.has(m))).toBe(true);
+    installGeneralTables();
+    const a = world(['...'], {}, { general: true });
+    a.info.both.fill(px(22, 14, 10), 0x17a * 256, 0x17b * 256); // brown rock pixels
+    expect(isRocky(a, 0x17a)).toBe(false);
+    const b = world(['...'], {}, { general: false });
+    b.info.both.fill(px(22, 14, 10), 0x17a * 256, 0x17b * 256);
+    expect(isRocky(b, 0x17a)).toBe(true); // (a secondary tileset's 0x17a is not the sea rock)
+  });
+
+});
+
+describe('secondary tables', () => {
+  it('Sootopolis\' crater rock is keyed by its tileset, in secondary ids', () => {
+    const soot = SECONDARY_ROCK.get(SYM.gTileset_Sootopolis)!;
+    expect([0x2d9, 0x2e1].every((m) => soot.has(m))).toBe(true); // the white top, a grey-cream face
+    for (const ids of SECONDARY_ROCK.values()) for (const m of ids) expect(m).toBeGreaterThanOrEqual(512);
+  });
 });
 
 describe('secret-base spots', () => {

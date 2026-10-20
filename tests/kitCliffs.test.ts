@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { cliffFamily, isRocky, setRockIds, type CliffPlacement, type CliffRun } from '../src/render/kit/cliffs';
+import { cliffFamily, isRocky, setRockIds, setSeaRockIds, type CliffPlacement, type CliffRun } from '../src/render/kit/cliffs';
+import { luma } from '../src/render/kit/palette';
+import { SYM } from '../src/game/symbols';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
 import { NO_EVENTS, type GridEvents } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
-import { analyze, type MapAnalysis } from '../src/render/overworld/analyze';
+import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
 import { MB } from '../src/game/behaviors';
 import { emitLegacy } from '../src/render/overworld/legacyQuads';
@@ -38,16 +40,17 @@ describe('cliff extract', () => {
 
 /** BGR555 pixel of an sRGB colour given in 31sts. */
 const px = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
-const ROCK = px(22, 14, 10), ROCK2 = px(16, 10, 8), ASH = px(21, 21, 17), LEAF = px(10, 22, 8), NAVY = px(8, 9, 13);
+const ROCK = px(22, 14, 10), ROCK2 = px(16, 10, 8), ASH = px(21, 21, 17), LEAF = px(10, 22, 8), NAVY = px(8, 9, 13), WATER = px(10, 13, 26);
 
 /**
  * Synthetic outdoor map. Cells: '.' lowland (metatile 1, elevation 1), 'P' plateau (metatile 1,
  * elevation 3), '#' rock (metatile 2), 'r' darker rock (metatile 3), 'C' tree crown (4), 'k'
- * trunk on ash (5), 's' sign post (6), 'v' ledge jumping south (7), 'T' a tree (8). `paint`
- * colours the tiles.
+ * trunk on ash (5), 's' sign post (6), 'v' ledge jumping south (7), 'T' a tree (8), 'm' the
+ * lowland's own tile blocked (metatile 1: a mountain's top in the colour of its ground), 'w'
+ * water. `paint` colours the tiles.
  */
 function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void = () => {},
-  opts: { indoor?: boolean; underwater?: boolean; general?: boolean } = {}): MapAnalysis {
+  opts: { indoor?: boolean; underwater?: boolean; general?: boolean; secondary?: number; ids?: Record<string, number> } = {}): MapAnalysis {
   const info = fakeInfo();
   const fill = (m: number, c: number, n = 256) => { info.both.fill(c, m * 256, m * 256 + n); info.bottom.fill(c, m * 256, m * 256 + n); };
   fill(2, ROCK);
@@ -57,14 +60,27 @@ function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void 
   fill(6, ROCK);
   info.attributes[7] = MB.JUMP_SOUTH;
   fill(8, LEAF); info.green[8] = 0.7;
+  fill(10, WATER); info.attributes[10] = MB.DEEP_WATER; info.blue[10] = 1;
   paint(info);
-  const code: Record<string, number> = { '.': 1 | 0x1000, P: 1 | 0x3000, '#': 2 | 0x0400, r: 3 | 0x0400, C: 4 | 0x0400, k: 5 | 0x0400, s: 6 | 0x0400, v: 7 | 0x1000, T: 8 | 0x0400 };
+  const code: Record<string, number> = {
+    '.': 1 | 0x1000, P: 1 | 0x3000, '#': 2 | 0x0400, r: 3 | 0x0400, C: 4 | 0x0400, k: 5 | 0x0400, s: 6 | 0x0400, v: 7 | 0x1000, T: 8 | 0x0400,
+    m: 1 | 0x0400, w: 10 | 0x1000,
+  };
+  for (const [ch, m] of Object.entries(opts.ids ?? {})) code[ch] = m | 0x0400;
   const w = rows[0].length, h = rows.length;
   const cells = new Uint16Array(w * h);
   rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch]; }));
   return analyze({ width: w, height: h, cells, border: [1, 1, 1, 1], borderW: 2, borderH: 2, borderPhase: 0 },
-    { info, generalPrimary: opts.general ?? false, indoor: opts.indoor ?? false, underground: false, underwater: opts.underwater ?? false, margin: 0 });
+    { info, generalPrimary: opts.general ?? false, indoor: opts.indoor ?? false, underground: false, underwater: opts.underwater ?? false, margin: 0,
+      secondaryTileset: opts.secondary });
 }
+
+/** A mountain map's colours (Mt Chimney): its ground and the tops of its rock masses are one pink
+ *  tile (metatile 1), the faces dark red rock (metatiles 2, 3). */
+const PINK = px(26, 19, 17), FACE = px(16, 6, 4);
+const mountain = (info: ReturnType<typeof fakeInfo>) => {
+  for (const [m, c] of [[1, PINK], [2, FACE], [3, FACE]]) { info.both.fill(c, m * 256, (m + 1) * 256); info.bottom.fill(c, m * 256, (m + 1) * 256); }
+};
 
 const extract = (a: MapAnalysis, events: GridEvents = NO_EVENTS) => {
   const claims = new Claims(a.N);
@@ -81,6 +97,11 @@ describe('isRocky', () => {
   it('takes brown rock and the dark muted shadow side of a rock', () => {
     expect(tile(ROCK)).toBe(true);
     expect(tile(px(12, 8, 10))).toBe(true); // Route 113's mauve rock shade
+  });
+  it('rejects lava: far more saturated than any rock (Mt Chimney\'s crater)', () => {
+    expect(tile(px(25, 6, 0))).toBe(false); // (0.81, 0.19, 0): Mt Chimney's lava
+    expect(tile(px(16, 6, 4))).toBe(true); // (0.52, 0.19, 0.13): the dark red rock beside it
+    expect(tile(px(18, 10, 3))).toBe(true); // (0.58, 0.32, 0.1): Fallarbor's brown rock
   });
   it('rejects a navy window, foliage and grass', () => {
     expect(tile(NAVY)).toBe(false);
@@ -206,6 +227,256 @@ describe('cliff rules', () => {
   });
 });
 
+describe('mountains: rock masses topped in the colour of their ground', () => {
+  const runs = (p: CliffPlacement) => p.runs.map((r) => [r.x + 0, r.hB, r.topH, r.zf]);
+
+  it('makes a mass whose top is the ground\'s own tile a cliff, its top in the ground\'s look', () => {
+    // Mt Chimney: the pink rock top (metatile 1, blocked) is also the walkable ground around it
+    const a = map(['......', '.mmmm.', '.mmmm.', '.####.', '......'], mountain);
+    const { p, claims } = extract(a);
+    expect(runs(p)).toEqual([1, 2, 3, 4].map((x) => [x, 0, 1, 4]));
+    for (let x = 1; x <= 4; x++) {
+      for (const y of [1, 2]) {
+        expect(claims.bits[a.idx(x, y)]).toBe(CLAIM_OBJECT); // top rows: the terrain draws their ground
+        expect(claims.groundY[a.idx(x, y)]).toBe(1);
+        expect(claims.groundMt[a.idx(x, y)]).toBe(1); // the ground's tile, not the dark face
+      }
+      expect(claims.bits[a.idx(x, 3)]).toBe(CLAIM_OBJECT | CLAIM_SURFACE);
+    }
+  });
+
+  it('stacks a terraced mass: each band of face rows raises the tops above it', () => {
+    // (the upper face in another shade of the rock: one terraced mountain, one rock colour)
+    const shade = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.both.fill(px(20, 9, 6), 3 * 256, 4 * 256); };
+    const a = map(['......', '.mmmm.', '.rrrr.', '.mmmm.', '.####.', '......'], shade);
+    const { p, claims } = extract(a);
+    expect(runs(p)).toEqual([1, 2, 3, 4].flatMap((x) => [[x, 0, 1, 5], [x, 1, 2, 4]]));
+    for (const r of p.runs) expect(r.tint).toEqual(p.runs[0].tint);
+    for (let x = 1; x <= 4; x++) {
+      expect(claims.groundY[a.idx(x, 1)]).toBe(2);
+      expect(claims.groundY[a.idx(x, 3)]).toBe(1);
+      for (const y of [2, 4]) expect(claims.has(a.idx(x, y), CLAIM_SURFACE)).toBe(true);
+    }
+  });
+
+  it('makes a vertical strip of rock (a terrace\'s east edge) part of its top, not a step', () => {
+    // column 4's 'r' rows have no face beside them: a strip, as the edges of Route 112's terraces
+    const a = map(['......', '.mmmr.', '.mmmr.', '.####.', '......'], mountain);
+    const { p, claims } = extract(a);
+    expect(runs(p)).toEqual([1, 2, 3, 4].map((x) => [x, 0, 1, 4]));
+    for (const y of [1, 2]) expect(claims.groundY[a.idx(4, y)]).toBe(1);
+  });
+
+  it('counts a top in the ground\'s colour as rock in a face between two levels when it stands on rock', () => {
+    // a three-row face down from the plateau, its upper rows the pink top
+    const a = map(['PPPPPP', 'PmmmmP', 'PmmmmP', 'P####P', '......'], mountain);
+    expect(extract(a).p.runs.map((r) => [r.x + 0, r.hB, r.topH])).toEqual([1, 2, 3, 4].map((x) => [x, 0, 3]));
+  });
+
+  it('drops a terrace column whose lower band stands apart, and every band above it', () => {
+    // column 3's lowest face ends a row higher than its neighbours' (no wall to share); its upper
+    // band would match theirs, but must not float over the legacy art below it
+    const a = map(['.......', '.mmmmm.', '.#####.', '.mmmmm.', '.mm#mm.', '.##.##.', '.......'], mountain);
+    const { p, claims } = extract(a);
+    expect([...new Set(p.runs.map((r) => r.x + 0))]).toEqual([1, 2, 4, 5]);
+    for (let y = 1; y <= 4; y++) expect(claims.bits[a.idx(3, y)], `3,${y}`).toBe(0);
+  });
+
+  it('takes no 1-wide strip for a terrace, nor the short mass at its foot', () => {
+    // column 1 is a tall strip with mass beside it only at its foot (column 2's short terrace)
+    const { p, claims } = extract(map(['....', '.m..', '.m..', '.m..', '.mm.', '.##.', '....'], mountain));
+    expect(p.runs).toEqual([]);
+    expect(claims.bits.every((b) => b === 0)).toBe(true);
+  });
+
+  it('flattens a terrace band with no wall to share onto the band below it', () => {
+    // column 3's lower face is two rows tall: its upper band starts a level higher than its
+    // neighbours' and stands alone; its rows become the top of its lower band
+    const a = map(['.......', '.mmmmm.', '.#####.', '.mmmmm.', '.mm#mm.', '.#####.', '.......'], mountain);
+    const { p, claims } = extract(a);
+    expect(runs(p).filter((r) => r[0] === 3)).toEqual([[3, 0, 2, 6]]);
+    for (const x of [1, 2, 4, 5]) expect(runs(p).filter((r) => r[0] === x)).toEqual([[x, 0, 1, 6], [x, 1, 2, 4]]);
+    for (const y of [1, 2, 3]) {
+      expect(claims.bits[a.idx(3, y)]).toBe(CLAIM_OBJECT);
+      expect(claims.groundY[a.idx(3, y)]).toBe(2);
+    }
+  });
+
+  it('builds no tower: a face of more than three rows is no terrace step, but the flat top of the one below', () => {
+    // column 1-2's upper face is five rows tall (Route 112's zigzag of ridge edges in one column)
+    const a = map(['....', '.mm.', '.##.', '.##.', '.##.', '.##.', '.##.', '.mm.', '.##.', '....'], mountain);
+    const { p, claims } = extract(a);
+    expect(runs(p)).toEqual([[1, 0, 1, 9], [2, 0, 1, 9]]);
+    for (let y = 1; y <= 7; y++) {
+      expect(claims.bits[a.idx(1, y)], `1,${y}`).toBe(CLAIM_OBJECT);
+      expect(claims.groundY[a.idx(1, y)]).toBe(1);
+      expect(claims.groundMt[a.idx(1, y)]).toBe(1); // (the terrace's ground look)
+    }
+    // the same at the foot: no terrace at all (the old flat mass rule decides)
+    const b = map(['....', '.mm.', '.##.', '.##.', '.##.', '.##.', '....'], mountain);
+    expect(Math.max(...extract(b).p.runs.map((r) => r.topH - r.hB))).toBeLessThanOrEqual(3);
+  });
+
+  it('makes a face the run ends on (no top of its own) part of the top of the band below', () => {
+    const a = map(['......', '.####.', '.mmmm.', '.####.', '......'], mountain);
+    const { p, claims } = extract(a);
+    expect(runs(p)).toEqual([1, 2, 3, 4].map((x) => [x, 0, 1, 4]));
+    for (const y of [1, 2]) expect(claims.bits[a.idx(2, y)]).toBe(CLAIM_OBJECT);
+    expect(claims.groundY[a.idx(2, 1)]).toBe(1);
+  });
+
+  it('makes a mass top running off the map (nothing in front of it) ground, where legacy lays it flat', () => {
+    // rows 1-2 run to the map's edge: no foot, no face; legacy draws them flat at the level behind
+    // (n: a rim in the ground's colour, not itself a floor tile: it takes the floor's look)
+    const rim = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.both.fill(PINK, 11 * 256, 12 * 256); info.bottom.fill(PINK, 11 * 256, 12 * 256); };
+    const a = map(['......', 'PPPPPP', '.mmmm.', '.m##m.', '.nmmn.'], rim, { ids: { n: 11 } });
+    const { p, claims } = extract(a);
+    expect(p.runs).toEqual([]);
+    for (const x of [1, 4]) {
+      for (const y of [2, 3, 4]) {
+        expect(claims.bits[a.idx(x, y)], `${x},${y}`).toBe(CLAIM_OBJECT);
+        expect(claims.groundY[a.idx(x, y)]).toBe(a.height[a.idx(x, 1)]); // the level behind
+        expect(claims.groundMt[a.idx(x, y)]).toBe(1); // the ground's look
+      }
+    }
+    // a run holding a rock face is not ground (columns 2 and 3 keep their art)
+    for (const y of [2, 3, 4]) for (const x of [2, 3]) expect(claims.bits[a.idx(x, y)]).toBe(0);
+    // nor is a run standing on anything: here it ends above water, so it is a mass on the water,
+    // and (no face at its foot) not a cliff either
+    // (the level behind, not the nearest ground: here the sea beside it)
+    const c = map(['......', 'PPPPPP', 'wmmmmw', 'wmmmmw'], mountain);
+    expect(extract(c).claims.groundY[c.idx(2, 3)]).toBe(Math.max(0, c.height[c.idx(2, 1)]));
+    expect(c.groundH[c.idx(2, 3)]).toBeLessThan(0);
+    const b = map(['......', '.mmmm.', '.mmmm.', 'wwwwww'], mountain);
+    expect(extract(b).claims.bits.every((v) => v === 0)).toBe(true);
+    // a backdrop in water colours is no mountain top, even where it is also walked on (Sky Pillar's clouds)
+    const sky = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.both.fill(px(14, 23, 30), 256, 512); info.bottom.fill(px(14, 23, 30), 256, 512); };
+    expect(extract(map(['......', 'PPPPPP', '.mmmm.', '.mmmm.'], sky)).claims.bits.every((v) => v === 0)).toBe(true);
+  });
+
+  it('takes no rock art standing over other ground for a top (its ground layer shows another colour)', () => {
+    // 'm' looks like the pink top all over, but its ground layer is another colour (Route 134's rock
+    // ridges on a shoal: the rock is art over the shoal, and the terrain would draw shoal on top)
+    // (its rock in the top layer, drawn over sprites: art standing up)
+    const shoal = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.bottom.fill(px(19, 20, 23), 256, 512); info.topCover[1] = 200; };
+    const a = map(['......', '.mmmm.', '.####.', '......'], shoal);
+    expect(extract(a).p.runs).toEqual([]);
+  });
+
+  it('knows a tileset\'s listed rock tops even where the ground is another colour (Lavaridge Town)', () => {
+    // the town's ground is grass; its border is Lavaridge's pink rock top, running off the map
+    const grassy = (info: ReturnType<typeof fakeInfo>) => {
+      mountain(info);
+      info.both.fill(px(14, 24, 20), 256, 512); info.bottom.fill(px(14, 24, 20), 256, 512);
+      info.both.fill(PINK, 0x271 * 256, 0x272 * 256); info.bottom.fill(PINK, 0x271 * 256, 0x272 * 256);
+    };
+    const rows = ['......', 'TTTTTT', 'RRRRRR', 'RRRRRR'];
+    const at = (secondary: number) => map(rows, grassy, { secondary, ids: { R: 0x271 } });
+    const a = at(SYM.gTileset_Lavaridge);
+    const { claims } = extract(a);
+    for (let x = 0; x < 6; x++) for (const y of [2, 3]) {
+      expect(claims.bits[a.idx(x, y)], `${x},${y}`).toBe(CLAIM_OBJECT);
+      expect(claims.groundMt[a.idx(x, y)]).toBe(0x271);
+    }
+    expect(extract(at(SYM.gTileset_Rustboro)).claims.bits.every((v) => v === 0)).toBe(true);
+  });
+
+  it('still takes no ground-coloured rows over something that is not a rock face (a trunk, a boulder)', () => {
+    // the foot row is in the ground's colour too: trunks of a tree line, boulders on the ground
+    const trunk = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.both.fill(PINK, 5 * 256, 6 * 256); info.both.fill(ROCK, 5 * 256, 5 * 256 + 40); };
+    expect(extract(map(['......', '.mmmm.', '.mmmm.', '.kkkk.', '......'], trunk)).p.runs).toEqual([]);
+    // a face in the middle of the run is not its foot: the rows below it are not a mass standing there
+    expect(extract(map(['......', '.mmmm.', '.####.', '.mmmm.', '......'], mountain)).p.runs).toEqual([]);
+  });
+});
+
+describe('sea rocks', () => {
+  const rows = ['wwww', 'w##w', 'w##w', 'wSSw', 'wwww'];
+  const SEA = 0x17a;
+  const paint = (info: ReturnType<typeof fakeInfo>) => { info.both.fill(ROCK, SEA * 256, (SEA + 1) * 256); info.bottom.fill(ROCK, SEA * 256, (SEA + 1) * 256); };
+  const sea = () => map(rows, paint, { general: true, ids: { S: SEA } });
+
+  it('never makes a cliff of a General sea rock: it keeps its legacy art, and breaks the run above it', () => {
+    expect(extract(sea()).p.runs.length).toBe(2); // (as land rock: a 2-wide mass standing in the sea)
+    setSeaRockIds((m) => m === SEA);
+    try {
+      const a = sea();
+      const { p, claims } = extract(a);
+      expect(p.runs).toEqual([]);
+      expect(claims.bits.every((b) => b === 0)).toBe(true);
+      expect(isRocky(a, SEA)).toBe(false);
+      // (General ids only: the same id in a secondary tileset is something else)
+      expect(extract(map(rows, paint, { ids: { S: SEA } })).p.runs.length).toBe(2);
+    } finally {
+      setSeaRockIds(() => false);
+    }
+  });
+});
+
+describe('Sootopolis', () => {
+  // the crater's white rock top (also the walkways) and its grey-cream faces: paving colours, rock
+  // only by the Sootopolis table
+  const WHITE = px(30, 30, 29), CREAM = px(21, 21, 19);
+  const paint = (info: ReturnType<typeof fakeInfo>) => {
+    for (const [m, c] of [[1, WHITE], [0x2d9, WHITE], [0x2e1, CREAM]]) { info.both.fill(c, m * 256, (m + 1) * 256); info.bottom.fill(c, m * 256, (m + 1) * 256); }
+  };
+  const crater = (secondary: number) => map(['......', '.WWWW.', '.WWWW.', '.GGGG.', '......'], paint, { secondary, ids: { W: 0x2d9, G: 0x2e1 } });
+
+  it('makes the white crater rock 3D rock walls in its own white-cream colour', () => {
+    const a = crater(SYM.gTileset_Sootopolis);
+    const { p, claims } = extract(a);
+    expect(p.runs.map((r) => r.x + 0)).toEqual([1, 2, 3, 4]);
+    for (const r of p.runs) {
+      expect(luma(r.tint)).toBeGreaterThan(0.6); // not brown
+      expect(Math.abs(r.tint[0] - r.tint[2])).toBeLessThan(0.12);
+    }
+    expect(claims.groundMt[a.idx(1, 1)]).toBe(0x2d9); // the white walkway look on top
+    // keyed by tileset: the same ids in another secondary tileset are paving, not rock
+    expect(extract(crater(SYM.gTileset_Rustboro)).p.runs).toEqual([]);
+  });
+
+  it('makes a one-row crater wall between two walkways at one level a free-standing wall', () => {
+    const wall = (secondary: number) => map(['......', '.GGGG.', '......'], paint, { secondary, ids: { G: 0x2e1 } });
+    const a = wall(SYM.gTileset_Sootopolis);
+    const { p, claims } = extract(a);
+    expect(p.runs.map((r) => [r.x + 0, r.hB, r.topH, r.zf, !!r.wall])).toEqual([1, 2, 3, 4].map((x) => [x, 0, 1, 2, true]));
+    for (let x = 1; x <= 4; x++) expect(claims.bits[a.idx(x, 1)]).toBe(CLAIM_OBJECT | CLAIM_SURFACE);
+    // (only what a rock table lists: other one-row rock ridges stay legacy, as Mossdeep's)
+    expect(extract(map(['......', '.####.', '......'])).p.runs).toEqual([]);
+  });
+
+  it('takes listed crater rock that a door\'s flood fill swallowed, outside the building', () => {
+    // a house (D: its door, Z: its wall) whose door flood fill runs on into the crater wall beside it
+    const paintDoor = (info: ReturnType<typeof fakeInfo>) => {
+      paint(info);
+      for (const m of [0x20c, 0x209]) { info.both.fill(px(28, 25, 20), m * 256, (m + 1) * 256); info.bottom.fill(px(28, 25, 20), m * 256, (m + 1) * 256); }
+      info.attributes[0x20c] = MB.ANIMATED_DOOR;
+    };
+    // (more crater rock below: common tiles are terrain to the footprints, not the house's art)
+    const rows = ['..........', '.ZZZWWWWW.', '.ZDZGGGGG.', '..........', 'WWWWWWWWWW', 'WWWWWWWWWW', 'WWWWWWWWWW', 'GGGGGGGGGG', 'GGGGGGGGGG', 'GGGGGGGGGG', '..........'];
+    const a = map(rows, paintDoor, { secondary: SYM.gTileset_Sootopolis, ids: { W: 0x2d9, G: 0x2e1, Z: 0x209, D: 0x20c } });
+    expect(a.kind[a.idx(5, 2)]).toBe(K.Building); // (the flood fill took the crater rock)
+    const events: GridEvents = { warps: [{ x: 2, y: 2, dest: 'House' }], signs: [] };
+    // the buildings family modelled the house (its own cells)
+    const claims = new Claims(a.N);
+    for (const x of [1, 2, 3]) for (const y of [1, 2]) claims.claim(a.idx(x, y), CLAIM_OBJECT);
+    const p = cliffFamily.extract({ a, events, quality: 'medium' }, claims);
+    expect(p.runs.filter((r) => r.zf === 3).map((r) => r.x + 0)).toEqual([4, 5, 6, 7, 8]);
+    // a building left to the legacy art keeps all of its flood fill (legacy draws it as one)
+    expect(extract(a, events).p.runs.filter((r) => r.zf === 3)).toEqual([]);
+  });
+
+  it('leaves what the table does not list alone, whatever its colour: a house in the crater', () => {
+    // H: a decorative house's wall (no door, no warp) in a rock colour, standing in the crater rock
+    const paintHouse = (info: ReturnType<typeof fakeInfo>) => { paint(info); info.both.fill(ROCK, 0x209 * 256, 0x20a * 256); info.bottom.fill(ROCK, 0x209 * 256, 0x20a * 256); };
+    const a = map(['......', '.WWWW.', '.HHWW.', '.GGGG.', '......'], paintHouse, { secondary: SYM.gTileset_Sootopolis, ids: { W: 0x2d9, G: 0x2e1, H: 0x209 } });
+    const { p, claims } = extract(a);
+    expect(p.runs.map((r) => r.x + 0)).toEqual([3, 4]);
+    for (const x of [1, 2]) for (let y = 1; y <= 3; y++) expect(claims.bits[a.idx(x, y)], `${x},${y}`).toBe(0);
+    expect(isRocky(a, 0x209)).toBe(false);
+  });
+});
+
 describe('cliff build', () => {
   const kit = () => ({ uniforms: createKitUniforms(), quality: 'medium' as const, disposables: [] as { dispose(): void }[] });
   const build = (p: CliffPlacement) => cliffFamily.build(p, { a: map(['..']), events: NO_EVENTS, quality: 'medium' }, kit()) as THREE.Mesh;
@@ -264,6 +535,21 @@ describe('cliff build', () => {
     expect(face).toBeGreaterThan(0);
     expect(mesh.castShadow).toBe(true);
   });
+  it('builds a free-standing wall as a capped slab: a top over its thickness, a back, closed ends', () => {
+    const g = build({ runs: [{ ...run(3, 0, 1), wall: true }], sides: [], ledges: [] }).geometry;
+    const pos = g.getAttribute('position'), nor = g.getAttribute('normal');
+    let top = 0, back = 0, ends = 0;
+    for (let k = 0; k < pos.count; k++) {
+      if (nor.getY(k) === 1 && Math.abs(pos.getY(k) - 1) < 1e-6 && pos.getZ(k) < 6 - 0.2) top++;
+      if (nor.getZ(k) === -1) back++;
+      if (Math.abs(nor.getX(k)) === 1) ends++;
+    }
+    expect(top).toBeGreaterThan(0);
+    expect(back).toBeGreaterThan(0);
+    expect(ends).toBeGreaterThan(0);
+    for (let k = 0; k < pos.count; k++) expect(pos.getZ(k)).toBeGreaterThan(6 - 0.5); // (no wedge fins reaching back)
+  });
+
   it('builds nothing for an empty placement', () => {
     expect(cliffFamily.build({ runs: [], sides: [], ledges: [] }, { a: map(['..']), events: NO_EVENTS, quality: 'medium' }, kit())).toBeNull();
   });

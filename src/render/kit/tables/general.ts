@@ -5,7 +5,7 @@
 // posts, mailboxes, bushes or bollards (towns draw those with their own secondary tilesets); the
 // houses' "mailboxes" are the metal sign 0x003 beside their doors (props.ts tells them apart).
 
-import { setRockIds } from '../cliffs';
+import { setRockIds, setSeaRockIds } from '../cliffs';
 import { setPineIds } from '../trees';
 import { setFlowerIds } from '../flowers';
 
@@ -76,9 +76,7 @@ export const GENERAL_FENCE_SHAPES: ReadonlyMap<number, FenceShape> = new Map<num
 
 /**
  * Brown mountain rock on land: faces, tops, edges and corners of rock masses on grass, sand and
- * rock, the cone rocks and boulders. Not the rock standing in the sea (0x172-0x17f, 0x182, 0x184:
- * sea cliffs and 2x2 cone rocks): the cliffs would make square blocks of them, topped in the
- * water's colours, so they keep their legacy art.
+ * rock, the cone rocks and boulders. Not the rock standing in the sea (GENERAL_SEA_ROCK).
  */
 export const GENERAL_ROCK: ReadonlySet<number> = new Set<number>([
   ...range(0x068, 0x06d), ...range(0x070, 0x075), ...range(0x078, 0x07d),
@@ -86,6 +84,14 @@ export const GENERAL_ROCK: ReadonlySet<number> = new Set<number>([
   0x0a0, 0x0a2, 0x0a8, 0x0a9, 0x0aa,
   ...range(0x0b4, 0x0b7), 0x0be, 0x0bf, 0x0d7, 0x0db, 0x0dc, 0x0df, 0x0e7, 0x0ee, 0x0ef,
   ...GENERAL_BIG_ROCKS.flat(), ...BOULDERS,
+]);
+
+/** Brown rock standing in the sea: sea cliffs, their tops and 2x2 cone rocks drawn over water
+ *  (0x172-0x17f, 0x182, 0x184), and the rocks and low ridges on the shoals (0x157, 0x15e/0x15f,
+ *  0x166/0x167, 0x16e/0x16f, drawn over the shoal). The cliffs would make square blocks of them,
+ *  topped in the water's or the shoal's colours: they are never rock, and keep their legacy art. */
+export const GENERAL_SEA_ROCK: ReadonlySet<number> = new Set<number>([
+  ...range(0x172, 0x17f), 0x182, 0x184, 0x157, 0x15e, 0x15f, 0x166, 0x167, 0x16e, 0x16f,
 ]);
 
 /** The secret-base tree: a 2x2 conical tree (blocked bottom row, also its "open" variant; the
@@ -99,6 +105,7 @@ export const GENERAL_FLOWERS: ReadonlySet<number> = new Set<number>([0x004]);
 /** Hooks the tables into the families (ids are only consulted when the primary tileset is General). */
 export function installGeneralTables(): void {
   setRockIds((m) => GENERAL_ROCK.has(m));
+  setSeaRockIds((m) => GENERAL_SEA_ROCK.has(m));
   setPineIds((m) => GENERAL_PINE.has(m));
   setFlowerIds((m) => GENERAL_FLOWERS.has(m));
 }

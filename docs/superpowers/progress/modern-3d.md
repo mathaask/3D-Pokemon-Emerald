@@ -124,6 +124,23 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   124/127/133) as cliff boxes, despite their absence from `GENERAL_ROCK` (Task 14 above). The analysis'
   colour-guessed trees (secondary green blocks) in the column north of a warp are left to legacy art: they were
   Petalburg Woods' north exit, Mt Pyre's summit path and the Trainer Hill door's lintel.
+- Task 15b (cliffs.ts): the common-floor-colour veto is now a structural rule. A block tile in the ground's colour
+  (no foliage, not water-coloured, its ground layer showing that colour) is a mass *top*: rock only where its run
+  stands on a rock face. Free-standing masses topped so become **terraces** (from the foot up, each band of ≤ 3
+  face rows rises from the height reached, carrying the tops above it; vertical strips of face tiles are part of
+  the top; an unmatched band or a taller face flattens onto the band below), topped with the walkable ground's
+  tile. Block runs with nothing in front (running off the grid, into a tree or another model) made only of such
+  tops become kit ground at the level legacy lays them flat. Tables: `GENERAL_SEA_ROCK` (0x172–0x17f, 0x182,
+  0x184 and the shoal rocks 0x157, 0x15e/f, 0x166/7, 0x16e/f) is never rock and breaks runs; `SECONDARY_ROCK`
+  (Sootopolis' crater, the table decides: houses/railings in its colours are never rock; stray flood-fill crater
+  cells of a modelled building count; one-row crater walls between walkways at one level are free-standing capped
+  walls); `SECONDARY_ROCK_TOPS` (Lavaridge's pink top, whatever the ground's colour). Lava is no rock (saturation
+  > 0.6). **Coverage (all / map): Mt Chimney 89.9/72.7 → 44.6/65.9, Jagged Pass 81.1/41.3 → 21.5/39.5, Route 112
+  79.6/49.3 → 23.2/44.9, Route 111 62.0/30.1 → 15.5/28.8, Route 114 19.0/43.5 → 13.4/30.8, Sootopolis 77.6/51.8 →
+  25.2/34.7, Lavaridge 87.6/28.5 → 16.2/23.3; regression average 9.0 → 5.3 %; all 68 maps 12.7/16.2 → 7.9/15.7.**
+  Sea rocks: 0 cliff cells (was 392 + 124 on shoals); islets and coastline masses standing on them stay legacy
+  (Mossdeep 5.0 → 6.1). Still legacy: the in-map ridge fields of Mt Chimney / Route 112 (diagonal ridges whose
+  column stacks disagree; needs a 2D height solve), Sootopolis' N-S wall strips, rock 1-row walls elsewhere.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
