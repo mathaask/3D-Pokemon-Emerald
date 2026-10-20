@@ -191,7 +191,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   `groundLayerLook` (output identical to pre-16a on all 82 outdoor maps). **Status (final perf):** regress t16 max
   74 calls / 403,269 triangles (medium, 1280×800; budgets 150 / 1.5 M); GPU frame (timer queries, Intel iGPU,
   medium) Route 119 17.6 → 16.9 ms, Woods 18.9 → 17.8, Route 124 17.0 → 15.2; warm rebuild (`PreviewApp.rebuild()`,
-  as crossing a connection) ≤ 83 ms on every regression map + Ever Grande (Route 119 71, Ever Grande 57); the cold
+  as crossing a connection) is ≤ 83 ms steady-state (median of 5) on every regression map + Ever Grande (Route 119
+  71, Ever Grande 57), BUT the first 1–2 rebuilds after boot are 98–193 ms while the JIT warms up (Route 119
+  193/136, Littleroot 161/115) — the first map crossings of a session may hitch slightly (accepted; a boot-time
+  warm-up build would remove it). In Modern, interiors/caves/battles also get the gentler blur + softer shadows. The cold
   first build in a page (regress `buildMs`) is machine-state dominated on the dev laptop (same code: 41–134 ms in a
   quiet session, 88–245 ms under load; base vs Task 16 equal in interleaved A/B) — see task-16 report.
 
@@ -202,7 +205,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
 - [x] 5 semantic core · [x] 6 terrain · [x] 7 water (+6b terrain colour fix) · [x] 8 cliffs · [x] 9 trees · [x] 10 fade
 - [x] 11 grass/flowers · [x] 12 buildings I · [x] 13 buildings II (+13b walk-in specials) · [x] 14 table/props
-- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [x] 16a polish backlog · [ ] 16 polish/perf · [ ] 17 live check/docs
+- [x] 15 smoke/coverage · [x] 15b rock+mountains · [x] 15c town flowers · [x] 16a polish backlog · [x] 16 polish/perf · [ ] 17 live check/docs
 
 ## Phases
 - [ ] Phase 1 — Foundation + Outdoor environment
