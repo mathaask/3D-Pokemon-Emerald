@@ -27,6 +27,7 @@ import type { FlowerCell } from '../../src/render/kit/flowers';
 import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/tables/general';
 import { SECONDARY_FLOWERS, SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
 import { SYM } from '../../src/game/symbols';
+import { MB } from '../../src/game/behaviors';
 import { luma } from '../../src/render/kit/palette';
 
 const OUT = path.resolve(import.meta.dirname, '../../out');
@@ -138,6 +139,23 @@ describe('semantics on real maps', () => {
       expect(a.mt[i]).toBe(m);
       expect(trees[i] & CLAIM_OBJECT, `${x},${y}`).toBe(0);
     }
+  });
+
+  it("Fortree: its tree-top decks stand above the ground (spec §9.2)", () => {
+    const r = run(0, 4);
+    const cells = payload<TerrainPlacement>(r.ex, 'terrain').cells.filter((c) => inMap(r, c.i));
+    // the town's ground: its grass (all at one level)
+    const ground = cells.filter((c) => c.mat === GroundMat.Grass).map((c) => c.h).sort((p, q) => p - q);
+    expect(ground.length).toBeGreaterThan(300);
+    const level = ground[ground.length >> 1];
+    // the plank walkways between the treehouses (13-29 at row 4 at 1; the long bridge, row 14, at 2),
+    // but for the 4 cells where the long bridge crosses the path below it (30-33, 14): elevation 15,
+    // walkable over and under, which the analysis lays at the ground (as the legacy art did before)
+    const decks = cells.filter((c) => c.mat === GroundMat.Deck && r.a.beh[c.i] === MB.FORTREE_BRIDGE);
+    const over = decks.filter((c) => r.a.elev[c.i] !== 15);
+    expect(over.length).toBeGreaterThanOrEqual(20);
+    for (const c of over) expect(c.h, `${r.a.cellX(c.i)},${r.a.cellY(c.i)}`).toBeGreaterThan(level + 0.5);
+    expect(decks.length - over.length).toBe(4);
   });
 
   it("town flower beds are 3D flowers (Route 117, Verdanturf, Ever Grande; stairs too), and Dewford's bushes are none", () => {
