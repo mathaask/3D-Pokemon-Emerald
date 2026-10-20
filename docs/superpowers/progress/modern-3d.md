@@ -295,8 +295,17 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
   - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
 
 ## Next step
-- Phase 2 (characters, Pokémon, field objects — spec §6): write its plan in `docs/superpowers/plans/`, then execute.
-  Optional first: the Phase 1 follow-up above (terrain height solver v2; connected-map events done in Task 17b).
+- **Phase 2 in progress (started 2026-10-20)** on branch `phase2-characters` — user said "go for it" and asked for a
+  progress bar in every update. Workflow: plan → subagent-driven execution (same as Phase 1; only `opus` subagents
+  work on this deployment). The SDD ledger lives in `.superpowers/sdd/<plan>/progress.md` (gitignored) — read it first
+  after a reset; it is copied to `docs/superpowers/progress/phase2-sdd-ledger.md` when the phase ends.
+- After Phase 2: Phase 1 follow-up (terrain height solver v2 for mountain ridges), then Phase 3 (battles).
+
+## Phase 2 status
+- [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)
+- [ ] 1 live regress harness · [ ] 2 preview actors · [ ] 3 ActorLayer · [ ] 4 inflation field
+- [ ] 5 inflated actors · [ ] 6 xBR edges · [ ] 7 gfx mapping · [ ] 8 models I · [ ] 9 berry plants
+- [ ] 10 multi-piece sprites · [ ] 11 NPC fade · [ ] 12 perf/robustness/docs
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
