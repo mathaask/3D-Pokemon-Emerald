@@ -20,7 +20,7 @@ import type { BuildingPlacement, BuildingKind } from '../../src/render/kit/build
 import type { CliffPlacement } from '../../src/render/kit/cliffs';
 import type { WaterPlacement } from '../../src/render/kit/water';
 import type { TerrainPlacement } from '../../src/render/kit/terrain';
-import { GENERAL_SEA_ROCK } from '../../src/render/kit/tables/general';
+import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/tables/general';
 import { SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
 import { SYM } from '../../src/game/symbols';
 import { luma } from '../../src/render/kit/palette';
@@ -252,8 +252,13 @@ describe('semantics on real maps', () => {
       if (mapSpots) spotMaps++;
       // Brown rock standing in the sea is never a cliff box: it keeps its legacy art.
       const cliffs = ex!.added.get('cliffs')!;
+      // Nor is a shoal rock, whatever its size: no cliff cell right under a shoal rock's top (its own
+      // lower rows), nor standing on one.
+      const shoalTop = (x: number, y: number) => a.inside(x, y) && a.isGeneralId(a.mt[a.idx(x, y)]) && GENERAL_SHOAL_TOPS.has(a.mt[a.idx(x, y)]);
       for (let i = 0; i < a.N; i++) {
-        if (a.isGeneralId(a.mt[i]) && GENERAL_SEA_ROCK.has(a.mt[i]) && cliffs[i]) seaCliffs.push(`${m.name} ${a.cellX(i)},${a.cellY(i)}`);
+        if (!cliffs[i]) continue;
+        const x = a.cellX(i), y = a.cellY(i);
+        if ((a.isGeneralId(a.mt[i]) && GENERAL_SEA_ROCK.has(a.mt[i])) || shoalTop(x, y - 1) || shoalTop(x, y + 1)) seaCliffs.push(`${m.name} ${x},${y}`);
       }
       // No tree stands right in front of a warp's passage (Petalburg Woods' north exit, Mt Pyre's
       // summit path, the Trainer Hill door on Route 111). A fact about this ROM, not a guarantee of the

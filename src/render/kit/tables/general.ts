@@ -5,7 +5,7 @@
 // posts, mailboxes, bushes or bollards (towns draw those with their own secondary tilesets); the
 // houses' "mailboxes" are the metal sign 0x003 beside their doors (props.ts tells them apart).
 
-import { setRockIds, setSeaRockIds } from '../cliffs';
+import { setRockIds, setSeaRockIds, setShoalTopIds } from '../cliffs';
 import { setPineIds } from '../trees';
 import { setFlowerIds } from '../flowers';
 
@@ -86,14 +86,19 @@ export const GENERAL_ROCK: ReadonlySet<number> = new Set<number>([
   ...GENERAL_BIG_ROCKS.flat(), ...BOULDERS,
 ]);
 
+/** The tops of the rocks and low ridges on the shoals (drawn over the shoal). The rows under one are
+ *  that rock's own lower part, whatever their tiles: its edges and lower corners 0x166/0x167,
+ *  0x16e/0x16f, which are also the corners of coastal cliffs over the shoal (Mossdeep's, under land
+ *  rock: land rock there). */
+export const GENERAL_SHOAL_TOPS: ReadonlySet<number> = new Set<number>([0x157, 0x15e, 0x15f]);
+
 /** Brown rock standing in the sea: sea cliffs, their tops and 2x2 cone rocks drawn over water
- *  (0x172-0x17f, 0x182, 0x184), and the tops of the rocks and low ridges on the shoals (0x157,
- *  0x15e/0x15f; their edges and lower corners 0x166/0x167, 0x16e/0x16f are also the corners of
- *  coastal cliffs over the shoal, Mossdeep's: land rock). The cliffs would make square blocks of
+ *  (0x172-0x17f, 0x182, 0x184), and the shoal rocks' tops. The cliffs would make square blocks of
  *  them, topped in the water's or the shoal's colours: they are never rock, and keep their legacy
- *  art (a shoal rock's lower row alone is no mass either). */
+ *  art, with the rows under a shoal top. A land rock face standing on a sea cliff (not a shoal
+ *  rock) stands on the water behind it. */
 export const GENERAL_SEA_ROCK: ReadonlySet<number> = new Set<number>([
-  ...range(0x172, 0x17f), 0x182, 0x184, 0x157, 0x15e, 0x15f,
+  ...range(0x172, 0x17f), 0x182, 0x184, ...GENERAL_SHOAL_TOPS,
 ]);
 
 /** The secret-base tree: a 2x2 conical tree (blocked bottom row, also its "open" variant; the
@@ -108,6 +113,7 @@ export const GENERAL_FLOWERS: ReadonlySet<number> = new Set<number>([0x004]);
 export function installGeneralTables(): void {
   setRockIds((m) => GENERAL_ROCK.has(m));
   setSeaRockIds((m) => GENERAL_SEA_ROCK.has(m));
+  setShoalTopIds((m) => GENERAL_SHOAL_TOPS.has(m));
   setPineIds((m) => GENERAL_PINE.has(m));
   setFlowerIds((m) => GENERAL_FLOWERS.has(m));
 }

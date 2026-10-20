@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { cliffFamily, isRocky, setRockIds, setSeaRockIds, type CliffPlacement, type CliffRun } from '../src/render/kit/cliffs';
+import { cliffFamily, isRocky, setRockIds, setSeaRockIds, setShoalTopIds, type CliffPlacement, type CliffRun } from '../src/render/kit/cliffs';
 import { luma } from '../src/render/kit/palette';
 import { SYM } from '../src/game/symbols';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
@@ -430,6 +430,41 @@ describe('sea rocks', () => {
     withSeaRocks(() => {
       const a = sea(['wwwww', 'w###w', 'w###w', 'w#SSw', 'wwwww']);
       expect(extract(a).p.runs.map((r) => r.x + 0)).toEqual([1, 2, 3]);
+    });
+  });
+
+  // Shoal rocks: T a shoal rock's top (a sea rock), B its lower rows (rock that is also a coastal
+  // cliff's corner, Mossdeep's: not a sea rock itself)
+  const TOP = 0x15e, LOW = 0x16e;
+  const shoal = (rows: string[]) => map(rows, (info) => {
+    paint(info);
+    for (const m of [TOP, LOW]) { info.both.fill(ROCK, m * 256, (m + 1) * 256); info.bottom.fill(ROCK, m * 256, (m + 1) * 256); }
+  }, { general: true, ids: { S: SEA, T: TOP, B: LOW } });
+  const withShoals = (f: () => void) => {
+    setSeaRockIds((m) => m === SEA || m === TOP);
+    setShoalTopIds((m) => m === TOP);
+    try { f(); } finally { setSeaRockIds(() => false); setShoalTopIds(() => false); }
+  };
+
+  it('never boxes a shoal rock: the rows under its top are its own (a 2x3 boulder in the sea)', () => {
+    const rows = ['wwww', 'wTTw', 'wBBw', 'wBBw', 'wwww'];
+    withShoals(() => {
+      expect(extract(shoal(rows)).claims.bits.every((b) => b === 0)).toBe(true);
+      // a shoal formation stacked on another boulder: no box, and no coast on the lower top
+      expect(extract(shoal(['wwww', 'wTTw', 'wBBw', 'wBBw', 'wTTw', 'wBBw', 'wwww'])).claims.bits.every((b) => b === 0)).toBe(true);
+    });
+  });
+
+  it('takes no shoal top for a waterline: rock standing on one stays legacy', () => {
+    withShoals(() => expect(extract(shoal(['....', '.##.', '.##.', '.TT.', 'wwww'])).claims.bits.every((b) => b === 0)).toBe(true));
+  });
+
+  it('keeps a coastal cliff whose corners are shoal-rock pieces under land rock (Mossdeep)', () => {
+    withShoals(() => {
+      const a = shoal(['....', '.##.', '.BB.', '.BB.', 'wwww']);
+      const { p, claims } = extract(a);
+      expect(p.runs.map((r) => r.x + 0)).toEqual([1, 2]);
+      expect(claims.has(a.idx(1, 3), CLAIM_SURFACE)).toBe(true);
     });
   });
 

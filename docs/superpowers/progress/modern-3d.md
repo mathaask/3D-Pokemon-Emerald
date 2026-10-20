@@ -128,23 +128,25 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   (no foliage, not water-coloured, its ground layer showing that colour) is a mass *top*: rock only where its run
   stands on a rock face. Free-standing masses topped so become **terraces** (from the foot up, each band of ≤ 3
   face rows rises from the height reached, carrying the tops above it; vertical strips of face tiles are part of
-  the top; an unmatched band or a taller face flattens onto the band below), topped with the walkable ground's
-  tile. Block runs with nothing in front (running off the grid, into a tree or another model) made only of such
-  tops become kit ground at the level legacy lays them flat. Tables: `GENERAL_SEA_ROCK` (0x172–0x17f, 0x182,
-  0x184 and the shoal rocks 0x157, 0x15e/f, 0x166/7, 0x16e/f) is never rock and breaks runs; `SECONDARY_ROCK`
-  (Sootopolis' crater, the table decides: houses/railings in its colours are never rock; stray flood-fill crater
-  cells of a modelled building count; one-row crater walls between walkways at one level are free-standing capped
-  walls); `SECONDARY_ROCK_TOPS` (Lavaridge's pink top, whatever the ground's colour). Lava is no rock (saturation
-  > 0.6). **Coverage (all / map): Mt Chimney 89.9/72.7 → 44.6/65.9, Jagged Pass 81.1/41.3 → 21.5/39.5, Route 112
-  79.6/49.3 → 23.2/44.9, Route 111 62.0/30.1 → 15.5/28.8, Route 114 19.0/43.5 → 13.4/30.8, Sootopolis 77.6/51.8 →
-  25.2/34.7, Lavaridge 87.6/28.5 → 16.2/23.3; regression average 9.0 → 5.3 %; all 68 maps 12.7/16.2 → 7.9/15.7.**
-  Sea rocks: 0 cliff cells (was 392 + shoal-rock tops 0x157/0x15e/0x15f). A land face standing on a sea rock at
-  the waterline stands on the water behind it (the sea rock keeps its legacy card in front; walls at the water
-  line up at the waterline); islet tops on sea rocks stay legacy. Route 126 23.8 % in-map as before; Mossdeep
-  11.4 → 12.3 % in-map, exactly its 27 former sea-rock boxes (land cells 293 → 293). Terrace tops take each
-  cell's ground look. Still legacy: the in-map ridge fields of Mt Chimney / Route 112 (diagonal ridges whose
-  column stacks disagree; needs a 2D height solve — a known Phase 1 gap by ruling), Sootopolis' N-S wall strips,
-  rock 1-row walls elsewhere.
+  the top; an unmatched band or a taller face flattens onto the band below); each top cell takes the walkable
+  ground's look of its own tile. Block runs with nothing in front (running off the grid, into a tree or another
+  model) made only of such tops become kit ground at the level legacy lays them flat. Tables: `GENERAL_SEA_ROCK`
+  (the sea cliffs 0x172–0x17f, 0x182, 0x184 and the shoal-rock tops `GENERAL_SHOAL_TOPS` 0x157, 0x15e, 0x15f) is
+  never rock and breaks runs; the rows under a shoal top are that shoal rock's own and stay legacy too, whatever
+  their tiles (0x166/7, 0x16e/f are land rock elsewhere: Mossdeep's coastal corners under land rock). A land
+  face standing on a sea cliff (never a shoal top) at the waterline stands on the water behind it (the sea rock
+  keeps its legacy card in front; walls at the water line up at the waterline); islet tops on sea rocks stay
+  legacy. `SECONDARY_ROCK` (Sootopolis' crater, the table decides: houses/railings in its colours are never rock;
+  stray flood-fill crater cells of a modelled building count; one-row crater walls between walkways at one level
+  are free-standing capped walls, drawing only their visible faces); `SECONDARY_ROCK_TOPS` (Lavaridge's pink top,
+  whatever the ground's colour). Lava is no rock (saturation > 0.6). **Coverage (all / map): Mt Chimney 89.9/72.7
+  → 44.6/65.9, Jagged Pass 81.1/41.3 → 21.5/39.5, Route 112 79.6/49.3 → 23.2/44.9, Route 111 62.0/30.1 →
+  15.5/28.8, Route 114 19.0/43.5 → 13.4/30.8, Sootopolis 77.6/51.8 → 25.2/34.7, Lavaridge 87.6/28.5 → 16.2/23.3;
+  regression average 9.0 → 5.2 %; all 68 maps 12.7/16.2 → 7.8/15.6.** Sea rocks: 0 cliff cells on a sea-rock id,
+  under or on a shoal top (smoke-asserted on all maps). Route 126 23.8 % in-map as before; Mossdeep 11.4 → 12.3 %
+  in-map, exactly its 27 former sea-rock boxes (land cells 293 → 293). Still legacy: the in-map ridge fields of
+  Mt Chimney / Route 112 (diagonal ridges whose column stacks disagree; needs a 2D height solve — a known Phase 1
+  gap by ruling), Sootopolis' N-S wall strips, rock 1-row walls elsewhere.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

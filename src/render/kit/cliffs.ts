@@ -31,6 +31,9 @@ export function setRockIds(f: (m: number) => boolean): void { rockIds = f; }
 /** General ids of brown rock standing in the sea (set by the General table). */
 export let seaRockIds: (m: number) => boolean = () => false;
 export function setSeaRockIds(f: (m: number) => boolean): void { seaRockIds = f; }
+/** General ids of the tops of the rocks on the shoals (sea rocks too; set by the General table). */
+export let shoalTopIds: (m: number) => boolean = () => false;
+export function setShoalTopIds(f: (m: number) => boolean): void { shoalTopIds = f; }
 
 /** Tiles with this fraction of green pixels hold foliage (tree crowns, grass rims), not bare rock. */
 const FOLIAGE = 0.2;
@@ -54,6 +57,10 @@ const unlisted = (a: MapAnalysis, m: number) => m >= 512 && !(SECONDARY_ROCK.get
 
 /** Brown rock standing in the sea (General): never a cliff, it keeps its legacy art. */
 const isSeaRock = (a: MapAnalysis, m: number) => a.isGeneralId(m) && seaRockIds(m);
+/** The top of a rock on the shoals: the rows under it are that rock's own. */
+const isShoalTop = (a: MapAnalysis, m: number) => a.isGeneralId(m) && shoalTopIds(m);
+/** A sea cliff (not a shoal rock): rock meeting the water, a coast's waterline. */
+const isSeaCliff = (a: MapAnalysis, m: number) => isSeaRock(a, m) && !isShoalTop(a, m);
 
 /** Rock-looking metatile: brown/grey/beige or a muted dark rock shade, little foliage, not water.
  *  `dom`: its dominant lit colour, if already known. */
@@ -334,18 +341,20 @@ export const cliffFamily: Family<CliffPlacement> = {
         const L = e - y + 1;
         const bi = e + 1 < a.maxY ? idx(x, e + 1) : -1;
         const ai = y > a.minY ? idx(x, y - 1) : -1;
+        // (rows under a shoal rock's top are that rock's lower part: it stays legacy, whatever its size)
+        if (ai >= 0 && isShoalTop(a, a.mt[ai])) { y = e + 1; continue; }
         const mts: number[] = [];
         for (let r = y; r <= e; r++) mts.push(a.mt[idx(x, r)]);
-        // A coastline: a land rock face standing on a sea rock at the waterline stands on the water
+        // A coastline: a land rock face standing on a sea cliff at the waterline stands on the water
         // behind it (the sea rock keeps its legacy art in front). Land tops on a sea rock (an islet's)
         // are no face: they stay legacy with it.
-        const onSeaRock = bi >= 0 && kind[bi] === K.Block && isSeaRock(a, a.mt[bi]) && !claims.has(bi, CLAIM_OBJECT) &&
+        const onSeaRock = bi >= 0 && kind[bi] === K.Block && isSeaCliff(a, a.mt[bi]) && !claims.has(bi, CLAIM_OBJECT) &&
           role(mts[L - 1]) === Role.Face;
         const hB = walk(bi) ? Math.max(groundOf(bi), 0) : onSeaRock ? 0 : NaN;
         let line: number | undefined = bi >= 0 && kind[bi] === K.Water ? e : undefined;
         if (onSeaRock) {
           line = e + 1;
-          while (line + 1 < a.maxY && kind[idx(x, line + 1)] === K.Block && isSeaRock(a, a.mt[idx(x, line + 1)])) line++;
+          while (line + 1 < a.maxY && kind[idx(x, line + 1)] === K.Block && isSeaCliff(a, a.mt[idx(x, line + 1)])) line++;
         }
         let hA = walk(ai) ? Math.max(groundOf(ai), 0) : NaN;
         let above = walk(ai) ? a.mt[ai] : -1;

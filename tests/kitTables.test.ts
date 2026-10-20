@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { propFamily, blockRun, type PropPlacement } from '../src/render/kit/props';
 import {
-  GENERAL_BIG_ROCKS, GENERAL_FENCE_SHAPES, GENERAL_FLOWERS, GENERAL_PINE, GENERAL_PROPS, GENERAL_ROCK, GENERAL_SEA_ROCK, installGeneralTables,
+  GENERAL_BIG_ROCKS, GENERAL_FENCE_SHAPES, GENERAL_FLOWERS, GENERAL_PINE, GENERAL_PROPS, GENERAL_ROCK, GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS, installGeneralTables,
 } from '../src/render/kit/tables/general';
-import { isRocky } from '../src/render/kit/cliffs';
+import { cliffFamily, isRocky } from '../src/render/kit/cliffs';
 import { treeFamily } from '../src/render/kit/trees';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { disposeKit } from '../src/render/kit/semantics';
@@ -340,7 +340,9 @@ describe('General tables', () => {
   it('installs the sea rocks into the cliffs: brown rock standing in the sea is never rock', () => {
     for (const m of GENERAL_SEA_ROCK) expect(GENERAL_ROCK.has(m)).toBe(false);
     expect([0x172, 0x17a, 0x17f, 0x182, 0x184, 0x157, 0x15e, 0x15f].every((m) => GENERAL_SEA_ROCK.has(m))).toBe(true);
-    // (the shoal rocks' edges and lower corners are also the corners of coastal cliffs: land rock)
+    for (const m of GENERAL_SHOAL_TOPS) expect(GENERAL_SEA_ROCK.has(m)).toBe(true);
+    // (the shoal rocks' edges and lower corners are also the corners of coastal cliffs: land rock, but
+    // never under a shoal top: the cliffs leave the rows under one to the legacy art)
     expect([0x166, 0x167, 0x16e, 0x16f].some((m) => GENERAL_SEA_ROCK.has(m))).toBe(false);
     installGeneralTables();
     const a = world(['...'], {}, { general: true });
@@ -349,6 +351,17 @@ describe('General tables', () => {
     const b = world(['...'], {}, { general: false });
     b.info.both.fill(px(22, 14, 10), 0x17a * 256, 0x17b * 256);
     expect(isRocky(b, 0x17a)).toBe(true); // (a secondary tileset's 0x17a is not the sea rock)
+  });
+
+  it('installs the shoal tops: a shoal rock\'s lower rows are never a cliff, whatever their size', () => {
+    installGeneralTables();
+    // a 2x3 shoal boulder: its top (0x15e/0x15f) over two rows of rock (0x16e/0x16f)
+    const ids = { t: 0x15e, u: 0x15f, l: 0x16e, r: 0x16f };
+    const paint = (info: TileInfo) => { for (const m of [0x16e, 0x16f]) info.both.fill(px(22, 14, 10), m * 256, (m + 1) * 256); };
+    const a = world(['....', '.tu.', '.lr.', '.lr.', '....'], ids, { general: true, paint });
+    const claims = new Claims(a.N);
+    expect(cliffFamily.extract({ a, events: ev([]), quality: 'medium' }, claims).runs).toEqual([]);
+    for (let y = 1; y <= 3; y++) for (const x of [1, 2]) expect(claims.bits[a.idx(x, y)], `${x},${y}`).toBe(0);
   });
 
 });
