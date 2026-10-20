@@ -15,7 +15,7 @@ export interface InflateParams {
   sigma: number;
 }
 
-export const INFLATE: InflateParams = { amp: 1.0, cap: 9, window: 12, sigma: 1.25 }; // tuned in Task 5
+export const INFLATE: InflateParams = { amp: 3.0, cap: 9, window: 12, sigma: 2.0 }; // tuned in Task 5
 
 /** Height (sprite px) of the flattest-topped point: amp·sqrt(cap). */
 export const inflateMax = (p: InflateParams = INFLATE) => p.amp * Math.sqrt(p.cap);

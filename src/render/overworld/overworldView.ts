@@ -1,7 +1,7 @@
 // The 3D overworld: world mesh, sprite billboards, sky, sun/moon lighting, camera rig.
 
 import * as THREE from 'three';
-import { MAP_OFFSET, type GameState, type SpriteSnap } from '../../game/state';
+import { MAP_OFFSET, type GameState } from '../../game/state';
 import type { Mem } from '../../game/mem';
 import type { Bus } from '../../gba/bus';
 import { RomReader } from '../../game/rom/reader';
@@ -19,7 +19,7 @@ import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
 import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
-import { ActorLayer, type ActorFrame } from '../actors/actorLayer';
+import { ActorLayer, uprightFoot, type ActorFrame } from '../actors/actorLayer';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -117,6 +117,7 @@ export class OverworldView {
     heightAt: (x, y) => this.world.heightAt(x, y),
     hasGrassBlades: (x, y) => this.world.hasGrassBlades(x, y),
     cameraRight: this.cameraRight,
+    cameraPosition: this.camera.position,
     charLight: this.charLight,
   };
 
@@ -127,7 +128,7 @@ export class OverworldView {
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
-    this.actors = new ActorLayer(spriteAtlas, { field });
+    this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms });
     this.scene.add(this.world.group);
     this.scene.add(this.actors.group);
 
@@ -297,19 +298,14 @@ export class OverworldView {
     }
   }
 
-  private spriteHeight(_state: GameState, _s: SpriteSnap, cellX: number, cellY: number): number {
-    return this.world.heightAt(cellX + 0.5, cellY + 0.5);
-  }
-
+  /** The player's foot point: where the actor layer stands its sprite (the camera's target). */
   private playerWorld(state: GameState): THREE.Vector3 | null {
     const p = state.player;
     if (!p) return null;
     const s = state.sprites.find((sp) => sp.index === p.spriteId);
     if (!s) return null;
-    const fx = s.worldX / 16;
-    const fy = s.worldY / 16 - 0.5;
-    const h = this.spriteHeight(state, s, Math.floor(fx), Math.floor(fy));
-    return new THREE.Vector3(fx, h, fy + h);
+    const f = uprightFoot(s, this.actorFrame.heightAt);
+    return new THREE.Vector3(f.x, f.y, f.z);
   }
 
   private updateLighting(state: GameState): void {

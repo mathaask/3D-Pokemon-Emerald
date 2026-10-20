@@ -52,7 +52,8 @@ const FRAG = /* glsl */ `
   }
 `;
 
-const DEPTH_FRAG = /* glsl */ `
+/** Shadow-depth fragment of an alpha-tested atlas sprite (varying `vUv`): the cards' and the inflated actors' twins. */
+export const DEPTH_FRAG = /* glsl */ `
   #include <common>
   #include <packing>
   uniform sampler2D tAtlas;
@@ -146,6 +147,11 @@ export class Billboards {
 
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
 
+  /** Cards drawn (instances). */
+  get count(): number {
+    return this.geometry.instanceCount;
+  }
+
   set(list: BillboardSpec[], cameraRight: THREE.Vector3, light: THREE.Color): void {
     const n = Math.min(MAX, list.length);
     for (let i = 0; i < n; i++) {
@@ -169,12 +175,13 @@ const SHADOW_VERT = /* glsl */ `
   #include <fog_pars_vertex>
   attribute vec3 aFoot;
   attribute vec4 aSize;   // width, height, lift, flat
+  uniform float uScale;   // size multiplier (1 under cards)
   varying vec2 vLocal;
   varying float vFade;
   void main() {
     // Shrink and fade the shadow as the sprite lifts off the ground (jumps).
     float k = 1.0 / (1.0 + aSize.z * 0.8);
-    vec2 r = vec2(aSize.x * 0.42, aSize.x * 0.24) * k;
+    vec2 r = vec2(aSize.x * 0.42, aSize.x * 0.24) * k * uScale;
     vec3 p = aFoot + vec3(position.x * r.x * 2.0, 0.015, (position.y - 0.5) * r.y * 2.0);
     vLocal = vec2(position.x * 2.0, (position.y - 0.5) * 2.0);
     vFade = k * (aSize.w > 0.5 ? 0.0 : 1.0);
@@ -199,17 +206,21 @@ const SHADOW_FRAG = /* glsl */ `
   }
 `;
 
-/** Soft elliptical contact shadows under billboards (shares their instance buffers). */
+/**
+ * Soft elliptical contact shadows under sprites, sharing their instance buffers: under the cards
+ * (Billboards) or the inflated actors — any source of a 4-vertex quad with the aFoot / aSize
+ * instance attributes (aSize.w = 1 marks a flat decal, which gets none).
+ */
 export class BlobShadows {
   readonly mesh: THREE.Mesh;
   readonly material: THREE.ShaderMaterial;
 
-  constructor(source: Billboards) {
+  constructor(source: { geometryForShadows(): THREE.InstancedBufferGeometry }) {
     const g = source.geometryForShadows();
     this.material = new THREE.ShaderMaterial({
       vertexShader: SHADOW_VERT,
       fragmentShader: SHADOW_FRAG,
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uStrength: { value: 0.45 } }]),
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uStrength: { value: 0.45 }, uScale: { value: 1 } }]),
       transparent: true,
       depthWrite: false,
       fog: true,
@@ -221,5 +232,10 @@ export class BlobShadows {
 
   setStrength(v: number): void {
     this.material.uniforms.uStrength.value = v;
+  }
+
+  /** Size of the ellipse relative to the sprite's width (default 1). */
+  setScale(k: number): void {
+    this.material.uniforms.uScale.value = k;
   }
 }

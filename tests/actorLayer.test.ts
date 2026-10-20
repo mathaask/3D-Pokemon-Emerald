@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { SpriteKind, type SpriteClassifier } from '../src/game/spriteKinds';
 import type { GameState, SpriteSnap } from '../src/game/state';
-import { routeSprite, cardSpec, ActorLayer, type ActorFrame } from '../src/render/actors/actorLayer';
+import { routeSprite, cardSpec, uprightFoot, ActorLayer, type ActorFrame } from '../src/render/actors/actorLayer';
+import { inflateMax } from '../src/render/actors/inflateMath';
+import { createKitUniforms } from '../src/render/kit/materials';
 import { blankSprite } from '../src/render/previewActors';
 
 const slot = { u0: 0, v0: 0.0625, u1: 0.015625, v1: 0 };
@@ -34,6 +36,14 @@ describe('cardSpec', () => {
   });
   it('lifts jumping sprites by -y2', () => {
     expect(cardSpec(blankSprite({ worldX: 40, worldY: 64, y2: -8 }), SpriteKind.Upright, slot, () => 0).lift).toBe(0.5);
+  });
+  it('shares its upright foot with uprightFoot (the camera target)', () => {
+    const heightAt = (x: number, y: number) => x * 0.1 + y;
+    for (const p of [{ worldX: 40, worldY: 64 }, { worldX: 47, worldY: 71 }, { worldX: 33, worldY: 57 }]) {
+      const sp = blankSprite(p);
+      const c = cardSpec(sp, SpriteKind.Upright, slot, heightAt);
+      expect(uprightFoot(sp, heightAt)).toEqual({ x: c.footX, y: c.footY, z: c.footZ });
+    }
   });
 });
 
@@ -112,5 +122,55 @@ describe('ActorLayer', () => {
     kinds.set(0, SpriteKind.Flat);
     slots.set(0, slot);
     expect(layer.update(state([at(0)]), { ...frame('retro'), classifier: null })).toHaveLength(1);
+  });
+});
+
+describe('ActorLayer with inflated actors', () => {
+  const atlas = { slots: new Map([[0, slot], [1, slot]]), target: { texture: new THREE.Texture() } };
+  const state = { sprites: [blankSprite({ index: 0, worldX: 40, worldY: 64 }), blankSprite({ index: 1, worldX: 56, worldY: 64 })],
+    objects: [] } as unknown as GameState;
+  const frame: Omit<ActorFrame, 'style'> = {
+    classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Flat) } as unknown as SpriteClassifier,
+    heightAt: () => 0, hasGrassBlades: () => false,
+    cameraRight: new THREE.Vector3(1, 0, 0), charLight: new THREE.Color(1, 1, 1),
+  };
+
+  it('switching to Retro routes every sprite back to cards and empties the inflated mesh', () => {
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    layer.update(state, { ...frame, style: 'modern' });
+    expect(layer.counts()).toEqual({ cards: 1, inflated: 1, models: 0 });
+    layer.update(state, { ...frame, style: 'retro' });
+    expect(layer.counts()).toEqual({ cards: 2, inflated: 0, models: 0 });
+  });
+
+  it('hides the inflated mesh and its contact shadows in Retro', () => {
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const inflatedMeshes = () => (layer.group.children as THREE.Mesh[]).filter((m) => ['inflatedActors', 'contactShadows'].includes(m.name));
+    layer.update(state, { ...frame, style: 'modern' });
+    expect(inflatedMeshes().length).toBe(2);
+    expect(inflatedMeshes().every((m) => m.visible)).toBe(true);
+    layer.update(state, { ...frame, style: 'retro' });
+    expect(inflatedMeshes().every((m) => !m.visible)).toBe(true);
+  });
+
+  it('keeps the feet of inflated actors and puts Modern grass overlays in front of the displaced legs', () => {
+    const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const modern = layer.update(state, { ...grass, style: 'modern' }).map((p) => p.z);
+    expect(modern[0]).toBe(3.5);
+    expect(modern[1]).toBeCloseTo(3.5 + 0.06 + inflateMax() / 16);
+    const retro = layer.update(state, { ...grass, style: 'retro' }).map((p) => p.z);
+    expect(retro[1]).toBeCloseTo(3.56);
+  });
+
+  it('moves Modern grass overlays towards the eye along their view ray (they stay put on screen)', () => {
+    const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const eye = new THREE.Vector3(1, 9, 14);
+    const p = layer.update(state, { ...grass, style: 'modern', cameraPosition: eye })[1];
+    const card = new THREE.Vector3(3.5, 0, 3.56); // today's overlay placement
+    const moved = new THREE.Vector3(p.x, p.y, p.z).sub(card);
+    expect(moved.length()).toBeCloseTo(inflateMax() / 16);
+    expect(moved.normalize().dot(eye.clone().sub(card).normalize())).toBeCloseTo(1);
   });
 });
