@@ -12,6 +12,9 @@ import type { GridEvents } from '../src/render/kit/events';
 import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { Claims, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { MB } from '../src/game/behaviors';
+import { FAMILIES } from '../src/render/kit';
+import { emitLegacy } from '../src/render/overworld/legacyQuads';
+import type { TileInfo } from '../src/render/overworld/tileInfo';
 import { SYM } from '../src/game/symbols';
 import { fakeInfo } from './helpers/fakeMap';
 
@@ -66,7 +69,7 @@ const T = {
  * statue's head).
  */
 function world(rows: string[], legend: Record<string, number>,
-  opts: { general?: boolean; underwater?: boolean; open?: string; secondary?: number } = {}): MapAnalysis {
+  opts: { general?: boolean; underwater?: boolean; open?: string; secondary?: number; paint?: (info: TileInfo) => void } = {}): MapAnalysis {
   const info = fakeInfo();
   const fill = (m: number, c: number) => { info.both.fill(c, m * 256, m * 256 + 256); info.bottom.fill(c, m * 256, m * 256 + 256); };
   fill(GRASS, px(14, 24, 20));
@@ -80,6 +83,7 @@ function world(rows: string[], legend: Record<string, number>,
   for (const m of [...GENERAL_FENCE_SHAPES.keys()]) { fill(m, px(14, 24, 20)); info.both.fill(px(16, 16, 18), m * 256 + 64, m * 256 + 200); }
   for (const m of [0x0e0, ...GENERAL_BIG_ROCKS.flat()]) { fill(m, px(14, 24, 20)); info.both.fill(px(20, 14, 10), m * 256 + 40, m * 256 + 240); }
   fill(0x003, px(18, 18, 20));
+  opts.paint?.(info);
   const w = rows[0].length, h = rows.length;
   const cells = new Uint16Array(w * h);
   rows.forEach((r, y) => [...r].forEach((ch, x) => {
@@ -213,10 +217,6 @@ describe('props: fences and rocks', () => {
     expect(claims.bits.every((b) => b === 0)).toBe(true);
     // a boulder in such a row
     expect(props(world(['.....', '.....', 'hhEhh', '.....', '.....'], { h: T.hedge, E: 0x0e0 })).out).toEqual([]);
-    // the same with a secret-base tree in the row: no pine either
-    installGeneralTables();
-    const b = world(['......', '..pq..', 'hhLRhh', '......'], { L: 0x026, R: 0x027, p: 0x01e, q: 0x01f, h: T.hedge }, { open: 'pq' });
-    expect(treeFamily.extract({ a: b, events: ev([]), quality: 'medium' }, new Claims(b.N))).toEqual([]);
   });
 
   it('slopes a fence run beside a ramp', () => {
@@ -278,26 +278,41 @@ describe('props build', () => {
     expect(plain.children).toHaveLength(1);
   });
 
-  it('winds every face outward (front faces only are drawn)', () => {
-    for (const p of [
+  it('winds every face of every kind as its normal says, and rocks outward (front faces only are drawn)', () => {
+    const grey: [number, number, number] = [0.5, 0.5, 0.5];
+    const cases: PropPlacement[] = [
+      { kind: 'sign', x0: 0, x1: 0, y: 3, h: 0, color: grey, posts: 2 },
+      { kind: 'sign', x0: 0, x1: 0, y: 3, h: 0, color: [0.3, 0.2, 0.2], posts: 1 },
+      { kind: 'mailbox', x0: 0, x1: 0, y: 3, h: 0, color: grey },
+      { kind: 'lamp', x0: 0, x1: 0, y: 3, h: 0, color: grey },
+      { kind: 'rock', x0: 0, x1: 0, y: 3, h: 0, color: [0.5, 0.4, 0.3] },
       { kind: 'rock', x0: 0, x1: 1, y: 3, h: 0, color: [0.5, 0.4, 0.3], rows: 1 },
-      { kind: 'mailbox', x0: 0, x1: 0, y: 3, h: 0, color: [0.5, 0.5, 0.5] },
-      { kind: 'fenceMetal', x0: 0, x1: 3, y: 3, h: 0, color: [0.5, 0.5, 0.5], h1: 1 },
-    ] as PropPlacement[]) {
-      const mesh = propFamily.build([p], ctx, kit())!.children[0] as THREE.Mesh;
-      const pos = mesh.geometry.getAttribute('position');
-      const centre = new THREE.Box3().setFromBufferAttribute(pos as THREE.BufferAttribute).getCenter(new THREE.Vector3());
-      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
-      let inward = 0, faces = 0;
-      for (let i = 0; i < pos.count; i += 3) {
-        a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
-        n.subVectors(b, a).cross(c.clone().sub(a));
-        if (n.lengthSq() < 1e-10) continue; // (a degenerate half of a triangle written as a quad)
-        faces++;
-        if (p.kind === 'rock' && n.dot(a.clone().add(b).add(c).divideScalar(3).sub(centre)) < 0) inward++;
+      { kind: 'bush', x0: 0, x1: 0, y: 3, h: 0, color: [0.3, 0.6, 0.3] },
+      { kind: 'bollard', x0: 0, x1: 0, y: 3, h: 0, color: grey },
+      { kind: 'fenceMetal', x0: 0, x1: 3, y: 3, h: 0, color: grey, h1: 1 },
+      { kind: 'fenceWhite', x0: 0, x1: 0, y: 5, h: 0, color: [1, 1, 1], rows: 3, h1: 2, line: [0.2, 2.45, 0.2, 6] },
+      { kind: 'fenceWood', x0: 0, x1: 2, y: 3, h: 0, color: [0.5, 0.35, 0.2] },
+    ];
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), g = new THREE.Vector3(), n = new THREE.Vector3();
+    for (const p of cases) {
+      const meshes = propFamily.build([p], ctx, kit())!.children as THREE.Mesh[];
+      for (const mesh of meshes) {
+        const pos = mesh.geometry.getAttribute('position'), nor = mesh.geometry.getAttribute('normal');
+        const centre = new THREE.Box3().setFromBufferAttribute(pos as THREE.BufferAttribute).getCenter(new THREE.Vector3());
+        let faces = 0, against = 0, inward = 0;
+        for (let i = 0; i < pos.count; i += 3) {
+          a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+          g.subVectors(b, a).cross(c.clone().sub(a));
+          if (g.lengthSq() < 1e-12) continue; // (the degenerate half of a triangle written as a quad)
+          faces++;
+          // the stored (shading) normal of every corner agrees with the winding
+          for (const k of [i, i + 1, i + 2]) if (n.fromBufferAttribute(nor, k).dot(g) <= 0) against++;
+          if (p.kind === 'rock' && g.dot(a.clone().add(b).add(c).divideScalar(3).sub(centre)) < 0) inward++;
+        }
+        expect([p.kind, faces > 4]).toEqual([p.kind, true]);
+        expect([p.kind, against]).toEqual([p.kind, 0]);
+        expect([p.kind, inward]).toEqual([p.kind, 0]);
       }
-      expect(faces).toBeGreaterThan(10);
-      expect(inward).toBe(0);
     }
   });
 });
@@ -321,17 +336,64 @@ describe('General tables', () => {
     expect(isRocky(b, 0x079)).toBe(false);
   });
 
-  it('makes the secret-base tree one pine between its two columns', () => {
-    installGeneralTables();
-    const a = world(['......', '..pq..', '..LR..', '......'], { L: 0x026, R: 0x027, p: 0x01e, q: 0x01f }, { open: 'pq' });
-    // (its top row is walkable crown overhang)
-    const top = (x: number) => { const i = a.idx(x, 1); a.info.topCover[a.mt[i]] = 128; };
-    top(2); top(3);
+});
+
+describe('secret-base spots', () => {
+  it('no family models or claims one: a cave hole in a rock mass, a secret-base tree, a shrub, an opened hole', () => {
+    // A rock mass with a cave hole in it (H), the secret-base tree (bottom L Q, crown overhang p q)
+    // beside a real tree (N), a shrub spot (s: the analysis takes it for a tree), an opened hole (o,
+    // walkable); and spots on tiles other families would take: a boulder of the props table (b), a
+    // wall cell of a house (Z).
+    const HOLE = 0x1a0, OPEN = 0x1a1, SHRUB = 0x271, WALLSPOT = 0x272, LEAF = px(8, 22, 6);
+    const rows = [
+      '............',
+      '.#####.pq...',
+      '.##H##.LQN..',
+      '.#####......',
+      '............',
+      '..s....o..b.',
+      '............',
+      '.RRR........',
+      '.WDZ........',
+      '............',
+    ];
+    const legend = { '#': T.rock, H: HOLE, L: 0x026, Q: 0x027, p: 0x01e, q: 0x01f, N: 0x0c7, s: SHRUB, o: OPEN, b: 0x0e2,
+      R: T.roof, W: T.wall, D: T.door, Z: WALLSPOT };
+    const a = world(rows, legend, {
+      open: 'pqo',
+      paint: (info) => {
+        const fill = (m: number, c: number) => { info.both.fill(c, m * 256, m * 256 + 256); info.bottom.fill(c, m * 256, m * 256 + 256); };
+        fill(HOLE, px(4, 3, 3)); fill(OPEN, px(4, 3, 3));
+        for (const m of [0x026, 0x027, 0x01e, 0x01f, 0x0c7, SHRUB]) fill(m, LEAF);
+        info.green[0x0c7] = 1; info.green[SHRUB] = 0.9;
+        info.topCover[0x01e] = 128; info.topCover[0x01f] = 128;
+        info.attributes[HOLE] = MB.SECRET_BASE_SPOT_RED_CAVE; info.attributes[OPEN] = MB.SECRET_BASE_SPOT_RED_CAVE_OPEN;
+        info.attributes[0x026] = MB.SECRET_BASE_SPOT_TREE_LEFT; info.attributes[0x027] = MB.SECRET_BASE_SPOT_TREE_RIGHT;
+        info.attributes[SHRUB] = MB.SECRET_BASE_SPOT_SHRUB;
+        info.attributes[0x0e2] = MB.SECRET_BASE_SPOT_BROWN_CAVE;
+        fill(WALLSPOT, px(28, 25, 20)); info.attributes[WALLSPOT] = MB.SECRET_BASE_SPOT_SHRUB_OPEN;
+      },
+    });
+    expect(a.kind[a.idx(2, 5)]).toBe(K.Tree); // (the shrub, for the analysis)
+    const spots = [[3, 2], [7, 2], [8, 2], [2, 5], [7, 5], [10, 5], [3, 8]];
+    // the secret-base tree's crown, drawn over the walkable cells above it (their ground is the
+    // terrain's, as under any overhang; the crown card stays)
+    const covered = [[7, 1], [8, 1]];
     const claims = new Claims(a.N);
-    const trees = treeFamily.extract({ a, events: ev([]), quality: 'medium' }, claims);
-    expect(trees).toHaveLength(1);
-    expect(trees[0]).toMatchObject({ style: 'pine', x: 3 });
-    expect(claims.has(a.idx(2, 2), CLAIM_OBJECT) && claims.has(a.idx(3, 2), CLAIM_OBJECT)).toBe(true);
-    expect(claims.has(a.idx(2, 1), CLAIM_TOP)).toBe(true);
+    const ctx = { a, events: ev([[2, 8, 'LittlerootTown_BrendansHouse_1F']]), quality: 'medium' as const };
+    const payload = new Map<string, unknown>();
+    for (const f of FAMILIES) payload.set(f.name, f.extract(ctx, claims));
+    for (const [x, y] of spots) expect([x, y, claims.bits[a.idx(x, y)]]).toEqual([x, y, 0]);
+    for (const [x, y] of covered) expect([x, y, claims.bits[a.idx(x, y)] & (CLAIM_OBJECT | CLAIM_TOP)]).toEqual([x, y, 0]);
+    // the rock around the hole is still 3D (two columns either side); the hole's column is not
+    const runs = (payload.get('cliffs') as { runs: { x: number }[] }).runs.map((r) => r.x);
+    expect(runs).toEqual(expect.arrayContaining([1, 2, 4, 5]));
+    expect(runs).not.toContain(3);
+    expect((payload.get('trees') as { x: number; z: number }[]).every((t) => t.x > 8.5)).toBe(true); // (only the real tree)
+    expect((payload.get('buildings') as { x0: number; x1: number }[])).toMatchObject([{ x0: 1, x1: 2 }]); // (the house, less its spot)
+    // and the legacy art draws them (the shrub as a tree card)
+    const legacy = emitLegacy(a, claims);
+    const drawn = new Set([...legacy.quads, ...legacy.trees].map((q) => q.metatile));
+    for (const m of [HOLE, OPEN, 0x026, 0x027, SHRUB]) expect(drawn.has(m)).toBe(true);
   });
 });

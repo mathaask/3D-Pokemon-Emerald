@@ -89,7 +89,9 @@ export const GENERAL_ROCK: ReadonlySet<number> = new Set<number>([
 ]);
 
 /** The secret-base tree: a 2x2 conical tree (blocked bottom row, also its "open" variant; the
- *  walkable top row is its crown's overhang). */
+ *  walkable top row is its crown's overhang), the tileset's only conifer. Its bottom row is a
+ *  secret-base spot, which no family models (semantics.ts isSecretBaseSpot): it keeps its legacy
+ *  art, so the trees never meet these ids today. */
 export const GENERAL_PINE: ReadonlySet<number> = new Set<number>([0x01e, 0x01f, 0x026, 0x027, 0x036, 0x037]);
 
 export const GENERAL_FLOWERS: ReadonlySet<number> = new Set<number>([0x004]);

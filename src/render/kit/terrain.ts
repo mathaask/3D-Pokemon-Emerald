@@ -11,7 +11,7 @@ import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import { classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
 import { bladeColor, GRASS_BEHAVIORS } from './grass';
 import { kitMaterial } from './materials';
-import type { Family, SemanticContext, KitContext } from './semantics';
+import { isSecretBaseSpot, type Family, type SemanticContext, type KitContext } from './semantics';
 
 export const enum GroundMat { Grass = 0, Path = 1, Sand = 2, Paving = 3, Dirt = 4, Gravel = 5, Rock = 6, Deck = 7, Dark = 8 }
 
@@ -172,7 +172,7 @@ export const terrainFamily: Family<TerrainPlacement> = {
       const walk = k === K.Floor || k === K.Stairs || k === K.Ledge;
       const under = claims.has(i, CLAIM_OBJECT);
       if (!walk && !under) continue;
-      if (!under && isStructure(a.beh[i])) continue;
+      if (!under && (isStructure(a.beh[i]) || isSecretBaseSpot(a, i))) continue;
       let h: number;
       let m: number;
       let shade = 1;

@@ -3,6 +3,7 @@
 // and its cells render with the legacy pixel geometry.
 
 import * as THREE from 'three';
+import { MB } from '../../game/behaviors';
 import type { MapAnalysis } from '../overworld/analyze';
 import { Claims } from '../overworld/claims';
 import type { GridEvents } from './events';
@@ -31,6 +32,16 @@ export interface Family<P> {
 }
 
 export interface FamilyReport { name: string; ok: boolean; error?: string }
+
+/**
+ * A secret-base spot: the cave hole, shrub or tree (closed, or opened by Secret Power) where the
+ * player opens a secret base — a gameplay cue, recognised by its metatile behaviour (every secret-
+ * base bg event stands on one). No family may model or claim it: it keeps its legacy art, and model
+ * runs (cliff faces, tree runs, prop columns, footprints) break around it.
+ */
+export function isSecretBaseSpot(a: MapAnalysis, i: number): boolean {
+  return a.beh[i] >= MB.SECRET_BASE_SPOT_RED_CAVE && a.beh[i] <= MB.SECRET_BASE_SPOT_TREE_RIGHT_OPEN;
+}
 
 export interface Extracted {
   claims: Claims;

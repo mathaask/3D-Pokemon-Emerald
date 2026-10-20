@@ -7,6 +7,7 @@ import { createKitUniforms } from '../src/render/kit/materials';
 import { analyze, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
 import { MB } from '../src/game/behaviors';
+import { emitLegacy } from '../src/render/overworld/legacyQuads';
 
 // A plateau (rows 0-1) above a two-row rock face (rows 2-3) above lowland (rows 4-5).
 function plateau() {
@@ -89,6 +90,21 @@ describe('isRocky', () => {
 });
 
 describe('cliff rules', () => {
+  it('breaks a face at a secret-base hole: the hole and the rock above it keep their legacy art', () => {
+    // a two-row face between the plateau and the lowland, with a cave hole ('r') in its foot row
+    const rows = ['PPPPP', 'PPPPP', '#####', '##r##', '.....', '.....'];
+    const hole = (info: ReturnType<typeof fakeInfo>) => { info.attributes[3] = MB.SECRET_BASE_SPOT_RED_CAVE; };
+    const a = map(rows, hole);
+    const { p, claims } = extract(a);
+    expect(claims.bits[a.idx(2, 3)]).toBe(0);
+    expect(claims.bits[a.idx(2, 2)]).toBe(0); // (no foot: its column is the legacy art's)
+    expect(p.runs.map((r) => r.x + 0)).toEqual([0, 1, 3, 4]);
+    const drawn = emitLegacy(a, claims).quads.filter((q) => q.metatile === 3);
+    expect(drawn.length).toBeGreaterThan(0);
+    // the same tile without the spot's behaviour is rock like the rest
+    expect(extract(map(rows)).p.runs.map((r) => r.x + 0)).toEqual([0, 1, 2, 3, 4]);
+  });
+
   it('leaves a block mass standing on a door to the legacy art (an undetected building)', () => {
     const rows = ['......', '.####.', '.####.', '.####.', '......', '......'];
     expect(extract(map(rows)).p.runs.length).toBe(4); // as a rock mass without the door

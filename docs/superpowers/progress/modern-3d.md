@@ -101,9 +101,11 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   are its own tileset's (post 0x21a, lantern overhang 0x212/0x213 above) — `tables/secondary.ts`, keyed by the
   secondary tileset's address (`ClassifyOptions.secondaryTileset`). NARROW_TREE holds fence posts (0x132/0x133/0x139)
   and the cone rock's top (0x083/0x084); the props take them. The height solver reads any blocked row between two
-  walkable areas as a one-level face (Route 110's islet: sign + secret-base tree): props and pines skip such steps.
+  walkable areas as a one-level face (Route 110's islet: sign + secret-base tree): props skip such steps.
   Brown rock standing in the sea (0x172–0x17f, 0x182, 0x184) stays out of `GENERAL_ROCK` (the cliffs made square
-  blocks with water-coloured tops of it).
+  blocks with water-coloured tops of it). Secret-base spots (behaviours 0x90–0x9d: cave holes, shrubs, the
+  secret-base tree; 75 cells, each under a secret-base bg event) are a gameplay cue: `isSecretBaseSpot` (semantics.ts)
+  keeps every family off them (cliff/tree runs break there) so they stay legacy art.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

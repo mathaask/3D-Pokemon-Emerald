@@ -20,7 +20,7 @@ import { doorStructures } from './cliffs';
 import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';
 import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 export type TreeStyle = 'round' | 'bushy' | 'pine' | 'palm';
 export interface TreePlacement {
@@ -117,15 +117,6 @@ function borderForest(a: MapAnalysis, stray: Uint8Array): Set<number> | null {
 
 const isTreeAt = (tree: Uint8Array, a: MapAnalysis, x: number, y: number) => a.inside(x, y) && tree[a.idx(x, y)] === 1;
 
-/** A blocked cell the analysis made a step between two levels: walkable ground north and south of
- *  it at different heights (it reads any short blocked run between two walkable areas as a terrace
- *  face). The legacy art keeps such a face. */
-function levelStep(a: MapAnalysis, i: number): boolean {
-  const walk = (j: number) => j >= 0 && j < a.N && (a.kind[j] === K.Floor || a.kind[j] === K.Stairs) && !Number.isNaN(a.height[j]);
-  const n = i - a.GW, s = i + a.GW;
-  return walk(n) && walk(s) && Math.abs(Math.max(0, a.height[n]) - Math.max(0, a.height[s])) > 0.5;
-}
-
 /**
  * Ground under each tree cell: the metatile of the nearest plain walkable floor (breadth-first
  * through the tree cells; -1 where none is reachable). The analysis' ground reference may be the
@@ -166,8 +157,6 @@ const CHUNK = 8;
 const SMALL_ROUND = 0.6;
 /** Size of the trees kept in a thinned forest interior (every other one, so the canopy closes). */
 const INTERIOR = 1.45;
-/** Size of a 2-wide conifer drawn by the General table's tiles (the secret-base tree). */
-const PINE_PAIR = 1.3;
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 
@@ -425,9 +414,6 @@ export const treeFamily: Family<TreePlacement[]> = {
     const round = new Uint8Array(a.N);
     for (let i = 0; i < a.N; i++) {
       if (kind[i] === K.Tree && !claims.has(i, CLAIM_OBJECT)) { tree[i] = 1; round[i] = a.roundTree[i]; }
-      // the General table's conifers drawn on blocked cells (the secret-base tree's bottom row)
-      else if (kind[i] === K.Block && a.isGeneralId(mt[i]) && pineIds(mt[i]) && !structure[i] && !claims.has(i, CLAIM_OBJECT) &&
-        !levelStep(a, i)) tree[i] = 1;
     }
     const forest = borderForest(a, stray);
     if (forest) {
@@ -477,12 +463,20 @@ export const treeFamily: Family<TreePlacement[]> = {
       }
     }
     for (const j of halves) tree[j] = 1;
+    // (a secret-base spot, a shrub or tree the player opens a base in, keeps its legacy art: it
+    // breaks the tree runs, and its crown drawn on the cell above stays too)
+    const spotBelow = new Uint8Array(a.N);
+    for (let i = 0; i < a.N; i++) {
+      if (!isSecretBaseSpot(a, i)) continue;
+      tree[i] = 0;
+      if (i >= a.GW) spotBelow[i - a.GW] = 1;
+    }
 
     const floor = forestFloor(a, tree);
     // Crown art overhanging the walkable cells around a tree (top-layer leaves; not grass tufts):
     // the 3D crowns replace it.
     for (let i = 0; i < a.N; i++) {
-      if (kind[i] !== K.Floor || !a.hasTop(i) || GRASS.has(a.beh[i]) || st(mt[i])[LEAF_N] < MIN_LEAF) continue;
+      if (kind[i] !== K.Floor || !a.hasTop(i) || GRASS.has(a.beh[i]) || st(mt[i])[LEAF_N] < MIN_LEAF || spotBelow[i]) continue;
       const x = a.cellX(i), y = a.cellY(i);
       let near = false;
       for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (isTreeAt(tree, a, x + dx, y + dy)) { near = true; break; }
@@ -577,12 +571,6 @@ export const treeFamily: Family<TreePlacement[]> = {
         if (!single[i] || done[i]) continue;
         const base = single[i] - 1;
         const m = mt[i];
-        // the General table's 2-wide conifer (the secret-base tree): one pine between its columns
-        if (x + 1 < a.maxX && single[i + 1] && !done[i + 1] && a.isGeneralId(m) && pineIds(m) && pineIds(mt[i + 1])) {
-          done[i] = done[i + 1] = 1;
-          place(x + 1, k, Math.max(base, single[i + 1] - 1), 'pine', [[x, k], [x + 1, k], [x, k - 1], [x + 1, k - 1]], PINE_PAIR);
-          continue;
-        }
         if (x + 1 < a.maxX && single[i + 1] && !done[i + 1] && !a.isGeneralId(m)) {
           const ls = st(m), rs = st(mt[i + 1]);
           if (ls[LEAF_N] >= MIN_LEAF && rs[LEAF_N] >= MIN_LEAF && leafCx(ls) >= 8.5 && leafCx(rs) <= 6.5) {

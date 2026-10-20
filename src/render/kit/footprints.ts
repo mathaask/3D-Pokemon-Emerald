@@ -5,6 +5,7 @@
 import { MB } from '../../game/behaviors';
 import { DOOR_BEHAVIORS, K, WATER_BEHAVIORS, type MapAnalysis } from '../overworld/analyze';
 import type { GridEvents } from './events';
+import { isSecretBaseSpot } from './semantics';
 import type { RGB } from './palette';
 
 export type BuildingKind = 'house' | 'pc' | 'mart' | 'gym' | 'lab' | 'special';
@@ -134,7 +135,7 @@ function computeLayout(a: MapAnalysis, events: GridEvents): BuildingLayout {
   /** Blocked-door buildings: blocked cells, their non-terrain art. */
   const plain: Look = {
     blocked,
-    art: (x, y) => blocked(x, y) && !isTerrain(mt[idx(x, y)]),
+    art: (x, y) => blocked(x, y) && !isTerrain(mt[idx(x, y)]) && !isSecretBaseSpot(a, idx(x, y)),
     enclosed: (x, y) => walledIn(x, y, (i) => !walkable(i)),
     green: (x, y) => a.info.green[mt[idx(x, y)]],
     open: walkable,
@@ -389,7 +390,7 @@ function walkInDoors(a: MapAnalysis, events: GridEvents, walkable: (i: number) =
     return s;
   };
   /** Its art: no terrain, and no foliage (a bush or hedge beside or before it). */
-  const art = (x: number, y: number) => blocked(x, y) && !isTerrain(mt[idx(x, y)]) && green(x, y) < FOLIAGE;
+  const art = (x: number, y: number) => blocked(x, y) && !isTerrain(mt[idx(x, y)]) && green(x, y) < FOLIAGE && !isSecretBaseSpot(a, idx(x, y));
   const doors = new Set<number>();
   const cells: [number, number][] = [];
   for (const w of events.warps) {

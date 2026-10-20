@@ -12,7 +12,7 @@ import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation
 import { hashCell, noise2, QuadWriter, type V3 } from './geom';
 import { kitMaterial } from './materials';
 import { cellLook, GroundMat, type CellLook } from './terrain';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 /** A face column: a vertical wall at Z = zf from its foot hB up to topH (X from x to x + 1). */
 export interface CliffRun { x: number; zf: number; hB: number; topH: number; tint: RGB; lip: RGB | null }
@@ -149,7 +149,8 @@ export const cliffFamily: Family<CliffPlacement> = {
     // Sign posts stand on the ground in front of a wall: the ground, for the run above them.
     const sign = new Uint8Array(a.N);
     for (const s of events.signs) if (inside(s.x, s.y) && kind[idx(s.x, s.y)] === K.Block) sign[idx(s.x, s.y)] = 1;
-    const isBlock = (i: number) => kind[i] === K.Block && !claims.has(i, CLAIM_OBJECT) && !structure[i] && !sign[i];
+    // (a secret-base spot breaks a run: the hole in the rock keeps its legacy art)
+    const isBlock = (i: number) => kind[i] === K.Block && !claims.has(i, CLAIM_OBJECT) && !structure[i] && !sign[i] && !isSecretBaseSpot(a, i);
     const walk = (i: number) => i >= 0 && (kind[i] === K.Floor || kind[i] === K.Stairs || kind[i] === K.Water || kind[i] === K.Ledge || sign[i] === 1);
     /** Ground height of a walkable cell (a sign's: the ground it stands on). */
     const groundOf = (i: number) => (sign[i] ? a.groundH[i] : height[i]);

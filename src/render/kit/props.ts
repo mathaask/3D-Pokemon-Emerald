@@ -21,7 +21,7 @@ import { isRocky } from './cliffs';
 import { buildingKind, buildingLayout } from './footprints';
 import { GENERAL_BIG_ROCKS, GENERAL_FENCE_SHAPES, GENERAL_PROPS, type FenceShape, type PropKind } from './tables/general';
 import { SECONDARY_PROPS } from './tables/secondary';
-import type { Family, KitContext, SemanticContext } from './semantics';
+import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 export interface PropPlacement {
   kind: PropKind;
@@ -138,7 +138,7 @@ export const propFamily: Family<PropPlacement[]> = {
     const tableKind = (i: number) => (a.isGeneralId(mt[i]) ? GENERAL_PROPS.get(mt[i]) : mt[i] >= 512 ? secondary?.get(mt[i]) : undefined);
     /** A cell holding an object no family took yet: a blocked cell (a building's stray art too), or
      *  a table prop the analysis took for a tree. */
-    const isB = (i: number) => !claims.has(i, CLAIM_OBJECT) &&
+    const isB = (i: number) => !claims.has(i, CLAIM_OBJECT) && !isSecretBaseSpot(a, i) &&
       (kind[i] === K.Block || stray[i] === 1 || (kind[i] === K.Tree && tableKind(i) !== undefined));
     const at = (x: number, y: number) => (inside(x, y) ? idx(x, y) : -1);
 
