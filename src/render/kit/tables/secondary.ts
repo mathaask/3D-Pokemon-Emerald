@@ -13,6 +13,23 @@ export const SECONDARY_PROPS: ReadonlyMap<number, ReadonlyMap<number, PropKind>>
   [SYM.gTileset_Rustboro, new Map<number, PropKind>([[0x21a, 'lamp'], [0x212, 'lamp'], [0x213, 'lamp']])],
 ]);
 
+const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+
+/**
+ * Flower beds drawn in the ground (bottom) layer, by tileset: each tile draws two big flowers of two
+ * kinds among leaves (eight variants of each pair of colours). The flowers' blob test rejects them
+ * (the two heads touch; pale or shaded petals; a top layer hiding one), and without the 3D flowers
+ * the terrain would leave them to the legacy art.
+ */
+export const SECONDARY_FLOWERS: ReadonlyMap<number, ReadonlySet<number>> = new Map<number, ReadonlySet<number>>([
+  // Route 117 and Verdanturf (gTileset_Mauville, also Mauville's, Routes 110/111/118's): pink and
+  // white (0x208-0x20f), yellow and light blue (0x210-0x217).
+  [SYM.gTileset_Mauville, new Set<number>(range(0x208, 0x217))],
+  // Ever Grande: pink and orange (0x288-0x28f), yellow and blue (0x290-0x297), and the same beds with
+  // a stone ledge in the top layer over their lower half (0x298-0x29f, 0x2a0-0x2a7).
+  [SYM.gTileset_EverGrande, new Set<number>(range(0x288, 0x2a7))],
+]);
+
 /**
  * Rock (for the cliffs) that the colour heuristics cannot tell from paving, by tileset. For a tileset
  * listed here the table decides: its other ids are never rock, whatever their colour.

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { MB } from '../src/game/behaviors';
-import { cellLook, groundMaterial, GroundMat, terrainFamily } from '../src/render/kit/terrain';
+import { cellLook, decorationPixels, groundMaterial, GroundMat, terrainFamily } from '../src/render/kit/terrain';
 import { bgr555ToSrgb, classifyGroundColor, wetGround } from '../src/render/kit/palette';
-import { Claims, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
+import { Claims, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
-import { analyze, K } from '../src/render/overworld/analyze';
+import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
 
 describe('groundMaterial', () => {
@@ -166,6 +166,87 @@ describe('terrain extract', () => {
     }
     expect(covered.has(a.idx(0, 0))).toBe(true);
     expect(covered.has(a.idx(5, 0))).toBe(true);
+  });
+});
+
+describe('terrain: decoration it cannot paint', () => {
+  // Ground art on grass: decoration (two flower heads), and ground the terrain does paint: speckles,
+  // a sand corner, stripes, decoration the top layer hides, a pool, one small blob, blobs in the
+  // ground's own colour, grey stones on grass, sand flags in dark joints.
+  const PINK = px(29, 16, 22), YELLOW = px(31, 30, 12), SANDY = px(30, 26, 10), BLUE = px(8, 12, 28);
+  const SAND = px(28, 25, 14), SAND2 = px(31, 28, 13), STONE = px(24, 24, 20);
+  const DECOR = 3, SPECKLE = 4, CORNER = 5, STRIPES = 6, HIDDEN = 7, POOL = 8, SMALL = 9, TINTED = 10, LEDGE = 11;
+  const STONES = 12, FLAGS = 13, GREY = px(16, 16, 18), JOINT = px(8, 6, 4);
+  function tiles() {
+    const info = fakeInfo();
+    const rect = (layer: Uint16Array, m: number, x0: number, y0: number, w: number, h: number, c: number) => {
+      for (let y = y0; y < y0 + h; y++) layer.fill(c, m * 256 + y * 16 + x0, m * 256 + y * 16 + x0 + w);
+    };
+    const both = (m: number, x0: number, y0: number, w: number, h: number, c: number) => { rect(info.bottom, m, x0, y0, w, h, c); rect(info.both, m, x0, y0, w, h, c); };
+    for (const m of [1, DECOR, SPECKLE, CORNER, STRIPES, HIDDEN, POOL, SMALL, LEDGE, STONES]) both(m, 0, 0, 16, 16, GRASS);
+    both(STONES, 2, 2, 5, 5, GREY); both(STONES, 9, 8, 5, 5, GREY);
+    both(FLAGS, 0, 0, 16, 16, JOINT);
+    for (const [x, y] of [[1, 1], [9, 1], [1, 9], [9, 9]]) both(FLAGS, x, y, 5, 5, SAND);
+    for (const m of [DECOR, HIDDEN, LEDGE]) { both(m, 2, 2, 5, 5, PINK); both(m, 9, 8, 5, 5, YELLOW); } // 50 px of flowers
+    info.attributes[LEDGE] = MB.JUMP_SOUTH;
+    for (let k = 0; k < 40; k++) both(SPECKLE, (k % 8) * 2 + (Math.floor(k / 8) % 2), Math.floor(k / 8) * 3 + 1, 1, 1, YELLOW);
+    both(CORNER, 0, 8, 8, 8, SANDY);
+    for (const y of [3, 7, 11]) both(STRIPES, 0, y, 16, 1, YELLOW);
+    rect(info.both, HIDDEN, 0, 0, 16, 16, STONE); info.topCover[HIDDEN] = 256; info.attributes[HIDDEN] = COVERED;
+    both(POOL, 2, 2, 5, 5, BLUE); both(POOL, 9, 8, 5, 5, BLUE);
+    both(SMALL, 5, 5, 4, 4, PINK);
+    both(TINTED, 0, 0, 16, 16, SAND); both(TINTED, 2, 2, 5, 5, SAND2); both(TINTED, 9, 8, 5, 5, SAND2);
+    return info;
+  }
+  const at = (ids: number[], claim?: (a: MapAnalysis, claims: Claims) => void) => {
+    const grid = fakeGrid(['.'.repeat(ids.length + 2)]);
+    ids.forEach((m, k) => { grid.cells[k + 1] = m | 0x3000; });
+    const a = analyze(grid, { info: tiles(), generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 1 });
+    const claims = new Claims(a.N);
+    claim?.(a, claims);
+    const covered = new Set(terrainFamily.extract({ a, events: NO_EVENTS, quality: 'medium' }, claims).cells.map((c) => c.i));
+    return { a, claims, covered };
+  };
+
+  it('counts the vivid blobs set inside a tile that the tint does not paint', () => {
+    const info = tiles();
+    const grass = bgr555ToSrgb(GRASS);
+    expect(decorationPixels(info, DECOR, grass)).toBe(50);
+    for (const m of [SPECKLE, CORNER, STRIPES, HIDDEN, POOL]) expect(decorationPixels(info, m, grass), `tile ${m}`).toBe(0);
+    expect(decorationPixels(info, SMALL, grass)).toBe(16);
+    expect(decorationPixels(info, TINTED, bgr555ToSrgb(SAND))).toBe(0);
+    // (painted grass, the sand there is as far from the tint: one blob over the whole tile, a ground)
+    expect(decorationPixels(info, TINTED, grass)).toBe(0);
+    expect(decorationPixels(info, STONES, grass)).toBe(0); // (no vivid colour)
+    expect(decorationPixels(info, FLAGS, bgr555ToSrgb(SAND))).toBe(0); // (the ground's own colour)
+    expect(decorationPixels(info, FLAGS, grass)).toBe(100);
+  });
+
+  it('leaves a walkable cell whose ground art is decoration no family models to the legacy art', () => {
+    const { a, claims, covered } = at([DECOR]);
+    expect(a.kind[a.idx(1, 0)]).toBe(K.Floor);
+    expect(covered.has(a.idx(1, 0))).toBe(false);
+    expect(claims.has(a.idx(1, 0), CLAIM_SURFACE)).toBe(false);
+    expect(covered.has(a.idx(0, 0))).toBe(true);
+  });
+
+  it('paints the ground under decoration a family models (3D flowers)', () => {
+    const { a, claims, covered } = at([DECOR], (a2, c) => c.claim(a2.idx(1, 0), CLAIM_DECOR));
+    expect(covered.has(a.idx(1, 0))).toBe(true);
+    expect(claims.has(a.idx(1, 0), CLAIM_SURFACE)).toBe(true);
+  });
+
+  it("paints plain ground: speckles, another ground's corner, stripes, hidden art, a pool, one small blob, stones, flags", () => {
+    const ids = [SPECKLE, CORNER, STRIPES, HIDDEN, POOL, SMALL, TINTED, STONES, FLAGS];
+    const { a, covered } = at(ids);
+    ids.forEach((m, k) => expect(covered.has(a.idx(k + 1, 0)), `tile ${m}`).toBe(true));
+  });
+
+  it('still covers a ledge (the cliffs draw its lip) and the ground under a claimed object', () => {
+    const { a, covered } = at([LEDGE, DECOR], (a2, c) => c.claim(a2.idx(2, 0), CLAIM_OBJECT));
+    expect(a.kind[a.idx(1, 0)]).toBe(K.Ledge);
+    expect(covered.has(a.idx(1, 0))).toBe(true);
+    expect(covered.has(a.idx(2, 0))).toBe(true);
   });
 });
 

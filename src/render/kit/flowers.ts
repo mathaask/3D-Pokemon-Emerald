@@ -1,31 +1,37 @@
 // Flowers: small instanced 3D flowers (leaves, stem, five cupped petals, centre) on flower cells,
 // in the tile's two most frequent petal colours (petals, centre) and its leaf green. Three per
-// cell, as the GBA's flower tiles draw them; they sway a little and part around characters.
-// Instanced per 16-cell map chunk and centre/leaf colour pair; they receive shadows, cast none.
+// cell, as the GBA's flower tiles draw them; a town's flower bed tile, two big flowers of two kinds,
+// gets four (two of each). They sway a little and part around characters. Instanced per 16-cell
+// map chunk and centre/leaf colour pair; they receive shadows, cast none.
 //
 // A flower tile is told apart from other light art over grass (roof eaves, signs, fences, paving
-// edges, speckled grass) by its petal blobs: small, several, and set in foliage.
+// edges, speckled grass) by its petal blobs: small, several, and set in foliage. The towns' flower
+// beds, which that test rejects, are listed by tileset (tables/secondary.ts).
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { K } from '../overworld/analyze';
-import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
-import { bgr555ToSrgb, luma, lush, saturation, soften, toLinear, type RGB } from './palette';
+import { K, type MapAnalysis } from '../overworld/analyze';
+import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
+import { bgr555ToSrgb, countPixels, luma, lush, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, rng } from './geom';
 import { GRASS_BEHAVIORS } from './grass';
 import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
+import { SECONDARY_FLOWERS } from './tables/secondary';
 import type { Family, KitContext, SemanticContext } from './semantics';
 
 export interface FlowerCell {
   x: number; y: number; h: number; petals: [RGB, RGB];
   /** Leaf and stem colour (default: a mid green). */
   leaf?: RGB;
+  /** A second kind of flower's petals (a bed of two kinds): every other flower takes them. */
+  second?: RGB;
 }
 
 let flowerIds: (m: number) => boolean = () => false;
 export function setFlowerIds(f: (m: number) => boolean): void { flowerIds = f; }
 
-const isPetal = (c: RGB) => {
+/** A petal's colour: not foliage green, lit, and saturated or near white. */
+export const isPetal = (c: RGB) => {
   const greenish = c[1] > c[0] && c[1] > c[2];
   return !greenish && luma(c) > 0.35 && (saturation(c) > 0.35 || luma(c) > 0.9);
 };
@@ -98,6 +104,55 @@ export function isFlowerTile(px: Uint16Array, m: number): boolean {
   return blobs >= 2 && inBlobs >= total * 0.6;
 }
 
+/**
+ * Whether metatile `m`'s ground (bottom) layer is mostly in petal colours: then the "petals" the
+ * blob test sees between leaves are that ground showing through (the sand or sea under Dewford's
+ * bushes, drawn in the top layer), not flowers.
+ */
+const groundPetals = (bottom: Uint16Array, m: number) => countPixels(bottom, [m], isPetal) >= 128;
+
+/** A flower head's colour: not foliage, not an outline; saturated, or light (white, pale blue). */
+const isHead = (c: RGB) => !(c[1] > c[0] && c[1] > c[2]) && luma(c) >= 0.35 && (saturation(c) >= 0.2 || luma(c) >= 0.75);
+const isPale = (c: RGB) => saturation(c) < 0.2;
+/** Hue in degrees (0..360). */
+function hue([r, g, b]: RGB): number {
+  const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  if (d === 0) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+/** One family of flower colours: pale with pale, else within 25° of hue (a petal's shades). */
+function sameFamily(a: RGB, b: RGB): boolean {
+  if (isPale(a) || isPale(b)) return isPale(a) && isPale(b);
+  const d = Math.abs(hue(a) - hue(b));
+  return Math.min(d, 360 - d) <= 25;
+}
+
+/**
+ * Colours of a flower bed tile (two big flowers of two kinds among leaves, tables/secondary.ts): its
+ * flower-head colours grouped into families of one hue (a petal's shades and highlights; whites and
+ * pale tints together), families of 4 px or more by size, each its mean colour: the first two are
+ * the two kinds' petals, a third their centre. Null without a flower colour.
+ */
+export function bedColors(px: Uint16Array, m: number): { petals: RGB; second?: RGB; centre?: RGB } | null {
+  const counts = new Map<number, number>();
+  for (let p = 0; p < 256; p++) {
+    const v = px[m * 256 + p];
+    if (!(v & 0x8000) && isHead(bgr555ToSrgb(v))) counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  const families: { first: RGB; sum: RGB; n: number }[] = [];
+  for (const [v, n] of [...counts].sort((p, q) => q[1] - p[1])) {
+    const c = bgr555ToSrgb(v);
+    let f = families.find((g) => sameFamily(g.first, c));
+    if (!f) families.push(f = { first: c, sum: [0, 0, 0], n: 0 });
+    for (let k = 0; k < 3; k++) f.sum[k] += c[k] * n;
+    f.n += n;
+  }
+  const [a, b, c] = families.filter((f) => f.n >= 4).sort((p, q) => q.n - p.n)
+    .map((f) => f.sum.map((s) => s / f.n) as RGB);
+  return a ? { petals: a, ...(b ? { second: b } : {}), ...(c ? { centre: c } : {}) } : null;
+}
+
 /** Leaf colour of a flower tile: its most frequent foliage green (lit), foliage-graded. */
 function leafColor(px: Uint16Array, m: number): RGB {
   const counts = new Map<number, number>();
@@ -114,8 +169,29 @@ function leafColor(px: Uint16Array, m: number): RGB {
 
 const LEAF: RGB = [0.3, 0.55, 0.25];
 const YELLOW: RGB = [0.98, 0.85, 0.3];
-/** Flowers per cell (the GBA's flower tiles draw three). */
-const PER_CELL = 3;
+/** Flowers per cell (the GBA's flower tiles draw three); a bed of two kinds gets two of each. */
+const PER_CELL = 3, BED_PER_CELL = 4;
+const perCell = (c: FlowerCell) => (c.second ? BED_PER_CELL : PER_CELL);
+
+interface FlowerLook { petals: [RGB, RGB]; second?: RGB; leaf: RGB; bed: boolean }
+
+/** The flowers metatile `m` draws (null: none): a curated bed of the map's town tileset, read from
+ *  its ground layer, or a curated General id / a tile the blob test takes, read from both layers. */
+function flowerLook(a: MapAnalysis, m: number, beds: ReadonlySet<number> | undefined): FlowerLook | null {
+  const { both, bottom } = a.info;
+  if (m >= 512 && beds?.has(m)) {
+    const c = bedColors(bottom, m);
+    if (!c) return null;
+    return {
+      petals: [soften(c.petals), c.centre ? soften(c.centre) : YELLOW], ...(c.second ? { second: soften(c.second) } : {}),
+      leaf: leafColor(bottom, m), bed: true,
+    };
+  }
+  const known = a.isGeneralId(m) && flowerIds(m);
+  const c = known || (a.info.green[m] > 0.25 && isFlowerTile(both, m) && !groundPetals(bottom, m)) ? petalColors(both, m) : null;
+  return c ? { petals: [soften(c[0]), soften(c[1])], leaf: leafColor(both, m), bed: false } : null;
+}
+
 const CHUNK = 16;
 
 // ---------------------------------------------------------------- geometry
@@ -193,20 +269,27 @@ export const flowerFamily: Family<FlowerCell[]> = {
   extract({ a }: SemanticContext, claims: Claims): FlowerCell[] {
     if (a.opts.indoor || a.opts.underground || a.opts.underwater) return [];
     const out: FlowerCell[] = [];
-    const cache = new Map<number, { petals: [RGB, RGB]; leaf: RGB } | null>();
+    const beds = SECONDARY_FLOWERS.get(a.opts.secondaryTileset ?? 0);
+    const cache = new Map<number, FlowerLook | null>();
     for (let i = 0; i < a.N; i++) {
-      if (a.kind[i] !== K.Floor || claims.has(i, CLAIM_OBJECT) || GRASS_BEHAVIORS.has(a.beh[i])) continue;
+      const k = a.kind[i];
+      if ((k !== K.Floor && k !== K.Stairs) || claims.has(i, CLAIM_OBJECT) || GRASS_BEHAVIORS.has(a.beh[i])) continue;
       const m = a.mt[i];
       let look = cache.get(m);
       if (look === undefined) {
-        const known = a.isGeneralId(m) && flowerIds(m);
-        const c = known || (a.info.green[m] > 0.25 && isFlowerTile(a.info.both, m)) ? petalColors(a.info.both, m) : null;
-        look = c ? { petals: [soften(c[0]), soften(c[1])], leaf: leafColor(a.info.both, m) } : null;
+        look = flowerLook(a, m, beds);
         cache.set(m, look);
       }
       if (!look) continue;
-      out.push({ x: a.cellX(i), y: a.cellY(i), h: Math.max(0, a.height[i]), petals: look.petals, leaf: look.leaf });
-      claims.claim(i, CLAIM_TOP); // the 3D flowers replace the drawn ones
+      out.push({
+        x: a.cellX(i), y: a.cellY(i), h: Math.max(0, a.height[i]), petals: look.petals, leaf: look.leaf,
+        ...(look.second ? { second: look.second } : {}),
+      });
+      // The 3D flowers replace the drawn ones: on the ground (the terrain paints plain ground under
+      // them), and in the top layer, unless the flowers are a bed's (its top layer is other art: Ever
+      // Grande's stone ledge stays).
+      claims.claim(i, CLAIM_DECOR);
+      if (!look.bed) claims.claim(i, CLAIM_TOP);
     }
     return out;
   },
@@ -242,22 +325,24 @@ export const flowerFamily: Family<FlowerCell[]> = {
         });
         mats.set(matId, km);
       }
-      const mesh = new THREE.InstancedMesh(geo, km.material, list.length * PER_CELL);
+      const mesh = new THREE.InstancedMesh(geo, km.material, list.reduce((n, c) => n + perCell(c), 0));
       applyKitMaterial(mesh, km);
       let k = 0;
       for (const c of list) {
         const r = rng(hashCell(c.x, c.y, 3));
-        const petal = toLinear(c.petals[0]);
+        const petal = toLinear(c.petals[0]), second = c.second ? toLinear(c.second) : petal;
         const turn = r() * Math.PI * 2;
-        for (let f = 0; f < PER_CELL; f++, k++) {
-          // three flowers around the cell's centre, facing the camera's side (a little turned)
-          const a = turn + (f / PER_CELL) * Math.PI * 2, d = 0.2 + r() * 0.08;
+        const n = perCell(c);
+        for (let f = 0; f < n; f++, k++) {
+          // flowers around the cell's centre, facing the camera's side (a little turned); a bed's two
+          // kinds take turns
+          const a = turn + (f / n) * Math.PI * 2, d = 0.2 + r() * 0.08;
           const size = 0.9 + r() * 0.3;
           q.setFromAxisAngle(up, (r() - 0.5) * 1.2);
           m.compose(p.set(c.x + 0.5 + Math.cos(a) * d, c.h, c.y + c.h + 0.5 + Math.sin(a) * d), q, s.set(size, size * (0.85 + r() * 0.3), size));
           mesh.setMatrixAt(k, m);
-          const v = 0.94 + r() * 0.12;
-          mesh.setColorAt(k, col.setRGB(petal[0] * v, petal[1] * v, petal[2] * v));
+          const v = 0.94 + r() * 0.12, p2 = f % 2 ? second : petal;
+          mesh.setColorAt(k, col.setRGB(p2[0] * v, p2[1] * v, p2[2] * v));
         }
       }
       mesh.receiveShadow = true;

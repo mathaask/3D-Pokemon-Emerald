@@ -147,6 +147,22 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   in-map, exactly its 27 former sea-rock boxes (land cells 293 → 293). Still legacy: the in-map ridge fields of
   Mt Chimney / Route 112 (diagonal ridges whose column stacks disagree; needs a 2D height solve — a known Phase 1
   gap by ruling), Sootopolis' N-S wall strips, rock 1-row walls elsewhere.
+- Task 15c: town flower beds are 3D flowers. `SECONDARY_FLOWERS` (tables/secondary.ts, keyed by tileset; SYM gained
+  `gTileset_Mauville`, `gTileset_EverGrande`): Mauville 0x208–0x217 (Route 117, Verdanturf), Ever Grande
+  0x288–0x2a7 (incl. the beds under a stone ledge, whose top layer stays legacy). A bed tile draws two kinds:
+  `FlowerCell.second`, 4 flowers per cell (2 + 2), colours = hue families of the bed's flower-head colours
+  (mean of each; a third family = centre). Flowers take K.Stairs too and claim the new `CLAIM_DECOR` (bit 8).
+  The blob test no longer plants "flowers" on Dewford's bushes (sand/sea showing between leaves: a bottom layer
+  mostly petal-coloured). **Terrain safeguard:** a walkable (not ledge) cell without `CLAIM_DECOR` whose bottom
+  layer draws ≥ 24 px of decoration (`decorationPixels`: vivid non-water colours far from the tint, in blobs
+  spanning ≥ 3×3 with ≤ 4 px on the tile border, not hidden by the top layer) keeps its legacy art. **Survey (all
+  68 outdoor maps): flower-art cells modelled 725/941 → 941/941 (lost 216 → 0: Ever Grande 152, Route 117 52,
+  Verdanturf 12); false flowers 95 → 0 (Dewford 32, Routes 105–107 63); decoration painted over 95 → 0; cells the
+  safeguard keeps: 2 (Battle Frontier East (42,50), (48,50): flowers half under the palace roof).** Trees:
+  colour-guessed K.Tree tiles need ≥ MIN_LEAF foliage pixels — 99 cells on 10 maps go legacy, all checked not
+  trees (Trainer Hill facade, Mauville/Route 111/117 log posts, Verdanturf's green fence, Petalburg Woods' south
+  exits, Mt Pyre summit passage); the warp-passage rule runs past them. Coverage all/map 7.81/15.59 → 7.85/15.73 %;
+  regression average 5.3 %.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).

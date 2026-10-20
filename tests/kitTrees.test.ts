@@ -31,7 +31,7 @@ describe('pairRoundTrees', () => {
 const px = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
 const LEAF = px(8, 20, 6), LEAF2 = px(14, 26, 8), ASH_LEAF = px(19, 23, 12), SAND = px(27, 25, 16), STONE = px(16, 16, 18);
 const ROUND = 0x1d4, NARROW = 0x0c7; // General tree ids (analyze.ts ROUND_TREE / NARROW_TREE)
-const SEC_TREE = 0x210, LEFT = 0x211, RIGHT = 0x212, LEAFY = 0x213, ASH_A = 0x220, ASH_B = 0x221, ROCK = 0x222;
+const SEC_TREE = 0x210, LEFT = 0x211, RIGHT = 0x212, LEAFY = 0x213, ASH_A = 0x220, ASH_B = 0x221, ROCK = 0x222, FACADE = 0x223;
 
 /**
  * Synthetic outdoor map (General primary tileset). Cells: '.' grass (1), 'P' grass on a plateau
@@ -39,7 +39,8 @@ const SEC_TREE = 0x210, LEFT = 0x211, RIGHT = 0x212, LEAFY = 0x213, ASH_A = 0x22
  * leaf colours (0x0c6), 's' beach sand (SAND behaviour), 'p' a sand-coloured path (NORMAL), '~' sea,
  * 'o' grass with a leafy overhang, 'g' tall grass with a leafy tuft overhang, 'T' a secondary-tileset
  * tree, 'L' / 'J' the leafy left / right halves of a 2-wide tree's bottom row, 'B' a leafy block,
- * 'A' / 'a' ash-forest blocks, '#' rock.
+ * 'A' / 'a' ash-forest blocks, '#' rock, 'F' a green building facade (the analysis takes it for a
+ * tree by its green; it draws no foliage).
  */
 function map(rows: string[], opts: { margin?: number; underwater?: boolean; indoor?: boolean; border?: number[] } = {}): MapAnalysis {
   const info = fakeInfo();
@@ -63,10 +64,11 @@ function map(rows: string[], opts: { margin?: number; underwater?: boolean; indo
   fill(ASH_A, ASH_LEAF); fill(ASH_A, px(21, 21, 17), 0, 100); info.green[ASH_A] = 0.4;
   fill(ASH_B, ASH_LEAF); fill(ASH_B, px(21, 21, 17), 0, 140); info.green[ASH_B] = 0.3;
   fill(ROCK, STONE);
+  fill(FACADE, px(14, 26, 22)); fill(FACADE, px(26, 30, 28), 0, 64); info.green[FACADE] = 0.75; // teal, no foliage
   const code: Record<string, number> = {
     '.': 1 | 0x3000, P: 1 | 0x5000, R: ROUND | 0x0400, N: NARROW | 0x0400, n: 0x0c6 | 0x0400, s: 3 | 0x3000, p: 4 | 0x3000, '~': 5 | 0x0400,
     o: 6 | 0x3000, g: 7 | 0x3000, T: SEC_TREE | 0x0400, L: LEFT | 0x0400, J: RIGHT | 0x0400, B: LEAFY | 0x0400,
-    A: ASH_A | 0x0400, a: ASH_B | 0x0400, '#': ROCK | 0x0400,
+    A: ASH_A | 0x0400, a: ASH_B | 0x0400, '#': ROCK | 0x0400, F: FACADE | 0x0400,
   };
   const w = rows[0].length, h = rows.length;
   const cells = new Uint16Array(w * h);
@@ -225,6 +227,20 @@ describe('tree extract', () => {
     for (const y of [1, 2, 3]) expect(sc[c.idx(1, y)]).toBe(0);
   });
 
+  it("leaves a secondary tile the analysis took for a tree by its green but that draws no foliage to the legacy art (Trainer Hill's facade)", () => {
+    const a = map(['.....', '.FFT.', '.....']);
+    expect([1, 2, 3].map((x) => a.kind[a.idx(x, 1)])).toEqual([K.Tree, K.Tree, K.Tree]);
+    const { claims, trees } = extract(a);
+    expect(claims.has(a.idx(1, 1), CLAIM_OBJECT)).toBe(false);
+    expect(claims.has(a.idx(2, 1), CLAIM_OBJECT)).toBe(false);
+    expect(claims.has(a.idx(3, 1), CLAIM_OBJECT)).toBe(true);
+    expect(trees).toHaveLength(1);
+    // nor is a leafy half block beside it the other half of a tree
+    const b = map(['.....', '.LF..', '.....']);
+    expect(extract(b).claims.has(b.idx(1, 1), CLAIM_OBJECT)).toBe(false);
+    expect(extract(map(['.....', '.LT..', '.....'])).claims.has(b.idx(1, 1), CLAIM_OBJECT)).toBe(true);
+  });
+
   it("leaves the path beyond a warp to the legacy art: the analysis' colour-guessed trees north of it", () => {
     // a warp at (1, 4) under a column of secondary-tileset "tree" cells (Petalburg Woods' north exit,
     // Mt Pyre's summit path: green blocking art) topped by a General round tree (a real tree)
@@ -241,6 +257,12 @@ describe('tree extract', () => {
     const nb = new Claims(b.N);
     treeFamily.extract({ a: b, events: { warps: [{ x: 1, y: 3, dest: 'X' }], signs: [] }, quality: 'medium' }, nb);
     expect(nb.has(b.idx(1, 2), CLAIM_OBJECT)).toBe(true);
+    // a passage whose first cell draws no foliage (no tree itself, Mt Pyre's) runs on past it
+    const c = map(['.R.', '.T.', '.T.', '.F.', '...', '...']);
+    const nc = new Claims(c.N);
+    treeFamily.extract({ a: c, events, quality: 'medium' }, nc);
+    for (const y of [1, 2, 3]) expect(nc.has(c.idx(1, y), CLAIM_OBJECT), `1,${y}`).toBe(false);
+    expect(nc.has(c.idx(1, 0), CLAIM_OBJECT)).toBe(true);
   });
 
   it('turns a border forest the analysis left as blocks (ash trees) into round trees', () => {

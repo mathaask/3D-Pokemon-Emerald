@@ -408,12 +408,16 @@ export const treeFamily: Family<TreePlacement[]> = {
     // (a building flood fill's cells outside every building are blocks: Route 113's ash forest)
     const { stray } = buildingLayout(a, events);
     const secondaryBlock = (i: number) => (kind[i] === K.Block || stray[i] === 1) && !a.isGeneralId(mt[i]) && !structure[i] && !claims.has(i, CLAIM_OBJECT);
+    // The analysis' trees: General tree ids, and the tiles it took for trees by their green that draw
+    // foliage. One without (a green building facade like the Trainer Hill's, log posts, plain grass)
+    // keeps its legacy art.
+    const analysisTree = (i: number) => kind[i] === K.Tree && (a.isGeneralId(mt[i]) || st(mt[i])[LEAF_N] >= MIN_LEAF);
 
     // Tree cells: the analysis' trees, a border forest's blocks, and the trunk rows of 2-wide trees.
     const tree = new Uint8Array(a.N);
     const round = new Uint8Array(a.N);
     for (let i = 0; i < a.N; i++) {
-      if (kind[i] === K.Tree && !claims.has(i, CLAIM_OBJECT)) { tree[i] = 1; round[i] = a.roundTree[i]; }
+      if (analysisTree(i) && !claims.has(i, CLAIM_OBJECT)) { tree[i] = 1; round[i] = a.roundTree[i]; }
     }
     const forest = borderForest(a, stray);
     if (forest) {
@@ -447,7 +451,7 @@ export const treeFamily: Family<TreePlacement[]> = {
       const s = st(mt[i]);
       return s[LEAF_N] >= MIN_LEAF && (side < 0 ? leafCx(s) >= 8.5 : leafCx(s) <= 6.5);
     };
-    const treeKind = (x: number, y: number) => a.inside(x, y) && kind[idx(x, y)] === K.Tree;
+    const treeKind = (x: number, y: number) => a.inside(x, y) && analysisTree(idx(x, y));
     const halves: number[] = [];
     for (let y = a.minY; y < a.maxY; y++) {
       for (let x = a.minX; x < a.maxX; x++) {
@@ -466,10 +470,11 @@ export const treeFamily: Family<TreePlacement[]> = {
     // The cells running north from a warp that the analysis took for trees by their colour (not
     // General tree ids) are the passage beyond it: Petalburg Woods' north exit, Mt Pyre's summit
     // path, a cave door's lintel. They keep their legacy art (like the blocks of doorStructures).
+    // (Cells among them that are no trees, drawing no foliage, are passage too.)
     for (const w of events.warps) {
       for (let y = w.y - 1; a.inside(w.x, y); y--) {
         const i = idx(w.x, y);
-        if (!tree[i] || kind[i] !== K.Tree || a.isGeneralId(mt[i])) break;
+        if (kind[i] !== K.Tree || a.isGeneralId(mt[i])) break;
         tree[i] = 0;
       }
     }

@@ -4,6 +4,10 @@
 export const CLAIM_SURFACE = 1; // the cell's walkable / ground / water surface
 export const CLAIM_OBJECT = 2; // the structure standing on the cell (tree, building, block run)
 export const CLAIM_TOP = 4; // the cell's top-layer overhang card (crowns / eaves north of objects)
+/** The decoration drawn on the cell's ground (3D flowers replace a flower bed): the terrain still
+ *  draws the ground under it. (Legacy reads it nowhere; without it the terrain leaves ground art it
+ *  cannot paint to the legacy art.) */
+export const CLAIM_DECOR = 8;
 
 export interface ClaimsSnapshot {
   bits: Uint8Array;

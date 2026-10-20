@@ -7,9 +7,11 @@ import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { attrBehavior, attrLayerType, LayerType } from '../../game/rom/tileset';
 import { DOOR_BEHAVIORS, K, type MapAnalysis } from '../overworld/analyze';
-import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
-import { classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
+import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
+import type { TileInfo } from '../overworld/tileInfo';
+import { bgr555ToSrgb, classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
 import { bladeColor, GRASS_BEHAVIORS } from './grass';
+import { isPetal } from './flowers';
 import { kitMaterial } from './materials';
 import { isSecretBaseSpot, type Family, type SemanticContext, type KitContext } from './semantics';
 
@@ -73,6 +75,60 @@ export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>
     cache.set(m, e);
   }
   return e;
+}
+
+/** Pixels of decoration (decorationPixels) that make a walkable cell's ground art decoration the
+ *  terrain leaves to the legacy art: a tenth of the tile (a flower bed's petals cover 10-25 % of it,
+ *  its leaves and the grass between them are colours a terrain paints too). */
+export const DECOR_MIN_PX = 24;
+/** A decoration blob spans 3x3 pixels or more and has at most DECOR_EDGE of them on the tile's
+ *  border; its colours are farther than DECOR_FAR (sRGB) from the tint. */
+const DECOR_EDGE = 4, DECOR_FAR = 0.3;
+/** Per BGR555 colour: 0 not yet known, 1 no decoration colour, 2 a vivid one (petal-like, not water). */
+const VIVID = new Uint8Array(32768);
+
+/**
+ * Pixels of decoration in metatile `m`'s ground art (its bottom layer, where the top layer leaves it
+ * visible) that a terrain tinted `tint` cannot paint: vivid colours (a petal's: not green, lit,
+ * saturated or near white; not water) far from the tint, in compact blobs set inside the tile:
+ * flower heads, an emblem's gems. Not a ground's speckles (single pixels), stripes (stair edges,
+ * kerbs: a pixel high), another ground reaching into the cell (it runs along the tile's border),
+ * nor art the top layer covers.
+ */
+export function decorationPixels(info: TileInfo, m: number, tint: RGB): number {
+  const o = m * 256;
+  const dec = new Uint8Array(256);
+  for (let p = 0; p < 256; p++) {
+    const v = info.bottom[o + p];
+    if (v & 0x8000 || info.both[o + p] !== v) continue;
+    let k = VIVID[v];
+    if (!k) {
+      const c = bgr555ToSrgb(v);
+      VIVID[v] = k = isPetal(c) && !isWater(c) ? 2 : 1;
+    }
+    if (k === 2 && Math.hypot((v & 31) / 31 - tint[0], ((v >> 5) & 31) / 31 - tint[1], ((v >> 10) & 31) / 31 - tint[2]) > DECOR_FAR) dec[p] = 1;
+  }
+  const stack: number[] = [];
+  let total = 0;
+  for (let s = 0; s < 256; s++) {
+    if (dec[s] !== 1) continue;
+    dec[s] = 2;
+    stack.push(s);
+    let size = 0, edge = 0, x0 = 15, x1 = 0, y0 = 15, y1 = 0;
+    while (stack.length) {
+      const p = stack.pop()!;
+      const x = p & 15, y = p >> 4;
+      size++;
+      if (x === 0 || y === 0 || x === 15 || y === 15) edge++;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      if (x < 15 && dec[p + 1] === 1) { dec[p + 1] = 2; stack.push(p + 1); }
+      if (x > 0 && dec[p - 1] === 1) { dec[p - 1] = 2; stack.push(p - 1); }
+      if (y < 15 && dec[p + 16] === 1) { dec[p + 16] = 2; stack.push(p + 16); }
+      if (y > 0 && dec[p - 16] === 1) { dec[p - 16] = 2; stack.push(p - 16); }
+    }
+    if (x1 - x0 >= 2 && y1 - y0 >= 2 && edge <= DECOR_EDGE) total += size;
+  }
+  return total;
 }
 
 /** Walkable cells that depict a structure (doorway, ladder, Fortree treehouse walkway, Acro Bike
@@ -166,6 +222,15 @@ export const terrainFamily: Family<TerrainPlacement> = {
   extract({ a }: SemanticContext, claims: Claims): TerrainPlacement {
     const cells: TerrainCell[] = [];
     const cache = new Map<number, CellLook>();
+    const decor = new Map<number, boolean>();
+    const decorated = (m: number) => {
+      let d = decor.get(m);
+      if (d === undefined) {
+        d = decorationPixels(a.info, m, cellLook(a, m, cache).tint) >= DECOR_MIN_PX;
+        decor.set(m, d);
+      }
+      return d;
+    };
     for (let i = 0; i < a.N; i++) {
       if (claims.has(i, CLAIM_SURFACE)) continue;
       const k = a.kind[i];
@@ -173,6 +238,9 @@ export const terrainFamily: Family<TerrainPlacement> = {
       const under = claims.has(i, CLAIM_OBJECT);
       if (!walk && !under) continue;
       if (!under && (isStructure(a.beh[i]) || isSecretBaseSpot(a, i))) continue;
+      // Ground art that is decoration no family models (a flower bed, an emblem): the terrain cannot
+      // paint it, so the cell keeps its legacy pixel art. (Not ledges: the cliffs draw their lips.)
+      if (!under && k !== K.Ledge && !claims.has(i, CLAIM_DECOR) && decorated(a.mt[i])) continue;
       let h: number;
       let m: number;
       let shade = 1;

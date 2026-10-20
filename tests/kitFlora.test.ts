@@ -3,14 +3,15 @@ import * as THREE from 'three';
 import { flowerFamily, isFlowerTile, petalColors, setFlowerIds, type FlowerCell } from '../src/render/kit/flowers';
 import { BLADES, bladeColor, clump, grassFamily, LONG_SCALE, type GrassCell } from '../src/render/kit/grass';
 import { cellLook } from '../src/render/kit/terrain';
-import { Claims, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
+import { Claims, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { bgr555ToSrgb, luma } from '../src/render/kit/palette';
 import { disposeKit } from '../src/render/kit/semantics';
-import { analyze, type MapAnalysis } from '../src/render/overworld/analyze';
+import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
 import { MB } from '../src/game/behaviors';
+import { SYM } from '../src/game/symbols';
 
 describe('flora', () => {
   it('grass density follows quality', () => {
@@ -39,7 +40,14 @@ const LONG = px(7, 17, 6), ASH = px(18, 17, 14), ASH_LIGHT = px(21, 21, 17);
 const PEACH = px(31, 24, 18), RED = px(25, 8, 10), LEAF = px(7, 17, 6), NAVY = px(4, 6, 14), YELLOW = px(31, 30, 12);
 
 const GRASS = 1, TALL = 13, LONG_MT = 21, LONG_EDGE = 22, ASH_MT = 23, FLOWER = 4, EAVE = 5, SPECKLE = 6, SIGN = 7, KNOWN = 8;
-const FLOWER_GRASS = 9;
+const FLOWER_GRASS = 9, BUSH = 10;
+/** A town tileset's flower beds (secondary ids: Mauville's), drawn in the ground layer: a bed, the
+ *  bed with a stone ledge in the top layer over its lower half (Ever Grande's), and a bed of shaded
+ *  petals. */
+const BED = 0x208, BED_STONE = 0x209, BED_SHADED = 0x20a;
+const PINK = px(29, 16, 22), WHITE = px(31, 31, 31), ORANGE = px(31, 20, 4), LPINK = px(31, 21, 27), STONE = px(24, 24, 20), SAND = px(28, 25, 14);
+// Ever Grande's petals are drawn in a dark shade and a light one
+const DARK_Y = px(20, 18, 8), LIGHT_Y = px(31, 30, 10), VIOLET = px(12, 11, 21), BLUE_P = px(18, 18, 31);
 
 /** Pixel painter for one metatile in a 256-px buffer pair (both layers alike). */
 function painter(info: ReturnType<typeof fakeInfo>, m: number) {
@@ -97,24 +105,45 @@ function tiles() {
   paintFlowers(info, FLOWER_GRASS); // flower art on a tall-grass cell
   info.green[FLOWER_GRASS] = 0.8;
   info.attributes[FLOWER_GRASS] = MB.TALL_GRASS;
+  // a bush over sand (Dewford's tileset): leaves in the top layer, the sand showing through two gaps
+  const bush = painter(info, BUSH);
+  bush.fill(SAND);
+  info.both.fill(LEAF, BUSH * 256, BUSH * 256 + 256);
+  for (const [x, y] of [[2, 3], [9, 8]]) for (let r = y; r < y + 4; r++) info.both.fill(SAND, BUSH * 256 + r * 16 + x, BUSH * 256 + r * 16 + x + 4);
+  info.green[BUSH] = 0.8; info.topCover[BUSH] = 224;
+  for (const m of [BED, BED_STONE]) {
+    // two big flowers side by side (they touch: one petal blob, too big for the blob test) over leaves
+    const p = painter(info, m);
+    p.fill(MINT); p.rect(2, 7, 12, 8, LEAF);
+    p.rect(1, 1, 6, 5, PINK); p.rect(3, 2, 2, 2, ORANGE); // a pink flower, its orange centre
+    p.rect(7, 1, 6, 5, WHITE); p.rect(9, 2, 2, 2, LPINK); // a white one, its pink centre
+    info.green[m] = 0.6;
+  }
+  info.both.fill(STONE, BED_STONE * 256 + 9 * 16, BED_STONE * 256 + 256); info.topCover[BED_STONE] = 112;
+  const shaded = painter(info, BED_SHADED); // a yellow flower and a blue one, each in two shades
+  shaded.fill(MINT); shaded.rect(2, 7, 12, 8, LEAF);
+  shaded.rect(1, 1, 5, 4, DARK_Y); shaded.rect(2, 1, 3, 2, LIGHT_Y);
+  shaded.rect(8, 6, 5, 4, VIOLET); shaded.rect(9, 6, 3, 2, BLUE_P);
   return info;
 }
 
 /** Outdoor map over General ids: '.' grass, 'g' tall grass, 'L' long grass, 'E' long grass south
  *  edge, 'A' ash grass, 'f' flowers, 'e' an eave, 's' speckled grass, 'n' a sign, 'k' a curated
- *  flower tile, 'F' flowers on a tall-grass cell, '#' a block. */
-function map(rows: string[], opts: { indoor?: boolean; underground?: boolean; underwater?: boolean } = {}): MapAnalysis {
+ *  flower tile, 'F' flowers on a tall-grass cell, 'b' a bush over sand, '#' a block; 'B' a town's flower
+ *  bed, 'S' one under a stone ledge, 'Y' one of shaded yellow and blue flowers (secondary ids: Mauville's
+ *  tileset unless `secondary` says). */
+function map(rows: string[], opts: { indoor?: boolean; underground?: boolean; underwater?: boolean; secondary?: number } = {}): MapAnalysis {
   const code: Record<string, number> = {
     '.': GRASS | 0x3000, g: TALL | 0x3000, L: LONG_MT | 0x3000, E: LONG_EDGE | 0x3000, A: ASH_MT | 0x3000,
     f: FLOWER | 0x3000, e: EAVE | 0x3000, s: SPECKLE | 0x3000, n: SIGN | 0x3000, k: KNOWN | 0x3000, F: FLOWER_GRASS | 0x3000,
-    '#': 2 | 0x0400,
+    b: BUSH | 0x3000, B: BED | 0x3000, S: BED_STONE | 0x3000, Y: BED_SHADED | 0x3000, '#': 2 | 0x0400,
   };
   const w = rows[0].length, h = rows.length;
   const cells = new Uint16Array(w * h);
   rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch]; }));
   return analyze({ width: w, height: h, cells, border: [GRASS, GRASS, GRASS, GRASS], borderW: 2, borderH: 2, borderPhase: 0 }, {
     info: tiles(), generalPrimary: true, indoor: opts.indoor ?? false, underground: opts.underground ?? false,
-    underwater: opts.underwater ?? false, margin: 0,
+    underwater: opts.underwater ?? false, margin: 0, secondaryTileset: opts.secondary ?? SYM.gTileset_Mauville,
   });
 }
 
@@ -280,7 +309,9 @@ describe('flower extract', () => {
     expect(c.petals[0][0]).toBeGreaterThan(c.petals[0][2]); // peach
     expect(c.petals[1][0]).toBeGreaterThan(c.petals[1][1] + 0.3); // red
     expect(c.leaf![1]).toBeGreaterThan(c.leaf![0]);
+    expect(c.second).toBeUndefined(); // (one kind of flower: no bed)
     expect(claims.has(a.idx(1, 0), CLAIM_TOP)).toBe(true);
+    expect(claims.has(a.idx(1, 0), CLAIM_DECOR)).toBe(true);
     expect(claims.has(a.idx(0, 1), CLAIM_TOP)).toBe(false);
   });
 
@@ -288,6 +319,52 @@ describe('flower extract', () => {
     setFlowerIds((m) => m === KNOWN);
     const a = map(['.k']);
     expect(flowerFamily.extract(ctxOf(a), new Claims(a.N)).map((c) => c.x)).toEqual([1]);
+  });
+
+  it("plants a town tileset's curated flower beds (too big for the blob test), on stairs too", () => {
+    expect(isFlowerTile(tiles().both, BED)).toBe(false);
+    const a = map(['.....', '#B#B.', '.....']);
+    expect(a.kind[a.idx(1, 1)]).toBe(K.Stairs);
+    const claims = new Claims(a.N);
+    const cells = flowerFamily.extract(ctxOf(a), claims);
+    expect(cells.map((c) => [c.x, c.y])).toEqual([[1, 1], [3, 1]]);
+    for (const c of cells) expect(claims.has(a.idx(c.x, c.y), CLAIM_DECOR)).toBe(true);
+    // the same ids in another tileset are something else
+    expect(flowerFamily.extract(ctxOf(map(['.....', '#B#B.', '.....'], { secondary: SYM.gTileset_Rustboro })), new Claims(a.N))).toEqual([]);
+  });
+
+  it("reads a bed's two flowers: each kind's petals, and a third colour their centre", () => {
+    const [c] = flowerFamily.extract(ctxOf(map(['B'])), new Claims(1));
+    expect(c.petals[0][0]).toBeGreaterThan(c.petals[0][1] + 0.25); // pink
+    expect(Math.min(...c.second!)).toBeGreaterThan(0.85); // white
+    expect(c.petals[1][0]).toBeGreaterThan(c.petals[1][1] + 0.25); // its orange centre (not the default yellow)
+    expect(c.petals[1][2]).toBeLessThan(0.25);
+  });
+
+  it("groups a petal's shades: a bed of yellow and blue flowers (mean colours), with no centre of its own", () => {
+    const [c] = flowerFamily.extract(ctxOf(map(['Y'])), new Claims(1));
+    const y = bgr555ToSrgb(DARK_Y);
+    expect(c.petals[0][0]).toBeGreaterThan(y[0] + 0.05); // lighter than the dark shade alone
+    expect(c.petals[0][2]).toBeLessThan(c.petals[0][1] - 0.3); // yellow
+    expect(c.second![2]).toBeGreaterThan(c.second![0] + 0.25); // blue
+    expect(c.petals[1]).toEqual([0.98, 0.85, 0.3]); // (the default centre: yellow)
+  });
+
+  it('reads a bed under a stone ledge from the ground layer, and leaves the ledge (top layer) to the legacy art', () => {
+    const a = map(['BS']);
+    const claims = new Claims(a.N);
+    const [bed, under] = flowerFamily.extract(ctxOf(a), claims);
+    expect(under.x).toBe(1);
+    expect(under.petals).toEqual(bed.petals);
+    expect(under.second).toEqual(bed.second);
+    expect(claims.has(a.idx(1, 0), CLAIM_TOP)).toBe(false);
+    expect(claims.has(a.idx(1, 0), CLAIM_DECOR)).toBe(true);
+  });
+
+  it('plants nothing on a bush over sand: its "petals" are the ground showing between its leaves', () => {
+    expect(isFlowerTile(tiles().both, BUSH)).toBe(true); // (the blob test alone takes it)
+    const a = map(['.b.']);
+    expect(flowerFamily.extract(ctxOf(a), new Claims(a.N))).toEqual([]);
   });
 
   it('leaves grass cells to the grass and object cells to their family', () => {
@@ -328,6 +405,17 @@ describe('flower build', () => {
     m.geometry.addEventListener('dispose', () => { disposed = true; });
     disposeKit(root, k);
     expect(disposed).toBe(false);
+  });
+
+  it("draws a bed's two kinds of flowers in turn, four per cell", () => {
+    const [m] = meshes(buildFlowers([{ ...flower(1, 1), second: [1, 1, 1] }]));
+    expect(m.count).toBe(4);
+    const c = new THREE.Color();
+    for (let k = 0; k < 4; k++) {
+      m.getColorAt(k, c);
+      if (k % 2) expect(c.g / c.r).toBeCloseTo(1, 2); // white
+      else expect(c.g / c.r).toBeLessThan(0.7); // the petal colour (peach)
+    }
   });
 
   it('returns null for no flowers', () => {

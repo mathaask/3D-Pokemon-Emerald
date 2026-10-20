@@ -13,15 +13,16 @@ import { analyze, K, type MapAnalysis } from '../../src/render/overworld/analyze
 import { extractAll, isSecretBaseSpot, type Extracted } from '../../src/render/kit/semantics';
 import { FAMILIES } from '../../src/render/kit/index';
 import { gridEvents } from '../../src/render/kit/events';
-import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../../src/render/overworld/claims';
+import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE } from '../../src/render/overworld/claims';
 import { RomReader } from '../../src/game/rom/reader';
 import { BgEventKind, loadAllMaps, MapType, MAP_TYPE_NAMES } from '../../src/game/rom/maps';
 import type { BuildingPlacement, BuildingKind } from '../../src/render/kit/buildings';
 import type { CliffPlacement } from '../../src/render/kit/cliffs';
 import type { WaterPlacement } from '../../src/render/kit/water';
-import type { TerrainPlacement } from '../../src/render/kit/terrain';
+import { cellLook, decorationPixels, DECOR_MIN_PX, type CellLook, type TerrainPlacement } from '../../src/render/kit/terrain';
+import type { FlowerCell } from '../../src/render/kit/flowers';
 import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/tables/general';
-import { SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
+import { SECONDARY_FLOWERS, SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
 import { SYM } from '../../src/game/symbols';
 import { luma } from '../../src/render/kit/palette';
 
@@ -52,7 +53,8 @@ const inMap = (r: Run, i: number) => {
  * (a tree, a building, a block) is not modelled. Approximate, in two ways: it ignores the top-layer
  * overhang cards (CLAIM_TOP) legacy still draws over claimed cells, so the shares understate legacy;
  * and a claim is not a drawing — art no family models on a cell another family claimed is simply lost
- * and counts as modelled (secondary-tileset flower beds: the terrain claims and paints plain ground).
+ * and counts as modelled (until Task 15c, the town flower beds the terrain painted over; the terrain
+ * now leaves ground decoration it cannot paint to the legacy art).
  */
 function isLegacy(a: MapAnalysis, ex: Extracted | null, i: number): boolean {
   const bits = ex ? ex.claims.bits[i] : 0;
@@ -135,6 +137,40 @@ describe('semantics on real maps', () => {
     }
   });
 
+  it("town flower beds are 3D flowers (Route 117, Verdanturf, Ever Grande; stairs too), and Dewford's bushes are none", () => {
+    // (Task 15c: before, Route 117's 52 and Ever Grande's 152 bed cells were painted over as plain ground)
+    for (const [g, n, beds, stairs] of [[0, 32, 52, 0], [0, 14, 12, 0], [0, 8, 341, 60]]) {
+      const r = run(g, n);
+      const ids = SECONDARY_FLOWERS.get(r.a.opts.secondaryTileset ?? 0)!;
+      const cells = payload<FlowerCell[]>(r.ex, 'flowers');
+      const at = new Map(cells.map((c) => [r.a.idx(c.x, c.y), c]));
+      let bedCells = 0, stairCells = 0;
+      for (let i = 0; i < r.a.N; i++) {
+        const k = r.a.kind[i];
+        if ((k !== K.Floor && k !== K.Stairs) || !ids.has(r.a.mt[i])) continue;
+        bedCells++;
+        if (k === K.Stairs) stairCells++;
+        const c = at.get(i);
+        expect(c, `${r.name} ${r.a.cellX(i)},${r.a.cellY(i)}`).toBeDefined();
+        expect(c!.second, `${r.name} ${r.a.cellX(i)},${r.a.cellY(i)}: two kinds of flowers`).toBeDefined();
+      }
+      expect(bedCells, r.name).toBeGreaterThanOrEqual(beds);
+      expect(stairCells, r.name).toBeGreaterThanOrEqual(stairs);
+    }
+    // Dewford's bush tiles (sand or sea showing between the leaves) are no flowers
+    // (Dewford Town, Routes 105-107: no flowers at all)
+    for (const n of [11, 20, 21, 22]) expect(payload<FlowerCell[]>(run(0, n).ex, 'flowers'), `0.${n}`).toEqual([]);
+  });
+
+  it("the Trainer Hill's green facade on Route 111 is no tree", () => {
+    const { a, ex } = run(0, 26);
+    const trees = ex!.added.get('trees')!;
+    for (const [x, y] of [[30, 107], [31, 107], [32, 107], [30, 110]]) {
+      expect(a.kind[a.idx(x, y)], `${x},${y}`).toBe(K.Tree); // (the analysis takes it for trees by its green)
+      expect(trees[a.idx(x, y)] & CLAIM_OBJECT, `${x},${y}`).toBe(0);
+    }
+  });
+
   it('Slateport has water with a shoreline', () => {
     const w = payload<WaterPlacement>(run(0, 1).ex, 'water');
     expect(w.cells.length).toBeGreaterThan(100);
@@ -163,8 +199,10 @@ describe('semantics on real maps', () => {
     // numbers. Before it (all / map): Mt Chimney 89.9 / 72.7 %, Jagged Pass 81.1 / 41.3, Route 112
     // 79.6 / 49.3, Route 111 62.0 / 30.1, Route 114 19.0 / 43.5, Lavaridge 87.6 / 28.5, Sootopolis
     // 77.6 / 51.8. The map's cells guard the 3D rock itself (the margin is mostly flat ground).
+    // (Route 111's map share since Task 15c: 28.79 -> 28.98 %, its 11 colour-guessed "trees" without
+    // foliage, the Trainer Hill's facade and log posts, keep their legacy art.)
     const limits: [number, number, number, number][] = [
-      [24, 12, 0.45, 0.66], [24, 13, 0.22, 0.396], [0, 27, 0.235, 0.45], [0, 26, 0.16, 0.289], [0, 29, 0.135, 0.31],
+      [24, 12, 0.45, 0.66], [24, 13, 0.22, 0.396], [0, 27, 0.235, 0.45], [0, 26, 0.16, 0.291], [0, 29, 0.135, 0.31],
       [0, 12, 0.165, 0.234], [0, 7, 0.255, 0.348],
     ];
     for (const [g, n, all, own] of limits) {
@@ -228,7 +266,8 @@ describe('semantics on real maps', () => {
     const maps = loadAllMaps(new RomReader(loadRom())).filter((m) => !skip.includes(m.mapType));
     expect(maps.length).toBeGreaterThanOrEqual(68);
     const rows: { share: number; line: string }[] = [];
-    let sum = 0, mapSum = 0, spots = 0, spotMaps = 0, claimedSpots = 0, bases = 0, nonTreeMap = 0, nonTreeBorder = 0;
+    let sum = 0, mapSum = 0, spots = 0, spotMaps = 0, claimedSpots = 0, bases = 0, nonTreeMap = 0, nonTreeBorder = 0, keptAll = 0;
+    const keptCells: string[] = [];
     const seaCliffs: string[] = [];
     for (const m of maps) {
       const r = run(m.group, m.num);
@@ -267,14 +306,30 @@ describe('semantics on real maps', () => {
       const trees = ex!.added.get('trees')!;
       for (const w of m.events.warps) {
         expect(trees[a.idx(w.x, w.y - 1)] & CLAIM_OBJECT, `${m.name} warp ${w.x},${w.y}`).toBe(0);
+        // nor anywhere along that passage (the colour-guessed trees running north from it)
+        for (let y = w.y - 1; a.inside(w.x, y); y--) {
+          const i = a.idx(w.x, y);
+          if (a.kind[i] !== K.Tree || a.isGeneralId(a.mt[i])) break;
+          expect(trees[i] & CLAIM_OBJECT, `${m.name} warp ${w.x},${w.y}: ${w.x},${y}`).toBe(0);
+        }
       }
       // Trees on non-K.Tree cells: cells the trees family claims as trees whose analysis kind is not
       // K.Tree (blocks: border forests, trunk rows, 2-wide halves; stray building-region cells), in the
       // map / in the border margin.
       const flowers = ex!.added.get('flowers')!;
       let fromMap = 0, fromBorder = 0, flowerCells = 0;
+      // Ground art the terrain leaves to the legacy art (decoration no family models: the safeguard)
+      const looks = new Map<number, CellLook>(), decor = new Map<number, number>();
+      let kept = 0;
       for (let i = 0; i < a.N; i++) {
-        if (flowers[i] & CLAIM_TOP) flowerCells++;
+        if ((a.kind[i] !== K.Floor && a.kind[i] !== K.Stairs) || ex!.claims.bits[i] & (CLAIM_SURFACE | CLAIM_DECOR)) continue;
+        const mt = a.mt[i];
+        if (!decor.has(mt)) decor.set(mt, decorationPixels(a.info, mt, cellLook(a, mt, looks).tint));
+        if (decor.get(mt)! >= DECOR_MIN_PX) { kept++; keptCells.push(`${m.name} ${a.cellX(i)},${a.cellY(i)} 0x${mt.toString(16)}`); }
+      }
+      keptAll += kept;
+      for (let i = 0; i < a.N; i++) {
+        if (flowers[i] & CLAIM_DECOR) flowerCells++;
         if (!(trees[i] & CLAIM_OBJECT) || a.kind[i] === K.Tree) continue;
         if (inMap(r, i)) fromMap++; else fromBorder++;
       }
@@ -290,7 +345,7 @@ describe('semantics on real maps', () => {
         line: `${label.padEnd(34)} ${MAP_TYPE_NAMES[m.mapType].padEnd(11)} ${pct(c.share)} ${pct(c.inMap)} ` +
           `${String(k[K.Block]).padStart(6)} ${String(k[K.Tree]).padStart(5)} ${String(k[K.Building]).padStart(5)} ` +
           `${String(k[K.Water]).padStart(5)} ${String(k[K.Floor] + k[K.Ledge] + k[K.Stairs]).padStart(5)} ` +
-          `${`${fromMap}/${fromBorder}`.padStart(16)} ${String(flowerCells).padStart(7)} ${String(mapSpots).padStart(5)}`,
+          `${`${fromMap}/${fromBorder}`.padStart(16)} ${String(flowerCells).padStart(7)} ${String(mapSpots).padStart(5)} ${String(kept).padStart(5)}`,
       });
     }
     rows.sort((p, q) => q.share - p.share);
@@ -298,23 +353,28 @@ describe('semantics on real maps', () => {
       `Legacy coverage, every outdoor map (${maps.length}; indoor, underground and Dive maps skipped), worst first.`,
       'all: legacy share of the analysed grid (the map and its 14-cell border margin); map: of the map\'s own cells.',
       'Approximate: overhang cards (CLAIM_TOP) are ignored, so legacy is understated, and claimed cells whose art no',
-      'family draws count as modelled (secondary-tileset flower beds under the terrain: not drawn at all).',
+      'family draws count as modelled.',
       'Legacy cells by kind (over the whole grid, margin included): blocks, trees, buildings, water, walk (floor,',
       'ledges, stairs: surface not modelled).',
       'non-K.Tree trees: cells the trees family claims as trees whose analysis kind is not K.Tree (blocks: border',
       'forests, trunk rows, 2-wide halves; stray building-region cells), in the map / in the margin.',
-      'flowers: cells with 3D flowers. spots: secret-base spot cells (none claimed).',
+      'flowers: cells with 3D flowers. spots: secret-base spot cells (none claimed). decor: walkable cells whose ground',
+      'art is decoration no family models (vivid compact blobs >= DECOR_MIN_PX px): the terrain leaves them to the legacy art.',
       '',
-      `${'map'.padEnd(34)} ${'type'.padEnd(11)}    all    map ${'blocks'.padStart(6)} trees bldgs water  walk non-K.Tree trees flowers spots`,
+      `${'map'.padEnd(34)} ${'type'.padEnd(11)}    all    map ${'blocks'.padStart(6)} trees bldgs water  walk non-K.Tree trees flowers spots decor`,
       ...rows.map((x) => x.line),
       '',
       `average: ${pct(sum / maps.length)} all, ${pct(mapSum / maps.length)} map`,
       `trees on non-K.Tree cells: ${nonTreeMap} in maps, ${nonTreeBorder} in margins`,
       `secret-base spots: ${spots} cells on ${spotMaps} maps (${bases} secret-base events), ${claimedSpots} claimed`,
+      `decoration left to the legacy art: ${keptAll} cells${keptCells.length ? ` (${keptCells.join('; ')})` : ''}`,
     ]);
     expect(bases).toBeGreaterThan(50); // (the check below is not vacuous)
     expect(spots).toBeGreaterThanOrEqual(bases);
     expect(claimedSpots).toBe(0);
     expect(seaCliffs).toEqual([]);
+    // The terrain's safeguard keeps little: decoration, never plain ground (Task 15c survey: 0 cells
+    // once the town flower beds are 3D flowers; the rule alone would keep the 93 bed cells it sees).
+    expect(keptAll).toBeLessThanOrEqual(8);
   });
 });
