@@ -43,8 +43,13 @@ const inMap = (r: Run, i: number) => {
   return x >= 0 && y >= 0 && x < r.width && y < r.height;
 };
 
-/** A cell still drawn with legacy geometry: no family drew its surface, or the object standing on it
- *  (a tree, a building, a block) is not modelled. */
+/**
+ * A cell still drawn with legacy geometry: no family drew its surface, or the object standing on it
+ * (a tree, a building, a block) is not modelled. Approximate, in two ways: it ignores the top-layer
+ * overhang cards (CLAIM_TOP) legacy still draws over claimed cells, so the shares understate legacy;
+ * and a claim is not a drawing — art no family models on a cell another family claimed is simply lost
+ * and counts as modelled (secondary-tileset flower beds: the terrain claims and paints plain ground).
+ */
 function isLegacy(a: MapAnalysis, ex: Extracted | null, i: number): boolean {
   const bits = ex ? ex.claims.bits[i] : 0;
   const object = a.kind[i] === K.Block || a.kind[i] === K.Tree || a.kind[i] === K.Building;
@@ -56,7 +61,7 @@ interface Coverage {
   share: number;
   /** Legacy share of the map's own cells. */
   inMap: number;
-  /** Legacy cells by analysis kind (K). */
+  /** Legacy cells by analysis kind (K), over the whole analysed grid (margin included). */
   byKind: number[];
 }
 
@@ -151,7 +156,8 @@ describe('semantics on real maps', () => {
 
   it('no family fails on the regression maps; legacy coverage report', () => {
     const lines = ['Legacy coverage, regression maps: share of cells still drawn with the legacy pixel geometry',
-      '("all": the map and its 14-cell border margin; "map": the map\'s own cells)', '',
+      '("all": the map and its 14-cell border margin; "map": the map\'s own cells). Approximate: overhang cards',
+      '(CLAIM_TOP) are ignored, so legacy is understated, and claimed cells whose art no family draws count as modelled.', '',
       `${'map'.padEnd(12)}    all    map`];
     let sum = 0, count = 0;
     for (const [name, g, n] of REGRESSION_MAPS) {
@@ -177,7 +183,7 @@ describe('semantics on real maps', () => {
     const maps = loadAllMaps(new RomReader(loadRom())).filter((m) => !skip.includes(m.mapType));
     expect(maps.length).toBeGreaterThanOrEqual(68);
     const rows: { share: number; line: string }[] = [];
-    let sum = 0, mapSum = 0, spots = 0, spotMaps = 0, claimedSpots = 0, bases = 0, b2tMap = 0, b2tBorder = 0;
+    let sum = 0, mapSum = 0, spots = 0, spotMaps = 0, claimedSpots = 0, bases = 0, nonTreeMap = 0, nonTreeBorder = 0;
     for (const m of maps) {
       const r = run(m.group, m.num);
       const { a, ex } = r;
@@ -199,13 +205,16 @@ describe('semantics on real maps', () => {
       spots += mapSpots;
       if (mapSpots) spotMaps++;
       // No tree stands right in front of a warp's passage (Petalburg Woods' north exit, Mt Pyre's
-      // summit path, the Trainer Hill door on Route 111).
+      // summit path, the Trainer Hill door on Route 111). A fact about this ROM, not a guarantee of the
+      // code: trees.ts only clears the analysis' colour-guessed trees there (General tree ids and
+      // trees taken from blocks stay), and no warp here has any of those north of it.
       const trees = ex!.added.get('trees')!;
       for (const w of m.events.warps) {
         expect(trees[a.idx(w.x, w.y - 1)] & CLAIM_OBJECT, `${m.name} warp ${w.x},${w.y}`).toBe(0);
       }
-      // Tree cells the trees family took from blocks (border forests, trunk rows, 2-wide tree halves)
-      // rather than from the analysis' tree ids: in the map / in the border margin.
+      // Trees on non-K.Tree cells: cells the trees family claims as trees whose analysis kind is not
+      // K.Tree (blocks: border forests, trunk rows, 2-wide halves; stray building-region cells), in the
+      // map / in the border margin.
       const flowers = ex!.added.get('flowers')!;
       let fromMap = 0, fromBorder = 0, flowerCells = 0;
       for (let i = 0; i < a.N; i++) {
@@ -213,8 +222,8 @@ describe('semantics on real maps', () => {
         if (!(trees[i] & CLAIM_OBJECT) || a.kind[i] === K.Tree) continue;
         if (inMap(r, i)) fromMap++; else fromBorder++;
       }
-      b2tMap += fromMap;
-      b2tBorder += fromBorder;
+      nonTreeMap += fromMap;
+      nonTreeBorder += fromBorder;
       const c = coverage(r);
       sum += c.share;
       mapSum += c.inMap;
@@ -225,22 +234,26 @@ describe('semantics on real maps', () => {
         line: `${label.padEnd(34)} ${MAP_TYPE_NAMES[m.mapType].padEnd(11)} ${pct(c.share)} ${pct(c.inMap)} ` +
           `${String(k[K.Block]).padStart(6)} ${String(k[K.Tree]).padStart(5)} ${String(k[K.Building]).padStart(5)} ` +
           `${String(k[K.Water]).padStart(5)} ${String(k[K.Floor] + k[K.Ledge] + k[K.Stairs]).padStart(5)} ` +
-          `${`${fromMap}/${fromBorder}`.padStart(11)} ${String(flowerCells).padStart(7)} ${String(mapSpots).padStart(5)}`,
+          `${`${fromMap}/${fromBorder}`.padStart(16)} ${String(flowerCells).padStart(7)} ${String(mapSpots).padStart(5)}`,
       });
     }
     rows.sort((p, q) => q.share - p.share);
     writeReport('coverage-all.txt', [
       `Legacy coverage, every outdoor map (${maps.length}; indoor, underground and Dive maps skipped), worst first.`,
       'all: legacy share of the analysed grid (the map and its 14-cell border margin); map: of the map\'s own cells.',
-      'Legacy cells by kind: blocks, trees, buildings, water, walk (floor, ledges, stairs: surface not modelled).',
-      'block->tree: tree cells the trees family took from blocks (border forests, trunk rows, 2-wide halves),',
-      'in the map / in the margin. flowers: cells with 3D flowers. spots: secret-base spot cells (none claimed).',
+      'Approximate: overhang cards (CLAIM_TOP) are ignored, so legacy is understated, and claimed cells whose art no',
+      'family draws count as modelled (secondary-tileset flower beds under the terrain: not drawn at all).',
+      'Legacy cells by kind (over the whole grid, margin included): blocks, trees, buildings, water, walk (floor,',
+      'ledges, stairs: surface not modelled).',
+      'non-K.Tree trees: cells the trees family claims as trees whose analysis kind is not K.Tree (blocks: border',
+      'forests, trunk rows, 2-wide halves; stray building-region cells), in the map / in the margin.',
+      'flowers: cells with 3D flowers. spots: secret-base spot cells (none claimed).',
       '',
-      `${'map'.padEnd(34)} ${'type'.padEnd(11)}    all    map ${'blocks'.padStart(6)} trees bldgs water  walk block->tree flowers spots`,
+      `${'map'.padEnd(34)} ${'type'.padEnd(11)}    all    map ${'blocks'.padStart(6)} trees bldgs water  walk non-K.Tree trees flowers spots`,
       ...rows.map((x) => x.line),
       '',
       `average: ${pct(sum / maps.length)} all, ${pct(mapSum / maps.length)} map`,
-      `block->tree cells: ${b2tMap} in maps, ${b2tBorder} in margins`,
+      `trees on non-K.Tree cells: ${nonTreeMap} in maps, ${nonTreeBorder} in margins`,
       `secret-base spots: ${spots} cells on ${spotMaps} maps (${bases} secret-base events), ${claimedSpots} claimed`,
     ]);
     expect(bases).toBeGreaterThan(50); // (the check below is not vacuous)

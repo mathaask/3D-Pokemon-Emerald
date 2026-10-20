@@ -103,7 +103,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   and the cone rock's top (0x083/0x084); the props take them. The height solver reads any blocked row between two
   walkable areas as a one-level face (Route 110's islet: sign + secret-base tree): props skip such steps.
   Brown rock standing in the sea (0x172–0x17f, 0x182, 0x184) stays out of `GENERAL_ROCK` (the cliffs made square
-  blocks with water-coloured tops of it). Secret-base spots (behaviours 0x90–0x9d: cave holes, shrubs, the
+  blocks with water-coloured tops of it) — but the cliffs' colour fallback still makes boxes of 392 such cells (Task 15). Secret-base spots (behaviours 0x90–0x9d: cave holes, shrubs, the
   secret-base tree; 75 cells, each under a secret-base bg event) are a gameplay cue: `isSecretBaseSpot` (semantics.ts)
   keeps every family off them (cliff/tree runs break there) so they stay legacy art.
 - Task 15: `tests/smoke/semantics.test.ts` (smoke config) pins the families on real maps (every town's PC/Mart/Gym,
@@ -114,10 +114,16 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   12.7 %** (16.2 % of map cells). Mountain maps stay mostly legacy — Mt Chimney 89.9, Lavaridge 87.6 (28.5 in-map),
   Jagged Pass 81.1, Route 112 79.6, Route 111 62.0, Route 114 19.0 — because their rock-mass top tile (0x071, 0x271,
   0x241) is also their walkable plateau floor: the cliffs' common-floor-colour veto rejects the masses and tints
-  the mass tops with a dark face tile. Sky Pillar Top's 87.8 is its cloud backdrop. Secondary-tileset flower tiles
-  (Route 117 0x208–0x217, Ever Grande 0x290–0x297 and the flowers over stone) fail the blob test and stay legacy.
-  The analysis' colour-guessed trees (secondary green blocks) in the column north of a warp are left to legacy
-  art: they were Petalburg Woods' north exit, Mt Pyre's summit path and the Trainer Hill door's lintel.
+  the mass tops with a dark face tile. Sky Pillar Top's 87.8 is its cloud backdrop. Secondary-tileset flower beds
+  fail the blob test and are **not drawn at all** in Modern: Route 117 0x208–0x217 (52 floor cells) and Ever Grande
+  0x290–0x297 (76 floor + 38 stairs cells) draw their flowers in the bottom layer (topCover 0), terrain claims the
+  surface and paints plain ground, legacy skips the floor quad and there is no top card — the coverage metric
+  counts them as modelled. (Ever Grande's flowers over stone, 0x298–0x2a7, are top-layer art: legacy cards stay.)
+  The metric also ignores CLAIM_TOP overhang cards, so its shares understate legacy. Sea rock: the cliffs' colour
+  fallback (`isRocky`) still takes 392 General sea-rock cells (0x17a/17b/17c/182/184…, 18 maps, most on Routes
+  124/127/133) as cliff boxes, despite their absence from `GENERAL_ROCK` (Task 14 above). The analysis'
+  colour-guessed trees (secondary green blocks) in the column north of a warp are left to legacy art: they were
+  Petalburg Woods' north exit, Mt Pyre's summit path and the Trainer Hill door's lintel.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
