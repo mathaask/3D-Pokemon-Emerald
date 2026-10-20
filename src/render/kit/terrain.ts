@@ -66,8 +66,21 @@ function topFloorPixels(info: TileInfo, m: number): number {
 }
 const isLedge = (beh: number) => beh >= MB.JUMP_EAST && beh <= MB.JUMP_SOUTHWEST;
 
-/** Material + dominant (sRGB) colour of a metatile's ground layer, cached per metatile. */
+/** Material + dominant (sRGB) colour of the floor a metatile shows (the terrain's look), cached per metatile. */
 export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>): CellLook {
+  return look(a, m, cache, true);
+}
+
+/**
+ * Material + dominant (sRGB) colour of a metatile's ground layer, ignoring floor art a COVERED top
+ * layer paints over it (cellLook takes that): what the cliffs' rules ask about a tile (is a rock tile
+ * rock under its rim art; the ground a ledge stands in). Cached per metatile (its own cache).
+ */
+export function groundLayerLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>): CellLook {
+  return look(a, m, cache, false);
+}
+
+function look(a: MapAnalysis, m: number, cache: Map<number, CellLook>, topFloor: boolean): CellLook {
   let e = cache.get(m);
   if (!e) {
     const { bottom, both, attributes } = a.info;
@@ -78,7 +91,7 @@ export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>
     // COVERED cell draws its top layer on the floor too: where that paints most of the tile (Ever
     // Grande's brick path, rock tops, logs and boardwalks laid over grass or rock) it is the floor
     // the player sees. (Not a ledge: the cliffs draw its lip, the ground is the bottom layer's.)
-    const floor = land && covered && !isLedge(attrBehavior(attributes[m])) && topFloorPixels(a.info, m) >= TOP_FLOOR_PX ? both : bottom;
+    const floor = topFloor && land && covered && !isLedge(attrBehavior(attributes[m])) && topFloorPixels(a.info, m) >= TOP_FLOOR_PX ? both : bottom;
     let c = groundColor(floor, m, ground) ?? anyColor(floor, m) ?? anyColor(both, m) ?? [0.45, 0.7, 0.5];
     // Where the ground is water on land, a COVERED cell's top layer may hold it.
     if (land && isWater(c) && covered) c = groundColor(both, m, ground) ?? c;

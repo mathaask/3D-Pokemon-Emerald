@@ -10,6 +10,7 @@ import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
 import { MB } from '../src/game/behaviors';
 import { emitLegacy } from '../src/render/overworld/legacyQuads';
+import { LayerType } from '../src/game/rom/tileset';
 
 // A plateau (rows 0-1) above a two-row rock face (rows 2-3) above lowland (rows 4-5).
 function plateau() {
@@ -652,5 +653,45 @@ describe('cliff build', () => {
 
   it('builds nothing for an empty placement', () => {
     expect(cliffFamily.build({ runs: [], sides: [], ledges: [] }, { a: map(['..']), events: NO_EVENTS, quality: 'medium' }, kit())).toBeNull();
+  });
+});
+
+describe("cliffs read a tile's ground layer, not the floor art a covered top layer paints over it", () => {
+  // Task 16a tints the terrain of a COVERED tile from its composite where its top layer paints most of
+  // it (rock tops, Ever Grande's bricks). The cliffs' rules ask what the ground layer under that art
+  // is: their choices must not move with it.
+  const LIGHT = px(27, 22, 20), DARK = px(12, 7, 5), GRASS = px(14, 24, 20);
+  /** 9: rock whose covered top layer paints dark rock and a strip of grass over a light rock ground
+   *  layer (all of it differs: the terrain samples the composite); 11: grass under covered light rock art. */
+  const covered = (info: ReturnType<typeof fakeInfo>) => {
+    const fill = (m: number, c: number, from: number, to: number, layers: Uint16Array[]) => { for (const l of layers) l.fill(c, m * 256 + from, m * 256 + to); };
+    fill(1, GRASS, 0, 256, [info.both, info.bottom]);
+    fill(9, LIGHT, 0, 256, [info.both, info.bottom]); fill(9, DARK, 0, 150, [info.both]); fill(9, GRASS, 150, 256, [info.both]);
+    info.attributes[9] = LayerType.COVERED << 12; info.topCover[9] = 256;
+    fill(12, GRASS, 0, 256, [info.both, info.bottom]); fill(12, LIGHT, 32, 224, [info.both]);
+    info.attributes[12] = LayerType.COVERED << 12; info.topCover[12] = 192;
+    fill(7, GRASS, 0, 256, [info.both, info.bottom]);
+  };
+
+  it("picks a rock mass's top tile by its ground layer (rock), not by the grass its art paints", () => {
+    setRockIds((m) => m === 2 || m === 9);
+    try {
+      const a = map(['.......', '.RR....', '.RR....', '.##....', '.......', '.......'], covered, { ids: { R: 9 } });
+      const { p, claims } = extract(a);
+      expect(p.runs.map((r) => r.x + 0)).toEqual([1, 2]);
+      // the top rows take the mass's commonest rock tile: 9 (four cells) over 2 (two)
+      expect(claims.groundMt[a.idx(1, 1)]).toBe(9);
+      expect(claims.groundMt[a.idx(2, 1)]).toBe(9);
+    } finally {
+      setRockIds(() => false);
+    }
+  });
+
+  it("colours a ledge's lip as the ground layer under it (grass), not its covered rock art", () => {
+    const a = map(['...', 'vvv', 'fff'], covered);
+    expect(a.groundOf[a.idx(0, 1)]).toBe(12);
+    const { p } = extract(a);
+    expect(p.ledges).toHaveLength(3);
+    for (const l of p.ledges) expect(l.grass).toEqual([14 / 31, 24 / 31, 20 / 31]);
   });
 });

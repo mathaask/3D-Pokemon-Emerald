@@ -12,7 +12,7 @@ import type { GridEvents } from './events';
 import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, QuadWriter, type V3 } from './geom';
 import { kitMaterial } from './materials';
-import { cellLook, GroundMat, type CellLook } from './terrain';
+import { groundLayerLook, GroundMat, type CellLook } from './terrain';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 import { SECONDARY_ROCK, SECONDARY_ROCK_TOPS } from './tables/secondary';
 
@@ -500,7 +500,7 @@ export const cliffFamily: Family<CliffPlacement> = {
         const run = runs[k];
         faceMts.push(...run.mts.slice(-run.F));
         // a rock mass's top: its rock tile whose ground layer shows rock (not the ground under the rim art)
-        if (run.below === undefined && run.above < 0) for (const m of run.mts) if (rockFace(m) && !isGround(cellLook(a, m, looks).tint)) count(tops, m);
+        if (run.below === undefined && run.above < 0) for (const m of run.mts) if (rockFace(m) && !isGround(groundLayerLook(a, m, looks).tint)) count(tops, m);
         // a terrace topped in the colour of its ground: the walkable ground's own tile, else its top tile
         if (run.below !== undefined) {
           for (const m of run.mts.slice(0, -run.F)) {
@@ -568,7 +568,7 @@ export const cliffFamily: Family<CliffPlacement> = {
     // A grass lip where the wall's top tile or the plateau above is grass.
     const grass = (m: number) => {
       if (a.info.green[m] < FOLIAGE) return null; // (no grass to speak of: skips the colour sampling)
-      const look = cellLook(a, m, looks);
+      const look = groundLayerLook(a, m, looks);
       return look.mat === GroundMat.Grass ? look.tint : null;
     };
     for (const run of runs) {
@@ -610,7 +610,7 @@ export const cliffFamily: Family<CliffPlacement> = {
       if (kind[i] !== K.Ledge) continue;
       const dir = LEDGE_DIR[a.beh[i]];
       if (!dir) continue;
-      const look = cellLook(a, a.groundOf[i] >= 0 ? a.groundOf[i] : a.mt[i], looks);
+      const look = groundLayerLook(a, a.groundOf[i] >= 0 ? a.groundOf[i] : a.mt[i], looks);
       out.ledges.push({ x: a.cellX(i), y: a.cellY(i), h: Math.max(0, height[i]), dir, grass: look.tint });
     }
     return out;
