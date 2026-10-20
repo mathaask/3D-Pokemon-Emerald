@@ -131,8 +131,10 @@ function sameFamily(a: RGB, b: RGB): boolean {
 /**
  * Colours of a flower bed tile (two big flowers of two kinds among leaves, tables/secondary.ts): its
  * flower-head colours grouped into families of one hue (a petal's shades and highlights; whites and
- * pale tints together), families of 4 px or more by size, each its mean colour: the first two are
- * the two kinds' petals, a third their centre. Null without a flower colour.
+ * pale tints together), families of 4 px or more by size, each its mean colour weighted towards its
+ * lighter shades (luma³: the GBA draws a petal's shading into it, the 3D flower is shaded by its
+ * light; Ever Grande's yellow, drawn mostly in a dark shade, would average to mustard): the first two
+ * are the two kinds' petals, a third their centre. Null without a flower colour.
  */
 export function bedColors(px: Uint16Array, m: number): { petals: RGB; second?: RGB; centre?: RGB } | null {
   const counts = new Map<number, number>();
@@ -140,16 +142,18 @@ export function bedColors(px: Uint16Array, m: number): { petals: RGB; second?: R
     const v = px[m * 256 + p];
     if (!(v & 0x8000) && isHead(bgr555ToSrgb(v))) counts.set(v, (counts.get(v) ?? 0) + 1);
   }
-  const families: { first: RGB; sum: RGB; n: number }[] = [];
+  const families: { first: RGB; sum: RGB; weight: number; n: number }[] = [];
   for (const [v, n] of [...counts].sort((p, q) => q[1] - p[1])) {
     const c = bgr555ToSrgb(v);
     let f = families.find((g) => sameFamily(g.first, c));
-    if (!f) families.push(f = { first: c, sum: [0, 0, 0], n: 0 });
-    for (let k = 0; k < 3; k++) f.sum[k] += c[k] * n;
+    if (!f) families.push(f = { first: c, sum: [0, 0, 0], weight: 0, n: 0 });
+    const w = n * luma(c) ** 3;
+    for (let k = 0; k < 3; k++) f.sum[k] += c[k] * w;
+    f.weight += w;
     f.n += n;
   }
   const [a, b, c] = families.filter((f) => f.n >= 4).sort((p, q) => q.n - p.n)
-    .map((f) => f.sum.map((s) => s / f.n) as RGB);
+    .map((f) => f.sum.map((s) => s / f.weight) as RGB);
   return a ? { petals: a, ...(b ? { second: b } : {}), ...(c ? { centre: c } : {}) } : null;
 }
 

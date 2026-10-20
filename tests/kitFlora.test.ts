@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { flowerFamily, isFlowerTile, petalColors, setFlowerIds, type FlowerCell } from '../src/render/kit/flowers';
+import { bedColors, flowerFamily, isFlowerTile, petalColors, setFlowerIds, type FlowerCell } from '../src/render/kit/flowers';
 import { BLADES, bladeColor, clump, grassFamily, LONG_SCALE, type GrassCell } from '../src/render/kit/grass';
 import { cellLook } from '../src/render/kit/terrain';
 import { Claims, CLAIM_BLADES, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
-import { bgr555ToSrgb, luma } from '../src/render/kit/palette';
+import { bgr555ToSrgb, luma, saturation } from '../src/render/kit/palette';
 import { disposeKit } from '../src/render/kit/semantics';
 import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
@@ -356,6 +356,23 @@ describe('flower extract', () => {
     expect(c.petals[0][2]).toBeLessThan(c.petals[0][1] - 0.3); // yellow
     expect(c.second![2]).toBeGreaterThan(c.second![0] + 0.25); // blue
     expect(c.petals[1]).toEqual([0.98, 0.85, 0.3]); // (the default centre: yellow)
+  });
+
+  it("weights a petal's shades towards the lighter one: Ever Grande's yellow is yellow, not mustard", () => {
+    // Ever Grande 0x290: dark yellow a59452 x21, yellow e6d619 x9, light fff752 x3 (and its violet kind)
+    const info = fakeInfo();
+    const p = painter(info, 0x290);
+    p.fill(MINT);
+    p.rect(0, 0, 7, 3, px(20, 18, 10)); // 21
+    p.rect(0, 3, 3, 3, px(28, 26, 3)); // 9
+    p.rect(3, 3, 3, 1, px(31, 30, 10)); // 3
+    p.rect(8, 8, 7, 3, px(12, 11, 21)); // the violet kind, 21 px
+    const c = bedColors(info.bottom, 0x290)!;
+    const mean = [(20 * 21 + 28 * 9 + 31 * 3) / 33 / 31, (18 * 21 + 26 * 9 + 30 * 3) / 33 / 31, (10 * 21 + 3 * 9 + 10 * 3) / 33 / 31] as [number, number, number];
+    expect(luma(c.petals)).toBeGreaterThan(luma(mean) + 0.06); // lighter than the plain mean of the shades
+    expect(saturation(c.petals)).toBeGreaterThan(saturation(mean) + 0.05); // and a clearer yellow
+    expect(c.petals[2]).toBeLessThan(c.petals[1] - 0.45);
+    expect(c.second![2]).toBeGreaterThan(c.second![0] + 0.2); // (the violet kind)
   });
 
   it('reads a bed under a stone ledge from the ground layer, and leaves the ledge (top layer) to the legacy art', () => {
