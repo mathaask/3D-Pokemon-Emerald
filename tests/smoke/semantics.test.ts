@@ -200,12 +200,12 @@ describe('semantics on real maps', () => {
       if (mapSpots) spotMaps++;
       // No tree stands right in front of a warp's passage (Petalburg Woods' north exit, Mt Pyre's
       // summit path, the Trainer Hill door on Route 111).
+      const trees = ex!.added.get('trees')!;
       for (const w of m.events.warps) {
-        expect(ex!.added.get('trees')![a.idx(w.x, w.y - 1)] & CLAIM_OBJECT, `${m.name} warp ${w.x},${w.y}`).toBe(0);
+        expect(trees[a.idx(w.x, w.y - 1)] & CLAIM_OBJECT, `${m.name} warp ${w.x},${w.y}`).toBe(0);
       }
       // Tree cells the trees family took from blocks (border forests, trunk rows, 2-wide tree halves)
       // rather than from the analysis' tree ids: in the map / in the border margin.
-      const trees = ex!.added.get('trees')!;
       const flowers = ex!.added.get('flowers')!;
       let fromMap = 0, fromBorder = 0, flowerCells = 0;
       for (let i = 0; i < a.N; i++) {
