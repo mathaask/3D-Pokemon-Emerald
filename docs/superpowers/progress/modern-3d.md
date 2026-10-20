@@ -179,6 +179,21 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   (glass colours in pane-sized runs) glow at night (tGlass mask, 32 of 44 facades). (9) Bed petal colours are
   luma³-weighted (Ever Grande yellow bfaf43 → d3c43b). The map preview takes `&h=`. 518 maps 0 failures; regress
   t16a ≤ 75 calls / 403k tris.
+- Task 16 (polish/perf): soft sun shadows by quality (`OverworldView.setShadowQuality`: 1024/2048/4096 with a PCF
+  `shadow.radius` keeping a ~0.06-unit soft edge; three r186 has no PCFSoftShadowMap any more); `Renderer.setWorldStyle`
+  (Modern tilt-shift 0.52/0.3/1.2, Retro 0.52/0.22/2.2, `tiltShiftFor`); PostFX works in drawing-buffer pixels
+  (`composer.setPixelRatio(1)`, `PostFX.sceneTargetSize()`): at DPR 2 the scene target is 2560×1600, not 5120×3200
+  (GPU frame 400–550 → 80–117 ms on the dev iGPU); the metatile atlas redraws only when its 32 KB of BG tiles, BG
+  palettes, char base, tilesets or ground refs change (live Route 101: half the synced frames; preview: once), skips
+  the Dry band unless a Dry quad exists, and draws without a clear; the water shader gates shore-foam noise, rock
+  fetches, waterfall streaks and pool fbm (same pixels); the fade circle centres on the sprite's screen middle with a
+  0.85-radius full core (`FADE_CORE`: feet to head top never hidden); `WARM_GLOW_GLSL`; cliffs use
+  `groundLayerLook` (output identical to pre-16a on all 82 outdoor maps). **Status (final perf):** regress t16 max
+  74 calls / 403,269 triangles (medium, 1280×800; budgets 150 / 1.5 M); GPU frame (timer queries, Intel iGPU,
+  medium) Route 119 17.6 → 16.9 ms, Woods 18.9 → 17.8, Route 124 17.0 → 15.2; warm rebuild (`PreviewApp.rebuild()`,
+  as crossing a connection) ≤ 83 ms on every regression map + Ever Grande (Route 119 71, Ever Grande 57); the cold
+  first build in a page (regress `buildMs`) is machine-state dominated on the dev laptop (same code: 41–134 ms in a
+  quiet session, 88–245 ms under load; base vs Task 16 equal in interleaved A/B) — see task-16 report.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
