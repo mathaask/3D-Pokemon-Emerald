@@ -12,13 +12,22 @@ export interface Settings {
 
 const KEY = 'emerald3d.settings';
 
-export function loadSettings(): Settings {
+/** Settings from their saved JSON (null: none saved); defaults for what is missing or unreadable. */
+export function parseSettings(raw: string | null): Settings {
   const defaults: Settings = { view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0 };
+  let s: Settings;
   try {
-    return { ...defaults, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
+    s = { ...defaults, ...JSON.parse(raw || '{}') };
   } catch {
     return defaults;
   }
+  // an unknown style would turn the kit off yet keep Modern's shadows and blur
+  if (s.worldStyle !== 'modern' && s.worldStyle !== 'retro') s.worldStyle = 'modern';
+  return s;
+}
+
+export function loadSettings(): Settings {
+  return parseSettings(localStorage.getItem(KEY));
 }
 
 export function saveSettings(s: Settings): void {
