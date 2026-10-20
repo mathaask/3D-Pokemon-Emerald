@@ -248,9 +248,14 @@ export class MetatileAtlas {
     this.material.uniforms.uCharBase.value = charBase;
     this.target.scissorTest = !this.dryNeeded;
     const prev = renderer.getRenderTarget();
+    // No clear: the quad writes every pixel it covers (a scissored clear also costs more on ANGLE
+    // than the band it saves).
+    const autoClear = renderer.autoClear;
+    renderer.autoClear = false;
     renderer.setRenderTarget(this.target);
     renderer.render(this.scene, this.camera);
     renderer.setRenderTarget(prev);
+    renderer.autoClear = autoClear;
     return true;
   }
 

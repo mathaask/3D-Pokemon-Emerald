@@ -27,11 +27,12 @@ function setup() {
 /** Counts the atlas draws and records the scissor state of the target at each. */
 function fakeRenderer() {
   let current: THREE.WebGLRenderTarget | null = null;
-  const draws: { scissorTest: boolean; scissor: number[] }[] = [];
+  const draws: { scissorTest: boolean; scissor: number[]; autoClear: boolean }[] = [];
   const r = {
+    autoClear: true,
     getRenderTarget: () => current,
     setRenderTarget: (t: THREE.WebGLRenderTarget | null) => { current = t; },
-    render: () => { draws.push({ scissorTest: current!.scissorTest, scissor: current!.scissor.toArray() }); },
+    render: () => { draws.push({ scissorTest: current!.scissorTest, scissor: current!.scissor.toArray(), autoClear: r.autoClear }); },
   };
   return { r: r as unknown as THREE.WebGLRenderer, draws };
 }
@@ -103,6 +104,9 @@ describe('metatile atlas re-rendering', () => {
     atlas.render(r, 0);
     expect(draws[0].scissorTest).toBe(true);
     expect(draws[0].scissor).toEqual([0, 0, ATLAS_W, Variant.Dry * VARIANT_H]);
+    // drawn over, not cleared first (the quad covers it), and the renderer's setting restored
+    expect(draws[0].autoClear).toBe(false);
+    expect(r.autoClear).toBe(true);
     // needed again: the band may be stale, so the whole atlas is drawn at once
     atlas.setDryNeeded(true);
     atlas.render(r, 0);
