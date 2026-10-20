@@ -16,6 +16,8 @@ export const ATLAS_H = VARIANT_H * 5; // bottom, top, combined, cutout, dry
 export const enum Variant { Bottom = 0, Top = 1, Both = 2, Cutout = 3, Dry = 4 }
 
 const DEFS_W = 10; // 8 tile entries, attributes, reference ground metatile
+/** Bytes of tile data a metatile can name from the character base: 1024 4bpp tiles. */
+const CHAR_BYTES = 1024 * 32;
 
 const VERT = /* glsl */ `
   in vec3 position;
@@ -125,8 +127,15 @@ export class MetatileAtlas {
   readonly entries = new Uint16Array(8 * 1024);
   primary = 0;
   secondary = 0;
+  /** Whether the world draws with the Dry variant (else its band is left out of each redraw). */
+  dryNeeded = true;
+  /** Inputs of the last draw: tile data from the character base, BG palettes, character base. */
+  private lastTiles = new Uint32Array(CHAR_BYTES / 4);
+  private lastPalette = new Uint16Array(256);
+  private lastCharBase = -1;
+  private dirty = true;
 
-  constructor(gbaTex: GbaTextures, maxAnisotropy: number) {
+  constructor(private gbaTex: GbaTextures, maxAnisotropy: number) {
     this.target = new THREE.WebGLRenderTarget(ATLAS_W, ATLAS_H, {
       colorSpace: THREE.SRGBColorSpace,
       generateMipmaps: true,
@@ -135,6 +144,8 @@ export class MetatileAtlas {
       depthBuffer: false,
     });
     this.target.texture.anisotropy = maxAnisotropy;
+    // (used when the Dry band is left out: the variants below it)
+    this.target.scissor.set(0, 0, ATLAS_W, Variant.Dry * VARIANT_H);
     this.defs = new THREE.DataTexture(this.defsData, DEFS_W, 1024, THREE.RedIntegerFormat, THREE.UnsignedShortType);
     this.defs.internalFormat = 'R16UI';
     this.defs.minFilter = THREE.NearestFilter;
@@ -186,6 +197,7 @@ export class MetatileAtlas {
     load(primary, 0);
     load(secondary, 512);
     this.defs.needsUpdate = true;
+    this.dirty = true;
     return true;
   }
 
@@ -193,14 +205,53 @@ export class MetatileAtlas {
   setGroundRefs(refs: Int16Array): void {
     for (let m = 0; m < 1024; m++) this.defsData[m * DEFS_W + 9] = refs[m] >= 0 ? refs[m] : m;
     this.defs.needsUpdate = true;
+    this.dirty = true;
   }
 
-  render(renderer: THREE.WebGLRenderer, charBase: number): void {
+  /** Whether the current world draws with the Dry variant. Without it, redraws skip its band (a
+   *  fifth of the atlas); once it is needed again the whole atlas is redrawn. */
+  setDryNeeded(needed: boolean): void {
+    if (needed && !this.dryNeeded) this.dirty = true;
+    this.dryNeeded = needed;
+  }
+
+  /** Forces a redraw on the next render(). */
+  invalidate(): void {
+    this.dirty = true;
+  }
+
+  /** True (and the inputs recorded) when what the atlas shows changed since the last draw: the tile
+   *  data its metatiles name (tile animations write it), the BG palettes, the character base. */
+  private inputsChanged(charBase: number): boolean {
+    let changed = this.dirty || charBase !== this.lastCharBase;
+    const vram = this.gbaTex.vramBytes;
+    const n = Math.min(CHAR_BYTES, vram.length - charBase) >> 2;
+    const tiles = new Uint32Array(vram.buffer, vram.byteOffset + charBase, n);
+    const last = this.lastTiles;
+    if (!changed) for (let k = 0; k < n; k++) if (tiles[k] !== last[k]) { changed = true; break; }
+    const pal = this.gbaTex.bgPalette;
+    if (!changed) for (let k = 0; k < 256; k++) if (pal[k] !== this.lastPalette[k]) { changed = true; break; }
+    if (!changed) return false;
+    last.set(tiles);
+    this.lastPalette.set(pal);
+    this.lastCharBase = charBase;
+    this.dirty = false;
+    return true;
+  }
+
+  /**
+   * Draws the atlas from live VRAM and palettes, when they (or the metatile definitions) changed
+   * since the last draw. Returns whether it drew.
+   */
+  render(renderer: THREE.WebGLRenderer, charBase: number): boolean {
+    if (!this.inputsChanged(charBase)) return false;
     this.material.uniforms.uCharBase.value = charBase;
+    this.target.scissorTest = !this.dryNeeded;
     const prev = renderer.getRenderTarget();
     renderer.setRenderTarget(this.target);
     renderer.render(this.scene, this.camera);
     renderer.setRenderTarget(prev);
+    return true;
   }
 
   /**

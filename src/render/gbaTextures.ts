@@ -51,6 +51,13 @@ export class GbaTextures {
    */
   paletteSource: Uint16Array | null = null;
   private lastPalette = new Uint16Array(512);
+  /** BG palettes 0-15 as last uploaded (BGR555). */
+  readonly bgPalette = this.lastPalette.subarray(0, 256);
+
+  /** The VRAM the vram texture mirrors (uploaded on render after update() saw it dirty). */
+  get vramBytes(): Uint8Array {
+    return this.bus.vram;
+  }
 
   /** Uploads changed memory. Returns true if anything changed. */
   update(force = false): boolean {

@@ -6,7 +6,7 @@
 // default 45° camera the result lines up with the original pixel art.
 
 import * as THREE from 'three';
-import type { MetatileAtlas } from './metatileAtlas';
+import { Variant, type MetatileAtlas } from './metatileAtlas';
 import type { Quality } from '../post';
 import type { GridEvents } from '../kit/events';
 import type { KitUniforms } from '../kit/materials';
@@ -146,6 +146,7 @@ export class World {
       return a.inside(xi, yi) ? a.idx(xi, yi) : -1;
     };
     this.atlas.setGroundRefs(model.groundRefs);
+    this.atlas.setDryNeeded(model.quads.some((q) => q.variant === Variant.Dry));
     this.model = model;
     const opaque = newBatch();
     const cutout = newBatch();
