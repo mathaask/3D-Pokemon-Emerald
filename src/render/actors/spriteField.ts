@@ -156,9 +156,12 @@ export class SpriteField {
     renderer.autoClear = prevAutoClear;
   }
 
-  dispose(): void {
-    // the slot attribute belongs to the atlas (shared, not copied): disposing it would free its buffer
-    this.geometry.deleteAttribute('aSlotSize');
+  /**
+   * Frees the targets, materials and quad. The last `slots` attribute belongs to the caller (the atlas's,
+   * shared, still drawn by it): its GL buffer is kept unless `releaseSlots` (a caller's own, e.g. a fixture).
+   */
+  dispose(releaseSlots = false): void {
+    if (!releaseSlots) this.geometry.deleteAttribute('aSlotSize');
     this.geometry.dispose();
     for (const p of this.passes) p.material.dispose();
     this.ping.dispose();

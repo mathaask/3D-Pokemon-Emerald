@@ -8,7 +8,7 @@
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
 // ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
-// selftest? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
+// selftest?, selftestMid? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
 // cold one; static entries report the preview's cold world build ms instead).
 // --static adds the static map-preview entries (object events from ROM templates; STATIC below);
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
@@ -19,8 +19,9 @@
 // --selftest runs the inflation-field self-test (emu/preview.selfTest(): the GPU field vs its CPU reference
 // on the current atlas, the bleed fixture, the GPU ms of one update) on the entries marked `selftest`, in
 // Modern (Retro computes no field), after their steps; it goes into stats and the field's slots into
-// _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). Parity is gated:
-// maxErr and fixtureMaxErr ≤ 0.02 px (SELFTEST_TOL).
+// _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
+// `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png).
+// Gated: slots > 0, maxErr and fixtureMaxErr ≤ 0.02 px (SELFTEST_TOL).
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -30,15 +31,21 @@ import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer, { type Page } from 'puppeteer-core';
 
-interface LiveEntry { name: string; state: string; steps: [string, number][]; query?: string; eval?: string; selftest?: boolean }
+interface LiveEntry {
+  name: string; state: string; steps: [string, number][]; query?: string; eval?: string;
+  /** --selftest: self-test after the steps; `selftestAfter`: also right after step n (mid-walk). */
+  selftest?: boolean; selftestAfter?: number;
+}
 
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
 // takes 16 frames per cell). r101: standing still, the youngster stays off-screen left, so the
 // player walks 3 cells towards him. transition: the battle flash peaks at 8 frames and is gone by
 // 15; at 40 the spiral wipe starts over the zoomed overworld, its actors still visible.
+// r101_grass's mid-walk self-test (after DOWN 18) lands on a frame whose sync changed the atlas's alpha
+// (the player is still walking), as does its final one: a field one sync behind the atlas fails there.
 const LIVE: LiveEntry[] = [
   { name: 'r101', state: 'out/r101.state', steps: [['LEFT', 48], ['', 30]] },                // Route 101: player, youngster, boy
-  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true }, // standing in tall grass
+  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true, selftestAfter: 1 }, // standing in tall grass
   { name: 'r101_tree', state: 'out/r101.state', steps: [['LEFT', 66], ['DOWN', 42], ['', 30]] },   // against the treeline (fade)
   { name: 'r101_low', state: 'out/r101.state', query: 'camera=3', steps: [['', 30]] },         // Low preset: volume visible
   { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]] },
@@ -92,7 +99,7 @@ interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
-  diff?: Diff; selftest?: SelfTest;
+  diff?: Diff; selftest?: SelfTest; selftestMid?: SelfTest;
 }
 
 function arg(name: string, def: string): string {
@@ -215,6 +222,21 @@ async function buildSheets(page: Page, dir: string): Promise<void> {
   path.join(dir, '_crops.png'), CROP_W * 4, scale);
 }
 
+/**
+ * One self-test point: `api`.selfTest() and the field dump (_field_<dump>.png). ok: some slots were
+ * compared and both parity errors are finite and within SELFTEST_TOL (NaN arrives as null).
+ */
+async function selfTestPoint(page: Page, api: string, outDir: string, dump: string): Promise<{ result: SelfTest; ok: boolean; text: string }> {
+  const result = await page.evaluate(`${api}.selfTest()`) as SelfTest;
+  const png = await page.evaluate(`${api}.fieldDump()`) as string;
+  fs.writeFileSync(path.join(outDir, `_field_${dump}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+  const within = (v: number) => Number.isFinite(v) && v <= SELFTEST_TOL;
+  const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr);
+  let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} gpu ${round(result.gpuMs, 3)} ms`;
+  if (!(result.gpuMs <= FIELD_GPU_MS)) text += ` (> ${FIELD_GPU_MS} ms target)`;
+  return { result, ok, text };
+}
+
 async function main(): Promise<void> {
   const root = path.resolve(import.meta.dirname, '..');
   const label = arg('label', '');
@@ -295,6 +317,8 @@ async function main(): Promise<void> {
             console.log(`GPU: ${gpuName}`);
           }
           let stepMsMax: number | undefined;
+          const selfTests = selftest && e.selftest === true && style === 'modern';
+          let mid: { result: SelfTest; ok: boolean; text: string } | undefined;
           if (e.kind === 'live') {
             if (e.eval) await page.evaluate(e.eval);
             // the entry's first frame builds the world and compiles programs (seconds, varying with
@@ -303,6 +327,7 @@ async function main(): Promise<void> {
             for (const [n, [keys, frames]] of e.steps.entries()) {
               const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
+              if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
             }
           } else {
             // a focus naming no template would frame the map centre instead: never a baseline
@@ -320,16 +345,16 @@ async function main(): Promise<void> {
           if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
           // (the self-test checks the screenshot's frame, after the steps; GPU timing then renders 60 more frames)
           let selfLine = '';
-          if (selftest && e.selftest && style === 'modern') {
-            const r = await page.evaluate(`${api}.selfTest()`) as SelfTest;
-            entry.selftest = r;
-            const png = await page.evaluate(`${api}.fieldDump()`) as string;
-            fs.writeFileSync(path.join(outDir, `_field_${e.name}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
-            // (NaN arrives as null)
-            const ok = (v: number) => Number.isFinite(v) && v <= SELFTEST_TOL;
-            if (!ok(r.maxErr) || !ok(r.fixtureMaxErr)) selftestFailures.push(key);
-            selfLine = ` | selftest ${r.slots} slots maxErr ${r.maxErr} fixture ${r.fixtureMaxErr} gpu ${round(r.gpuMs, 3)} ms`;
-            if (!(r.gpuMs <= FIELD_GPU_MS)) selfLine += ` (> ${FIELD_GPU_MS} ms target)`;
+          if (mid) {
+            entry.selftestMid = mid.result;
+            if (!mid.ok) selftestFailures.push(`${key} (after step ${e.kind === 'live' ? e.selftestAfter : '?'})`);
+            selfLine += ` | mid-walk ${mid.text}`;
+          }
+          if (selfTests) {
+            const t = await selfTestPoint(page, api, outDir, e.name);
+            entry.selftest = t.result;
+            if (!t.ok) selftestFailures.push(key);
+            selfLine += ` | ${t.text}`;
           }
           if (gpu) {
             const g = await page.evaluate(`${api}.gpuFrames(60)`) as { gpuMs: number; gpuP90: number; cpuMs: number };
@@ -362,7 +387,9 @@ async function main(): Promise<void> {
           console.log(`[${key}] FAILED: ${(err as Error).message}`);
           // no stale shot or stats of an earlier run of this label may stand in for the failed entry
           fs.rmSync(path.join(outDir, `${key}.png`), { force: true });
-          if (style === 'modern') fs.rmSync(path.join(outDir, `_field_${e.name}.png`), { force: true });
+          if (style === 'modern') {
+            for (const d of [e.name, `${e.name}_mid`]) fs.rmSync(path.join(outDir, `_field_${d}.png`), { force: true });
+          }
           delete stats[key];
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
@@ -380,7 +407,7 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
-  if (selftestFailures.length) console.log(`self-test parity > ${SELFTEST_TOL} px in: ${selftestFailures.join(', ')}`);
+  if (selftestFailures.length) console.log(`self-test failed (no slots, or parity > ${SELFTEST_TOL} px) in: ${selftestFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || selftestFailures.length) process.exitCode = 1;
 }
 

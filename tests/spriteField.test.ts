@@ -18,4 +18,21 @@ describe('SpriteField', () => {
     expect(g.getAttribute('aSlotSize')).toBe(slots);
     expect(g.instanceCount).toBe(3);
   });
+
+  it("frees the caller's slot attribute only when asked (the atlas keeps drawing with its own)", () => {
+    for (const release of [false, true]) {
+      const f = new SpriteField();
+      const slots = new THREE.InstancedBufferAttribute(new Float32Array(128 * 4), 4);
+      let scene: THREE.Scene | null = null;
+      const fake = { getRenderTarget: () => null, setRenderTarget: () => {}, setClearColor: () => {}, getClearColor: (c: THREE.Color) => c,
+        getClearAlpha: () => 1, clear: () => {}, render: (s: THREE.Scene) => { scene ??= s; } } as unknown as THREE.WebGLRenderer;
+      f.update(fake, new THREE.Texture(), slots, 1);
+      const g = ((scene as unknown as THREE.Scene).children[0] as THREE.Mesh).geometry;
+      // three frees the GL buffers of the attributes a geometry holds when it is disposed
+      let atDispose: unknown = 'not disposed';
+      g.addEventListener('dispose', () => { atDispose = g.getAttribute('aSlotSize'); });
+      f.dispose(release);
+      expect(atDispose).toBe(release ? slots : undefined);
+    }
+  });
 });

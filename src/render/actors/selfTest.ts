@@ -23,8 +23,17 @@ export interface FieldSelfTest {
 /** Updates timed for gpuMs (median). */
 const TIMED_UPDATES = 60;
 
-/** Reads a target's RGBA pixels (W×H, atlas row order); throws on a GL error (an unreadable format). */
+/**
+ * Reads a target's RGBA pixels (W×H, atlas row order). three's readRenderTargetPixels only logs and leaves
+ * the buffer zeroed for a format / type it cannot read, so that is checked first; both that and a GL error
+ * on the read throw.
+ */
 function readPixels<T extends Uint8Array | Uint16Array>(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, out: T): T {
+  const { format, type } = target.texture;
+  // (a render target's format is never a compressed one)
+  if (!renderer.capabilities.textureFormatReadable(format as THREE.PixelFormat) || !renderer.capabilities.textureTypeReadable(type)) {
+    throw new Error(`self-test: a ${target.width}×${target.height} target of format ${format} / type ${type} cannot be read back here`);
+  }
   const gl = renderer.getContext();
   for (let i = 0; i < 8 && gl.getError() !== gl.NO_ERROR; i++) { /* clear earlier errors */ }
   renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, out);
@@ -44,10 +53,11 @@ function readField(renderer: THREE.WebGLRenderer, field: SpriteField): Float32Ar
 
 /**
  * Max |GPU − CPU| over the first `count` slots: per slot cell (SLOT×SLOT), heights() of the sprite's
- * alpha inside its rectangle and 0 around it (the final target is cleared every update). NaN if the GPU
- * wrote a non-finite value.
+ * alpha inside its rectangle and 0 around it (the final target is cleared every update). `rgba` / `field`
+ * are W×H atlas-sized grids (RGBA8 / heights). NaN as soon as any compared texel is NaN (Math.max keeps
+ * it, whatever comes before or after); Infinity for an infinite one — both fail a `<= tolerance` check.
  */
-function compareSlots(rgba: Uint8Array, field: Float32Array, W: number, H: number,
+export function compareSlots(rgba: Uint8Array, field: Float32Array, W: number, H: number,
   rects: THREE.InstancedBufferAttribute, count: number, params: InflateParams): number {
   let maxErr = 0;
   for (let s = 0; s < count; s++) {
@@ -59,32 +69,37 @@ function compareSlots(rgba: Uint8Array, field: Float32Array, W: number, H: numbe
     for (let y = 0; y < ch; y++) {
       for (let x = 0; x < cw; x++) {
         const want = x < w && y < h ? hs[y * w + x] : 0;
-        const err = Math.abs(field[(oy + y) * W + ox + x] - want);
-        if (!(err <= maxErr)) maxErr = err; // (NaN sticks)
+        maxErr = Math.max(maxErr, Math.abs(field[(oy + y) * W + ox + x] - want)); // (propagates NaN)
       }
     }
   }
   return maxErr;
 }
 
+/** Bleed fixture slots (slot x, slot y, width, height): (1,1) and (2,1) are fully opaque 64×64 neighbours
+ *  side by side, (1,2) sits directly above (1,1), and a 16×32 sprite takes the corner of slot (3,1). */
+const FIXTURE_SLOTS = [1, 1, 64, 64, 2, 1, 64, 64, 1, 2, 64, 64, 3, 1, 16, 32];
+
 /**
- * Bleed fixture: in a fully opaque atlas-sized texture, two fully opaque 64×64 slots side by side and a
- * 16×32 sprite in the next slot. Every texel around each sprite rectangle is opaque, so a pass reading
- * across one (into the neighbour slot or the rest of the slot cell) changes the edges' distance from 0.5;
- * the CPU reference treats outside the rectangle as transparent. Uses its own field (the live one is untouched).
+ * Bleed fixture: FIXTURE_SLOTS in a fully opaque atlas-sized texture. Every texel around each sprite
+ * rectangle is opaque in the atlas and (for the neighbours) non-zero in every pass's target, so a pass
+ * reading across one — sideways or up/down, into the neighbour slot or the rest of the slot cell — moves the
+ * edges off profile(0.5) / the blur's 0 border; the CPU reference treats outside the rectangle as
+ * transparent. Uses its own field (the live one is untouched), freed afterwards with its slot buffer.
  */
 function fixtureMaxErr(renderer: THREE.WebGLRenderer, like: SpriteField): number {
   const { width: W, height: H } = like.target;
   const rgba = new Uint8Array(W * H * 4).fill(255);
   const tex = new THREE.DataTexture(rgba, W, H);
   tex.needsUpdate = true;
-  const rects = new THREE.InstancedBufferAttribute(new Float32Array([1, 1, 64, 64, 2, 1, 64, 64, 3, 1, 16, 32]), 4);
+  const rects = new THREE.InstancedBufferAttribute(new Float32Array(FIXTURE_SLOTS), 4);
+  const n = rects.count;
   const field = new SpriteField(W, H, like.params);
   try {
-    field.update(renderer, tex, rects, 3);
-    return compareSlots(rgba, readField(renderer, field), W, H, rects, 3, like.params);
+    field.update(renderer, tex, rects, n);
+    return compareSlots(rgba, readField(renderer, field), W, H, rects, n, like.params);
   } finally {
-    field.dispose();
+    field.dispose(true); // (the fixture's own slot attribute: its GL buffer goes too)
     tex.dispose();
   }
 }
