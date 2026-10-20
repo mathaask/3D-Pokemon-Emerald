@@ -1,6 +1,7 @@
 // Static 3D map viewer: renders any map straight from the ROM through the same
 // pipeline as live play (no emulator). Used for tuning the 3D reconstruction.
 //   /?map=0.9            Littleroot Town      (&hour=18 for evening, &weather=3 for rain)
+//   &x=..&y=..&h=..      look at cell (x, y) standing at height h (default 0)
 
 import * as THREE from 'three';
 import { Bus } from '../gba/bus';
@@ -84,7 +85,8 @@ export class PreviewApp {
     } as unknown as GameState;
     const cx = parseFloat(params.get('x') ?? String(map.layout.width / 2));
     const cy = parseFloat(params.get('y') ?? String(map.layout.height / 2));
-    this.target.set(cx, 0, cy);
+    const ch = parseFloat(params.get('h') ?? '0');
+    this.target.set(cx, ch, cy + ch); // (grid (x, y) at height h is world (x, h, y + h))
     this.view.overrideTarget = this.target;
     if (params.has('focus')) this.view.focusOverride = this.target;
     this.yaw = parseFloat(params.get('yaw') ?? '0');

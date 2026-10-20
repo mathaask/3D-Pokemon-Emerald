@@ -31,6 +31,24 @@ export const SECONDARY_FLOWERS: ReadonlyMap<number, ReadonlySet<number>> = new M
 ]);
 
 /**
+ * Ground art no family models and the terrain must not paint over, by tileset: landmarks laid in the
+ * walkable floor, kept as their legacy pixel art (the terrain leaves them unclaimed).
+ */
+export const SECONDARY_KEEP_LEGACY: ReadonlyMap<number, ReadonlySet<number>> = new Map<number, ReadonlySet<number>>([
+  // Battle Frontier East: the Poké Ball emblem on its stone slab in front of the Battle Tower (3 rows
+  // of 5 cells; the outer columns are half slab, half grass). Drawn in the ground layer: the terrain
+  // would paint its gems and ball as a mosaic of grass and stone.
+  [SYM.gTileset_BattleFrontierOutsideEast, new Set<number>([
+    0x2d7, 0x318, 0x319, 0x31a, 0x31b, 0x2df, 0x2f4, 0x2f5, 0x2f6, 0x2ef, 0x31c, 0x31d, 0x31f,
+  ])],
+  // Battle Frontier West: the Battle Pike's snake head, the walkable cells of its lower jaw (jaw tips,
+  // the tongue the player walks in on; its upper head is blocking legacy art already).
+  [SYM.gTileset_BattleFrontierOutsideWest, new Set<number>([0x3f0, 0x3f2, 0x3ab, 0x3f9, 0x3fa, 0x3fb])],
+  // Route 109's beach towels (gTileset_Slateport; three cells each, two patterns), laid on the sand.
+  [SYM.gTileset_Slateport, new Set<number>([0x2e0, 0x2e8, 0x2f0, 0x2e1, 0x2e9, 0x2f1])],
+]);
+
+/**
  * Rock (for the cliffs) that the colour heuristics cannot tell from paving, by tileset. For a tileset
  * listed here the table decides: its other ids are never rock, whatever their colour.
  */

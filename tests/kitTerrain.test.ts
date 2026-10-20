@@ -8,6 +8,8 @@ import { NO_EVENTS } from '../src/render/kit/events';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
+import { SYM } from '../src/game/symbols';
+import { SECONDARY_KEEP_LEGACY } from '../src/render/kit/tables/secondary';
 
 describe('groundMaterial', () => {
   const grass: [number, number, number] = [0.45, 0.78, 0.65];
@@ -93,12 +95,52 @@ describe('cellLook', () => {
     expect(look.mat).toBe(GroundMat.Grass);
     expect(look.tint).toEqual(bgr555ToSrgb(GRASS));
   });
-  it('without water, a covered tile still takes its ground from the bottom layer', () => {
+  it('without water, a covered tile whose top layer paints less than half of it takes its ground from the bottom layer', () => {
     const a = fakeAnalysis(['...']);
     a.info.attributes[5] = COVERED;
     paint(a.info.bottom, 5, [[px(16, 6, 4), 201], [px(19, 12, 10), 55]]); // mostly shadow
-    paint(a.info.both, 5, [[px(22, 19, 9), 136], [px(16, 6, 4), 120]]);
+    paint(a.info.both, 5, [[px(22, 19, 9), 100], [px(16, 6, 4), 101], [px(19, 12, 10), 55]]);
     expect(cellLook(a, 5, new Map()).tint).toEqual(bgr555ToSrgb(px(19, 12, 10)));
+  });
+  describe('a covered tile whose top layer paints most of the floor', () => {
+    // Ever Grande's brick path (0x23d): bricks and mortar on the covered top layer over a grass bottom.
+    const BRICK = px(25, 19, 16), MORTAR = px(17, 11, 9);
+    const brickPath = (attr: number, brick = 180) => {
+      const a = fakeAnalysis(['...']);
+      a.info.attributes[5] = attr;
+      a.info.topCover[5] = 256;
+      paint(a.info.bottom, 5, [[GRASS, 256]]);
+      paint(a.info.both, 5, [[BRICK, brick], [MORTAR, 40], [GRASS, 216 - brick]]);
+      return cellLook(a, 5, new Map());
+    };
+    it('takes its look from the top layer: the floor the player sees', () => {
+      const look = brickPath(COVERED);
+      expect(look.tint).toEqual(bgr555ToSrgb(BRICK));
+      expect(look.mat).not.toBe(GroundMat.Grass);
+    });
+    it('but not when it paints less than half of the tile', () => {
+      expect(brickPath(COVERED, 80).tint).toEqual(bgr555ToSrgb(GRASS));
+    });
+    it("counts only the top layer's pixels that differ from the ground under them", () => {
+      // a full top layer redrawing the same grass, with a few bricks
+      const a = fakeAnalysis(['...']);
+      a.info.attributes[5] = COVERED;
+      a.info.topCover[5] = 256;
+      paint(a.info.bottom, 5, [[GRASS, 256]]);
+      paint(a.info.both, 5, [[BRICK, 110], [GRASS, 146]]);
+      expect(cellLook(a, 5, new Map()).tint).toEqual(bgr555ToSrgb(GRASS));
+    });
+    it("never on a normal tile (its top layer is an overhang drawn over objects) or a ledge (the cliffs draw its lip)", () => {
+      expect(brickPath(0).tint).toEqual(bgr555ToSrgb(GRASS));
+      expect(brickPath(COVERED | MB.JUMP_SOUTH).tint).toEqual(bgr555ToSrgb(GRASS));
+    });
+    it('never on a Dive map (its seabed keeps its look)', () => {
+      const a = fakeAnalysis(['...'], { underwater: true });
+      a.info.attributes[5] = COVERED;
+      paint(a.info.bottom, 5, [[GRASS, 256]]);
+      paint(a.info.both, 5, [[BRICK, 180], [MORTAR, 40], [GRASS, 36]]);
+      expect(cellLook(a, 5, new Map()).tint).toEqual(bgr555ToSrgb(GRASS));
+    });
   });
   it('ground that is water all over is wet ground, not open water', () => {
     // A puddle's corner: a grass fringe on the covered top layer does not make it dry land.
@@ -166,6 +208,28 @@ describe('terrain extract', () => {
     }
     expect(covered.has(a.idx(0, 0))).toBe(true);
     expect(covered.has(a.idx(5, 0))).toBe(true);
+  });
+  it('leaves the curated landmarks of a town tileset (the Battle Frontier emblems) to the legacy pixel art', () => {
+    // Battle Frontier East's Poké Ball emblem in front of the Battle Tower: 0x318 (a corner of its slab).
+    const grid = fakeGrid(['...']);
+    grid.cells[1] = 0x318 | 0x3000;
+    const run = (secondaryTileset: number) => {
+      const a = analyze(grid, { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false, secondaryTileset, margin: 1 });
+      const claims = new Claims(a.N);
+      const covered = new Set(terrainFamily.extract({ a, events: NO_EVENTS, quality: 'medium' }, claims).cells.map((c) => c.i));
+      expect(a.kind[a.idx(1, 0)]).toBe(K.Floor);
+      expect(covered.has(a.idx(0, 0))).toBe(true);
+      return { emblem: covered.has(a.idx(1, 0)), claimed: claims.has(a.idx(1, 0), CLAIM_SURFACE) };
+    };
+    expect(run(SYM.gTileset_BattleFrontierOutsideEast)).toEqual({ emblem: false, claimed: false });
+    // (the same id in another town's tileset is that town's ground)
+    expect(run(SYM.gTileset_BattleFrontierOutsideWest)).toEqual({ emblem: true, claimed: true });
+  });
+  it('keeps every curated landmark id a secondary (town) id', () => {
+    for (const [ts, ids] of SECONDARY_KEEP_LEGACY) {
+      expect(ts).toBeGreaterThan(0);
+      for (const m of ids) expect(m).toBeGreaterThanOrEqual(512);
+    }
   });
 });
 

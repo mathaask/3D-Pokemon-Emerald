@@ -14,6 +14,7 @@ import { bladeColor, GRASS_BEHAVIORS } from './grass';
 import { isPetal } from './flowers';
 import { kitMaterial } from './materials';
 import { isSecretBaseSpot, type Family, type SemanticContext, type KitContext } from './semantics';
+import { SECONDARY_KEEP_LEGACY } from './tables/secondary';
 
 export const enum GroundMat { Grass = 0, Path = 1, Sand = 2, Paving = 3, Dirt = 4, Gravel = 5, Rock = 6, Deck = 7, Dark = 8 }
 
@@ -52,6 +53,19 @@ const groundColor = (px: Uint16Array, m: number, accept: (c: RGB) => boolean) =>
   countPixels(px, [m], accept) >= MIN_GROUND_PX ? dominantColor(px, [m], accept) : null;
 const anyColor = (px: Uint16Array, m: number) => dominantColor(px, [m], lit) ?? dominantColor(px, [m]);
 
+/** A COVERED tile's top layer is the floor the player sees where it paints at least half of the tile. */
+export const TOP_FLOOR_PX = 128;
+/** Pixels of metatile `m` that its top layer paints over the bottom layer in another colour. */
+function topFloorPixels(info: TileInfo, m: number): number {
+  let n = 0;
+  for (let p = m * 256, end = p + 256; p < end; p++) {
+    const v = info.both[p];
+    if (!(v & 0x8000) && v !== info.bottom[p]) n++;
+  }
+  return n;
+}
+const isLedge = (beh: number) => beh >= MB.JUMP_EAST && beh <= MB.JUMP_SOUTHWEST;
+
 /** Material + dominant (sRGB) colour of a metatile's ground layer, cached per metatile. */
 export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>): CellLook {
   let e = cache.get(m);
@@ -59,10 +73,15 @@ export function cellLook(a: MapAnalysis, m: number, cache: Map<number, CellLook>
     const { bottom, both, attributes } = a.info;
     const land = !a.opts.underwater;
     const ground = land ? isGround : lit;
-    // The bottom layer is the ground (a NORMAL cell's top layer is an overhang drawn above it).
-    // Where that is water on land, a COVERED cell's top layer (drawn on the floor too) may hold it.
-    let c = groundColor(bottom, m, ground) ?? anyColor(bottom, m) ?? anyColor(both, m) ?? [0.45, 0.7, 0.5];
-    if (land && isWater(c) && attrLayerType(attributes[m]) === LayerType.COVERED) c = groundColor(both, m, ground) ?? c;
+    const covered = attrLayerType(attributes[m]) === LayerType.COVERED;
+    // The bottom layer is the ground (a NORMAL cell's top layer is an overhang drawn above it). A
+    // COVERED cell draws its top layer on the floor too: where that paints most of the tile (Ever
+    // Grande's brick path, rock tops, logs and boardwalks laid over grass or rock) it is the floor
+    // the player sees. (Not a ledge: the cliffs draw its lip, the ground is the bottom layer's.)
+    const floor = land && covered && !isLedge(attrBehavior(attributes[m])) && topFloorPixels(a.info, m) >= TOP_FLOOR_PX ? both : bottom;
+    let c = groundColor(floor, m, ground) ?? anyColor(floor, m) ?? anyColor(both, m) ?? [0.45, 0.7, 0.5];
+    // Where the ground is water on land, a COVERED cell's top layer may hold it.
+    if (land && isWater(c) && covered) c = groundColor(both, m, ground) ?? c;
     const mat = groundMaterial(attrBehavior(attributes[m]), c);
     // Bridges and walkways draw their planks on the top layer (over water or canopy).
     let tint = mat === GroundMat.Deck ? dominantColor(both, [m], ground) ?? dominantColor(both, [m], lit) ?? c : c;
@@ -231,13 +250,15 @@ export const terrainFamily: Family<TerrainPlacement> = {
       }
       return d;
     };
+    // Landmarks laid in the floor (the Battle Frontier emblems) keep their legacy art.
+    const keep = SECONDARY_KEEP_LEGACY.get(a.opts.secondaryTileset ?? 0);
     for (let i = 0; i < a.N; i++) {
       if (claims.has(i, CLAIM_SURFACE)) continue;
       const k = a.kind[i];
       const walk = k === K.Floor || k === K.Stairs || k === K.Ledge;
       const under = claims.has(i, CLAIM_OBJECT);
       if (!walk && !under) continue;
-      if (!under && (isStructure(a.beh[i]) || isSecretBaseSpot(a, i))) continue;
+      if (!under && (isStructure(a.beh[i]) || isSecretBaseSpot(a, i) || (a.mt[i] >= 512 && keep?.has(a.mt[i])))) continue;
       // Ground art that is decoration no family models (a flower bed, an emblem): the terrain cannot
       // paint it, so the cell keeps its legacy pixel art. (Not ledges: the cliffs draw their lips.)
       if (!under && k !== K.Ledge && !claims.has(i, CLAIM_DECOR) && decorated(a.mt[i])) continue;

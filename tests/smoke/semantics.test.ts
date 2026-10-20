@@ -19,7 +19,7 @@ import { BgEventKind, loadAllMaps, MapType, MAP_TYPE_NAMES } from '../../src/gam
 import type { BuildingPlacement, BuildingKind } from '../../src/render/kit/buildings';
 import type { CliffPlacement } from '../../src/render/kit/cliffs';
 import type { WaterPlacement } from '../../src/render/kit/water';
-import { cellLook, decorationPixels, DECOR_MIN_PX, type CellLook, type TerrainPlacement } from '../../src/render/kit/terrain';
+import { cellLook, decorationPixels, DECOR_MIN_PX, GroundMat, type CellLook, type TerrainPlacement } from '../../src/render/kit/terrain';
 import type { FlowerCell } from '../../src/render/kit/flowers';
 import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/tables/general';
 import { SECONDARY_FLOWERS, SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
@@ -160,6 +160,39 @@ describe('semantics on real maps', () => {
     // Dewford's bush tiles (sand or sea showing between the leaves) are no flowers
     // (Dewford Town, Routes 105-107: no flowers at all)
     for (const n of [11, 20, 21, 22]) expect(payload<FlowerCell[]>(run(0, n).ex, 'flowers'), `0.${n}`).toEqual([]);
+  });
+
+  it('covered floor art takes the look of its top layer; landmarks in the floor keep their pixel art', () => {
+    // (Task 16a: before, the terrain tinted these from the layer under the art: grass, the rock face)
+    const look = (g: number, n: number, cells: [number, number][]) => {
+      const r = run(g, n);
+      const at = new Map(payload<TerrainPlacement>(r.ex, 'terrain').cells.map((c) => [c.i, c]));
+      return cells.map(([x, y]) => {
+        const c = at.get(r.a.idx(x, y));
+        expect(c, `${r.name} ${x},${y}`).toBeDefined();
+        return c!;
+      });
+    };
+    // Ever Grande's brick path (0x23d, bricks over grass): brick-red, not grass
+    for (const c of look(0, 8, [[17, 9], [18, 9], [19, 10], [18, 15]])) {
+      expect(c.mat).not.toBe(GroundMat.Grass);
+      expect(c.tint[0]).toBeGreaterThan(c.tint[1] + 0.1);
+    }
+    // General rock tops (0xbe, Mossdeep): the light top, not the dark face; Fallarbor's ash rock tops
+    for (const c of [...look(0, 6, [[75, 36]]), ...look(0, 29, [[28, 54], [11, 36]])]) expect(luma(c.tint)).toBeGreaterThan(0.6);
+    // Battle Frontier East's Poké Ball emblem, the Battle Pike's jaw (West), Route 109's beach towels
+    const kept: [number, number, [number, number][]][] = [
+      [26, 14, [14, 15, 16, 17, 18].flatMap((x) => [15, 16, 17].map((y) => [x, y] as [number, number]))],
+      [26, 4, [[40, 28], [42, 28], [44, 28], [41, 29], [42, 29], [43, 29]]],
+      [0, 24, [[9, 9], [9, 10], [9, 11], [16, 53], [20, 56]]],
+    ];
+    for (const [g, n, cells] of kept) {
+      const r = run(g, n);
+      for (const [x, y] of cells) {
+        expect(r.a.kind[r.a.idx(x, y)], `${r.name} ${x},${y}`).toBe(K.Floor);
+        expect(r.ex!.claims.bits[r.a.idx(x, y)], `${r.name} ${x},${y}`).toBe(0);
+      }
+    }
   });
 
   it("the Trainer Hill's green facade on Route 111 is no tree", () => {

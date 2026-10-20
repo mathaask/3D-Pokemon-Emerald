@@ -16,6 +16,7 @@ const WANTED = [
   'gFieldEffectObjectTemplatePointers', 'sObjectEventSpritePalettes', 'gFieldEffectArguments',
   'gMapObjects', 'gSelectedObjectEvent', 'gGlobalFieldTintMode', 'sCurrentMapName',
   'gTilesetAnimTable', 'gTileset_General', 'gTileset_Petalburg', 'gTileset_Rustboro', 'gTileset_Lavaridge', 'gTileset_Sootopolis', 'gTileset_Mauville', 'gTileset_EverGrande',
+  'gTileset_Slateport', 'gTileset_BattleFrontierOutsideWest', 'gTileset_BattleFrontierOutsideEast',
   'sPrimaryTilesetAnimCounter',
   'gBGTilemapBuffers1', 'gBGTilemapBuffers2', 'gBGTilemapBuffers3', 'gFlashEffectActive',
   // callbacks used for scene detection
