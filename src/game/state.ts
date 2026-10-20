@@ -68,6 +68,15 @@ export interface SpriteSnap {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  /** Current anim of the sprite's anim table (a berry tree's growth stage, an obstacle breaking). */
+  animNum: number;
+  /** ROM pointer of the sprite's SpriteFrameImage table: identifies a berry type / object graphics. */
+  images: number;
+  /** ROM pointer of the sprite's SubspriteTable array (0: none), the table in use and the mode
+   *  (0 off, 1 on, 2 on ignoring priority): pieces drawn as several OAM entries (the truck). */
+  subspriteTables: number;
+  subspriteTableNum: number;
+  subspriteMode: number;
 }
 
 export interface MapHeaderSnap {
@@ -106,7 +115,8 @@ export interface BattlerSnap {
 
 const SPRITE_SIZE = 0x44;
 const OBJECT_EVENT_SIZE = 0x24;
-const OBJ_SIZES: [number, number][][] = [
+/** OBJ [width, height] in pixels by OAM shape (attr0 bits 14-15) and size (attr1 bits 14-15). */
+export const OBJ_SIZES: [number, number][][] = [
   [[8, 8], [16, 16], [32, 32], [64, 64]], // square
   [[16, 8], [32, 8], [32, 16], [64, 32]], // horizontal
   [[8, 16], [8, 32], [16, 32], [32, 64]], // vertical
@@ -328,6 +338,7 @@ export class GameState {
       }
       const data = new Int16Array(8);
       for (let k = 0; k < 8; k++) data[k] = m.s16(a + 0x2e + k * 2);
+      const subsprites = m.u8(a + 0x42); // subspriteTableNum:6 | subspriteMode:2
       this.sprites.push({
         index: i, attr0, attr1, attr2, width, height,
         tileNum: attr2 & 0x3ff,
@@ -351,6 +362,11 @@ export class GameState {
         worldY: 0,
         data,
         scaleX, scaleY, rotation,
+        animNum: m.u8(a + 0x2a),
+        images: m.u32(a + 0x0c),
+        subspriteTables: m.u32(a + 0x18),
+        subspriteTableNum: subsprites & 0x3f,
+        subspriteMode: subsprites >>> 6,
       });
     }
   }

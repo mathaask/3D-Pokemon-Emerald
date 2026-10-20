@@ -278,6 +278,11 @@ export class OverworldView {
     this.atlas.render(renderer, this.charBase);
   }
 
+  /** Ground height (world Y) under grid point (x, y) of the built world, where sprites stand. */
+  heightAt(x: number, y: number): number {
+    return this.world.heightAt(x, y);
+  }
+
   private onMapChanged(state: GameState): void {
     // When crossing a map connection the backup-map origin shifts; move the camera
     // target by the same amount so the transition is seamless.

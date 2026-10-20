@@ -8,6 +8,7 @@ import { Shell } from './ui/shell';
 import { Renderer } from './render/renderer';
 import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/settings';
 import { keyMask } from './input/keyNames';
+import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
@@ -21,12 +22,6 @@ function urlOverrides(params: URLSearchParams, s: Settings): void {
   if (style === 'modern' || style === 'retro') s.worldStyle = style;
   const camera = params.get('camera');
   if (camera !== null && /^[0-3]$/.test(camera)) s.camera = Number(camera);
-}
-
-/** Median and 90th percentile (upper element) of a list of numbers. */
-function percentiles(xs: number[]): { p50: number; p90: number } {
-  const s = [...xs].sort((a, b) => a - b);
-  return { p50: s[s.length >> 1], p90: s[Math.floor(s.length * 0.9)] };
 }
 
 async function sha1(data: Uint8Array): Promise<string> {
@@ -47,59 +42,29 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
 /**
  * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
  * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n)` times n
- * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians).
+ * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts).
  */
 function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
   renderer.setFixedTimestep(1 / 60);
   const gl = renderer.webgl.getContext() as WebGL2RenderingContext;
-  type TimerExt = { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number };
-  const frame = (mask: number, timer?: { ext: TimerExt; query: WebGLQuery }): number => {
+  const emulate = (mask: number): void => {
     gba.keys = mask;
     gba.runFrame();
     renderer.onEmulatedFrame();
-    if (timer) gl.beginQuery(timer.ext.TIME_ELAPSED_EXT, timer.query);
-    const t0 = performance.now();
-    renderer.render(1000 / 60);
-    const ms = performance.now() - t0;
-    if (timer) gl.endQuery(timer.ext.TIME_ELAPSED_EXT);
-    return ms;
   };
+  const render = (): void => renderer.render(1000 / 60);
   const step = (keys: string, frames: number): number[] => {
     const mask = keyMask(keys);
     const times: number[] = [];
-    for (let i = 0; i < frames; i++) times.push(frame(mask));
+    for (let i = 0; i < frames; i++) {
+      emulate(mask);
+      const t0 = performance.now();
+      render();
+      times.push(performance.now() - t0);
+    }
     return times;
   };
-  const gpuFrames = async (n: number): Promise<{ gpuMs: number; gpuP90: number; cpuMs: number }> => {
-    const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExt | null;
-    if (!ext) throw new Error('EXT_disjoint_timer_query_webgl2 is not available');
-    const px = new Uint8Array(4);
-    // a disjoint batch (GPU clock change, context switch) is discarded and measured again
-    for (let attempt = 0; attempt < 3; attempt++) {
-      gl.getParameter(ext.GPU_DISJOINT_EXT); // (reading clears the flag)
-      const queries: WebGLQuery[] = [];
-      const cpu: number[] = [];
-      for (let i = 0; i < n; i++) {
-        const query = gl.createQuery();
-        cpu.push(frame(0, { ext, query }));
-        queries.push(query);
-        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); // (waits for the GPU)
-      }
-      // query results become available only after control returns to the browser
-      const deadline = performance.now() + 10_000;
-      while (!queries.every((q) => gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE))) {
-        if (performance.now() > deadline) throw new Error('GPU timer query results never became available');
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      const disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean;
-      const gpu = queries.map((q) => (gl.getQueryParameter(q, gl.QUERY_RESULT) as number) / 1e6);
-      for (const q of queries) gl.deleteQuery(q);
-      if (disjoint) continue;
-      const g = percentiles(gpu);
-      return { gpuMs: g.p50, gpuP90: g.p90, cpuMs: percentiles(cpu).p50 };
-    }
-    throw new Error('GPU timer queries disjoint in 3 attempts');
-  };
+  const gpuFrames = (n: number): Promise<GpuTiming> => timeGpuFrames(gl, n, render, () => emulate(0));
   (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
 }
 
@@ -120,9 +85,11 @@ async function boot(): Promise<void> {
   if (preview) {
     const [g, n] = preview.split('.').map(Number);
     const { PreviewApp } = await import('./render/preview');
-    const app = new PreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, g, n, new URLSearchParams(location.search));
+    const previewParams = new URLSearchParams(location.search);
+    const app = new PreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, g, n, previewParams);
     shell.hideLoader();
-    shell.toast(`Preview: ${app.name}`);
+    // (no wall-clock toast in manual mode: harness shots stay deterministic)
+    if (previewParams.get('manual') !== '1') shell.toast(`Preview: ${app.name}`);
     (window as unknown as { preview: unknown }).preview = app;
     return;
   }

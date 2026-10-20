@@ -7,9 +7,11 @@
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
-// ({ [entry_style]: { calls, triangles, programs, stepMsMax, gpuMs?, gpuP90?, cpuMs?, diff?, selftest? } };
-// stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first, cold one).
-// --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
+// ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
+// selftest? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
+// cold one; static entries report the preview's cold world build ms instead).
+// --static adds the static map-preview entries (object events from ROM templates; STATIC below);
+// --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
 // pixels (-1: sizes differ) }). --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
@@ -44,9 +46,22 @@ const LIVE: LiveEntry[] = [
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
 ];
 
-/** Static preview scenes (?map=…, actors from ROM templates), run with --static: added in Task 2. */
+/**
+ * Static preview scenes, run with --static (or named by --only): the map preview with the map's
+ * object events from their ROM templates (`/?autostart=1&manual=1&actors=1&<q>&style=…`), 60 frames
+ * at 1/60 s, hour 11 unless q sets one (the preview's default). The camera looks at the first
+ * template with graphics id G (focusGfx) or at template N (focusObj).
+ */
 interface StaticEntry { name: string; q: string }
-const STATIC: StaticEntry[] = [];
+const STATIC: StaticEntry[] = [
+  { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=94' }, { name: 'rustboro_npcs', q: 'map=0.3' },
+  { name: 'r104_berries', q: 'map=0.19&focusGfx=60' }, { name: 'r104_night', q: 'map=0.19&focusGfx=60&hour=21' },
+  { name: 'r116_cut', q: 'map=0.31&focusGfx=82' }, { name: 'r114_rocks', q: 'map=0.29&focusGfx=86' },
+  { name: 'fiery_boulders', q: 'map=24.14&focusGfx=87' }, { name: 'r119_items', q: 'map=0.34&focusGfx=59' },
+  { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
+];
+
+type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
 
 const CHROME = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -59,7 +74,7 @@ const CROP_H = 400;
 
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 interface EntryStats {
-  calls: number; triangles: number; programs: number; stepMsMax?: number;
+  calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
   diff?: Diff; selftest?: unknown;
 }
@@ -197,11 +212,12 @@ async function main(): Promise<void> {
   if (compare && compare === label) throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   const gpu = flag('gpu');
   const selftest = flag('selftest');
-  const entries = LIVE.filter((e) => !only.length || only.includes(e.name));
+  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
-    if (!LIVE.some((e) => e.name === n) && !STATIC.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
+    if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
-  if (flag('static') && !STATIC.length) console.log('--static: no static entries yet');
+  // --only picks entries of both kinds by name; otherwise every live entry, and the static ones with --static
+  const entries = only.length ? all.filter((e) => only.includes(e.name)) : all.filter((e) => e.kind === 'live' || flag('static'));
   const outDir = path.join(root, 'out/regress-live', label);
   const refDir = compare ? path.join(root, 'out/regress-live', compare) : '';
   if (refDir && !fs.existsSync(refDir)) throw new Error(`no reference run ${refDir}`);
@@ -241,45 +257,61 @@ async function main(): Promise<void> {
         current = key;
         const errorsBefore = pageErrors;
         try {
-          if (!fs.existsSync(path.join(root, e.state))) throw new Error(`missing save state ${e.state}`);
-          const q = ['manual=1', `state=/${e.state}`, `style=${style}`, e.query, extra].filter(Boolean).join('&');
+          // live entries drive the game page (window.emu), static ones the map preview (window.preview)
+          const api = e.kind === 'live' ? 'emu' : 'preview';
+          let q: string;
+          if (e.kind === 'live') {
+            if (!fs.existsSync(path.join(root, e.state))) throw new Error(`missing save state ${e.state}`);
+            q = ['manual=1', `state=/${e.state}`, `style=${style}`, e.query, extra].filter(Boolean).join('&');
+          } else {
+            q = ['autostart=1', 'manual=1', 'actors=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
+          }
           await page.goto(`http://localhost:${port}/?${q}`, { waitUntil: 'load' });
-          await page.waitForFunction('!!(window.emu && window.emu.step)', { timeout: 120_000, polling: 100 });
+          await page.waitForFunction(e.kind === 'live' ? '!!(window.emu && window.emu.step)' : '!!(window.preview && window.preview.frames)',
+            { timeout: 120_000, polling: 100 });
           if (!gpuName) {
             gpuName = await page.evaluate(`(() => {
-              const gl = emu.renderer.webgl.getContext();
+              const gl = ${e.kind === 'live' ? 'emu.renderer.webgl' : 'preview.webgl'}.getContext();
               const dbg = gl.getExtension('WEBGL_debug_renderer_info');
               return dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'unknown';
             })()`) as string;
             console.log(`GPU: ${gpuName}`);
           }
-          if (e.eval) await page.evaluate(e.eval);
-          // the entry's first frame builds the world and compiles programs (seconds, varying with
-          // Chrome's program cache): stepMsMax is the largest frame time after it
-          let stepMsMax = 0;
-          for (const [n, [keys, frames]] of e.steps.entries()) {
-            const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
-            for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
+          let stepMsMax: number | undefined;
+          if (e.kind === 'live') {
+            if (e.eval) await page.evaluate(e.eval);
+            // the entry's first frame builds the world and compiles programs (seconds, varying with
+            // Chrome's program cache): stepMsMax is the largest frame time after it
+            stepMsMax = 0;
+            for (const [n, [keys, frames]] of e.steps.entries()) {
+              const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
+              for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
+            }
+          } else {
+            await page.evaluate('preview.frames(60)');
           }
           // the page chrome's CSS transitions (the loader fading out) run on the wall clock: end them
           await page.evaluate(`document.getAnimations().forEach((a) => { try { a.finish(); } catch { /* infinite */ } })`);
           const file = path.join(outDir, `${key}.png`);
           await page.screenshot({ path: file as `${string}.png` });
-          const s = await page.evaluate('emu.renderer.stats()') as { calls: number; triangles: number; programs: number };
-          const entry: EntryStats = { ...s, stepMsMax: round(stepMsMax, 2) };
-          // (the self-test checks the screenshot's frame; GPU timing then steps 60 more frames)
+          const s = await page.evaluate(e.kind === 'live' ? 'emu.renderer.stats()' : 'preview.stats()') as
+            { calls: number; triangles: number; programs: number; buildMs?: number };
+          const entry: EntryStats = { ...s };
+          if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
+          // (the self-test checks the screenshot's frame; GPU timing then renders 60 more frames)
           if (selftest) {
-            const r = await page.evaluate('typeof emu.selfTest === "function" ? emu.selfTest() : null');
+            const r = await page.evaluate(`typeof ${api}.selfTest === "function" ? ${api}.selfTest() : null`);
             if (r !== null) entry.selftest = r;
-            else console.log(`[${key}] --selftest: the page has no emu.selfTest yet`);
+            else console.log(`[${key}] --selftest: the page has no ${api}.selfTest yet`);
           }
           if (gpu) {
-            const g = await page.evaluate('emu.gpuFrames(60)') as { gpuMs: number; gpuP90: number; cpuMs: number };
+            const g = await page.evaluate(`${api}.gpuFrames(60)`) as { gpuMs: number; gpuP90: number; cpuMs: number };
             entry.gpuMs = round(g.gpuMs, 3);
             entry.gpuP90 = round(g.gpuP90, 3);
             entry.cpuMs = round(g.cpuMs, 3);
           }
-          let line = `shot ${key.padEnd(24)} calls ${String(s.calls).padStart(4)} tris ${String(s.triangles).padStart(8)} programs ${s.programs} stepMax ${entry.stepMsMax} ms`;
+          let line = `shot ${key.padEnd(24)} calls ${String(s.calls).padStart(4)} tris ${String(s.triangles).padStart(8)} programs ${s.programs}`;
+          line += stepMsMax !== undefined ? ` stepMax ${entry.stepMsMax} ms` : ` build ${s.buildMs} ms`;
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
           if (refDir) {
             const ref = path.join(refDir, `${key}.png`);
