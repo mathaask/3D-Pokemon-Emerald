@@ -2,7 +2,6 @@
 // One instanced draw call; images come from the SpriteAtlas.
 
 import * as THREE from 'three';
-import type { SpriteAtlas } from '../spriteAtlas';
 
 const MAX = 128;
 
@@ -86,7 +85,8 @@ export class Billboards {
   readonly material: THREE.ShaderMaterial;
   private depthMaterial: THREE.ShaderMaterial;
 
-  constructor(atlas: SpriteAtlas) {
+  /** `atlas`: the sprite atlas (SpriteAtlas) whose render target the cards sample. */
+  constructor(atlas: { target: { texture: THREE.Texture } }) {
     const quad = new THREE.PlaneGeometry(1, 1);
     quad.translate(0, 0.5, 0);
     this.geometry = new THREE.InstancedBufferGeometry();

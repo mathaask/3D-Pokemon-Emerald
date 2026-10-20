@@ -11,14 +11,16 @@ import type { Quality } from '../post';
 import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldStyle } from './world';
-import { Billboards, BlobShadows, type BillboardSpec } from './billboards';
 import { analyzeMetatiles } from './tileInfo';
-import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
+import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
 import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
+import { ActorLayer, type ActorFrame } from '../actors/actorLayer';
+
+export { hidesGrassOverlay } from '../actors/actorLayer';
 
 export interface CameraPreset {
   name: string;
@@ -33,15 +35,6 @@ export const CAMERA_PRESETS: CameraPreset[] = [
   { name: 'Wide', pitch: 0.95, distance: 23, fov: 30 },
   { name: 'Low', pitch: 0.36, distance: 9.5, fov: 45 },
 ];
-
-/**
- * Whether the GBA's grass overlay sprite (drawn over the legs of a character in grass) is left out:
- * in Modern where 3D grass blades stand on its cell (kit/grass.ts: they hide the legs and part around
- * them). Elsewhere (short grass, tall grass the grass family did not draw, Retro) it is drawn.
- */
-export function hidesGrassOverlay(kind: SpriteKind, style: WorldStyle, bladesOnCell: boolean): boolean {
-  return kind === SpriteKind.Grass && style === 'modern' && bladesOnCell;
-}
 
 /** Half-width of the sun shadow camera (world units): the map covers 2x this. */
 const SHADOW_SPAN = 24;
@@ -70,8 +63,8 @@ export class OverworldView {
   readonly camera = new THREE.PerspectiveCamera(32, 1.5, 0.1, 500);
   readonly atlas: MetatileAtlas;
   private world: World;
-  private billboards: Billboards;
-  private blobs: BlobShadows;
+  /** The world sprites: cards, blob shadows (inflated actors, object models). */
+  private actors: ActorLayer;
   private sun = new THREE.DirectionalLight(0xffffff, 2.2);
   private hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6b7f4a, 1.1);
   /** Light carried by the player in dark caves (Flash). */
@@ -116,18 +109,25 @@ export class OverworldView {
   /** 0..1 progress of the battle-entry effect (pushes the camera in and twists it). */
   battleZoom = 0;
   private charLight = new THREE.Color(1, 1, 1);
+  /** What the actor layer reads each frame (one object, updated in place). */
+  private actorFrame: ActorFrame = {
+    style: 'modern',
+    classifier: null,
+    heightAt: (x, y) => this.world.heightAt(x, y),
+    hasGrassBlades: (x, y) => this.world.hasGrassBlades(x, y),
+    cameraRight: this.cameraRight,
+    charLight: this.charLight,
+  };
 
-  constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number) {
+  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
-    this.billboards = new Billboards(spriteAtlas);
+    this.actors = new ActorLayer(spriteAtlas);
     this.scene.add(this.world.group);
-    this.scene.add(this.billboards.mesh);
-    this.blobs = new BlobShadows(this.billboards);
-    this.scene.add(this.blobs.mesh);
+    this.scene.add(this.actors.group);
 
     this.sun.castShadow = true;
     this.applyShadowSettings();
@@ -308,37 +308,6 @@ export class OverworldView {
     const fy = s.worldY / 16 - 0.5;
     const h = this.spriteHeight(state, s, Math.floor(fx), Math.floor(fy));
     return new THREE.Vector3(fx, h, fy + h);
-  }
-
-  private buildBillboards(state: GameState): BillboardSpec[] {
-    const list: BillboardSpec[] = [];
-    for (const s of state.sprites) {
-      if (!s.coordOffset || s.invisible) continue;
-      const kind = this.classifier ? this.classifier.kind(s) : SpriteKind.Upright;
-      if (kind === SpriteKind.Hidden) continue;
-      const fx = s.worldX / 16;
-      const flat = kind === SpriteKind.Flat;
-      // Upright cards stand on the cell centre; flat decals cover their GBA rectangle.
-      let fy = flat ? s.worldY / 16 : s.worldY / 16 - 0.5;
-      const cellX = Math.floor(fx);
-      const cellY = Math.floor(flat ? fy - 0.5 : fy);
-      if (hidesGrassOverlay(kind, this.worldStyle, this.world.hasGrassBlades(cellX + 0.5, cellY + 0.5))) continue;
-      const slot = this.spriteAtlas.slots.get(s.index);
-      if (!slot) continue;
-      const h = this.spriteHeight(state, s, cellX, cellY);
-      if (kind === SpriteKind.Grass) fy += 0.06; // in front of the legs it covers
-      list.push({
-        footX: fx,
-        footY: h,
-        footZ: fy + h,
-        width: (s.width * s.scaleX) / 16,
-        height: (s.height * s.scaleY) / 16,
-        lift: flat ? 0 : Math.max(0, -s.y2 / 16),
-        flat,
-        slot,
-      });
-    }
-    return list;
   }
 
   private updateLighting(state: GameState): void {
@@ -527,10 +496,10 @@ export class OverworldView {
     this.cameraRight.set(Math.cos(yawFx), 0, -Math.sin(yawFx));
 
     this.updateLighting(state);
-    const specs = this.buildBillboards(state);
-    this.billboards.set(specs, this.cameraRight, this.charLight);
-    // The feet of the upright sprites (characters, objects) bend the kit's grass.
-    const feet = specs.filter((b) => !b.flat).map((b) => ({ x: b.footX, y: b.footY, z: b.footZ }));
+    this.actorFrame.style = this.worldStyle;
+    this.actorFrame.classifier = this.classifier;
+    // The feet of the upright sprites (characters, objects) and grass overlays bend the kit's grass.
+    const feet = this.actors.update(state, this.actorFrame);
     setKitActors(this.kitUniforms, feet, this.target);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;
