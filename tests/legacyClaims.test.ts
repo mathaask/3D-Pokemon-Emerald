@@ -8,7 +8,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { emitLegacy, type Quad } from '../src/render/overworld/legacyQuads';
-import { Claims, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../src/render/overworld/claims';
+import { Claims, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP, CLAIM_WATER_UNDER } from '../src/render/overworld/claims';
+import { Variant } from '../src/render/overworld/metatileAtlas';
 import { analyze, K } from '../src/render/overworld/analyze';
 import { MB } from '../src/game/behaviors';
 import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
@@ -125,5 +126,76 @@ describe('emitLegacy and a building the kit modelled', () => {
     expect(solo.some((q) => q.glow)).toBe(false);
     expect(emitLegacy(a, null).quads.some((q) => q.glow)).toBe(true);
     expect(emitLegacy(a, null)).toEqual(emitLegacy(a, new Claims(a.N)));
+  });
+});
+
+describe('emitLegacy and the kit water under legacy art (CLAIM_WATER_UNDER)', () => {
+  // A shore ('.', land) and the sea ('w'); a boat ('b': blocked, its art in the covered top layer
+  // over water: the analysis lays it flat as water); a rock standing in the sea ('R': blocked, the
+  // rock drawn over water, a block).
+  const SEA = 8 | (12 << 5) | (26 << 10), HULL = 24 | (20 << 5) | (14 << 10), STONE = 18 | (12 << 5) | (8 << 10);
+  const info = fakeInfo();
+  const fill = (m: number, c: number, from = 0, to = 256) => { info.both.fill(c, m * 256 + from, m * 256 + to); info.bottom.fill(c, m * 256 + from, m * 256 + to); };
+  fill(1, 14 | (24 << 5) | (20 << 10));
+  fill(3, SEA); info.attributes[3] = MB.OCEAN_WATER;
+  fill(5, SEA); info.both.fill(HULL, 5 * 256 + 64, 5 * 256 + 192); info.topCover[5] = 128; info.attributes[5] = 1 << 12; info.blue[5] = 0.7;
+  fill(6, SEA); fill(6, STONE, 32, 224); info.blue[6] = 0.2; // (the rock, drawn in the ground layer)
+  const rows = ['.www', '.wbw', '.wRw', '.www'];
+  const code: Record<string, number> = { '.': 1 | 0x3000, w: 3 | 0x1000, b: 5 | 0x1400, R: 6 | 0x1400 };
+  const w = rows[0].length, h = rows.length;
+  const cells = new Uint16Array(w * h);
+  rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * w + x] = code[ch]; }));
+  const a = analyze({ width: w, height: h, cells, border: [3, 3, 3, 3], borderW: 2, borderH: 2, borderPhase: 0 },
+    { info, generalPrimary: false, indoor: false, underground: false, underwater: false, margin: 0 });
+  const at = (x: number, y: number) => a.idx(x, y);
+  const cellQuads = (qs: Quad[], x: number, y: number) => qs.filter((q) => Math.min(q.a[0], q.b[0], q.c[0], q.d[0]) === x &&
+    Math.max(q.a[0], q.b[0], q.c[0], q.d[0]) === x + 1 && q.metatile === a.mt[at(x, y)]);
+  /** The kit's water: surface claimed on the plain sea, water under the boat and the rock. */
+  const kit = () => {
+    const c = new Claims(a.N);
+    for (let i = 0; i < a.N; i++) if (a.kind[i] === K.Water && a.mt[i] === 3) c.claim(i, CLAIM_SURFACE);
+    for (let i = 0; i < a.N; i++) if (a.kind[i] !== K.Floor && !c.has(i, CLAIM_SURFACE)) c.claim(i, CLAIM_WATER_UNDER);
+    return c;
+  };
+
+  it('the synthetic map has the shape these tests rely on', () => {
+    expect(a.kind[at(2, 1)]).toBe(K.Water);
+    expect(a.kind[at(2, 2)]).toBe(K.Block);
+    expect(a.groundOf[at(2, 2)]).toBe(3);
+  });
+
+  it("draws a boat's art over the kit water: its water cut out, just above the water's swell", () => {
+    const before = cellQuads(emitLegacy(a, null).quads, 2, 1);
+    expect(before.map((q) => [q.variant, q.water])).toEqual([[Variant.Both, true]]);
+    const [boat, ...rest] = cellQuads(emitLegacy(a, kit()).quads, 2, 1);
+    expect(rest).toEqual([]);
+    expect(boat.variant).toBe(Variant.Dry);
+    expect(boat.cutout).toBe(true);
+    expect(boat.water).toBeFalsy();
+    expect(boat.a[1]).toBeCloseTo(a.height[at(2, 1)] + 0.06);
+    expect(boat.a[2]).toBeCloseTo(1 + a.height[at(2, 1)] + 0.06); // (un-projected at its height)
+  });
+
+  it('drops the pixel water under a rock standing in the sea, and cuts the water out of its art', () => {
+    const under = (qs: Quad[]) => cellQuads(qs, 2, 2).length + qs.filter((q) => q.metatile === 3 && isFloor(q) &&
+      q.a[0] === 2 && Math.abs(q.a[2] - q.a[1] - 2) < 1e-6).length;
+    const legacy = emitLegacy(a, null).quads;
+    expect(legacy.some((q) => q.metatile === 3 && isFloor(q) && q.a[0] === 2 && Math.abs(q.a[2] - q.a[1] - 2) < 1e-6)).toBe(true);
+    const withKit = emitLegacy(a, kit()).quads;
+    expect(withKit.some((q) => q.metatile === 3 && isFloor(q) && q.a[0] === 2 && Math.abs(q.a[2] - q.a[1] - 2) < 1e-6)).toBe(false);
+    const rock = cellQuads(withKit, 2, 2);
+    expect(rock.length).toBeGreaterThan(0);
+    for (const q of rock) expect([q.variant, q.cutout]).toEqual([Variant.Dry, true]);
+    expect(under(withKit)).toBe(rock.length);
+  });
+
+  it('leaves the shore between the kit water under legacy art and the terrain to the kit (no legacy connector)', () => {
+    // (the terrain draws the bank: water cells count as its surfaces)
+    const c = new Claims(a.N);
+    for (let i = 0; i < a.N; i++) c.claim(i, a.kind[i] === K.Floor ? CLAIM_SURFACE : CLAIM_WATER_UNDER);
+    expect(emitLegacy(a, c).quads.filter(isConnector)).toEqual([]);
+    const land = new Claims(a.N);
+    for (let i = 0; i < a.N; i++) if (a.kind[i] === K.Floor) land.claim(i, CLAIM_SURFACE);
+    expect(emitLegacy(a, land).quads.filter(isConnector).length).toBeGreaterThan(0);
   });
 });

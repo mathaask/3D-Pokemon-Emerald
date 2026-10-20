@@ -11,6 +11,10 @@ export const CLAIM_DECOR = 8;
 /** 3D grass blades stand on the cell: they hide the legs of the characters walking in it, so the view
  *  hides the GBA's grass overlay sprite there (and only there). Read only by the view. */
 export const CLAIM_BLADES = 16;
+/** The kit's water surface runs on under the cell's art, which the legacy emitter still draws (a
+ *  boat, a bridge's or cycling road's edge, a rock standing in the sea): without its water-coloured
+ *  pixels (Variant.Dry), its floor just above the water's swell, and no pixel water under a block. */
+export const CLAIM_WATER_UNDER = 32;
 
 export interface ClaimsSnapshot {
   bits: Uint8Array;

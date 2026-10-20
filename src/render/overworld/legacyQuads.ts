@@ -3,9 +3,10 @@
 // claimed (claims.ts) are skipped so its models can take their place.
 
 import { Variant } from './metatileAtlas';
-import { diffFromGround } from './tileInfo';
+import { diffFromGround, type TileInfo } from './tileInfo';
+import { bgr555ToSrgb, classifyGroundColor } from '../kit/palette';
 import { K, ROOF_SLOPE, type MapAnalysis } from './analyze';
-import { type Claims, CLAIM_SURFACE, CLAIM_OBJECT, CLAIM_TOP } from './claims';
+import { type Claims, CLAIM_SURFACE, CLAIM_OBJECT, CLAIM_TOP, CLAIM_WATER_UNDER } from './claims';
 
 export type Vec3 = [number, number, number];
 
@@ -23,9 +24,24 @@ export interface Quad {
   glow?: boolean;
 }
 
+/** Height above the water level of legacy art the kit's water runs under (CLAIM_WATER_UNDER): over
+ *  the water surface's swell (kit/water.ts: +-0.05). */
+export const DRY_LIFT = 0.06;
+
 export interface TreeQuad {
   px: number; py: number; pz: number; y0: number;
   metatile: number; variant: Variant;
+}
+
+/** Whether metatile `m`'s art shows water (16 px or more of water colours, as the atlas' Dry variant
+ *  cuts out). */
+function drawsWater(info: TileInfo, m: number): boolean {
+  let n = 0;
+  for (let p = m * 256, end = p + 256; p < end && n < 16; p++) {
+    const v = info.both[p];
+    if (!(v & 0x8000) && classifyGroundColor(bgr555ToSrgb(v)) === 'water') n++;
+  }
+  return n >= 16;
 }
 
 /** Today's pixel-textured reconstruction, skipping whatever the kit claimed. */
@@ -33,6 +49,20 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
   const { opts, info, minX, minY, maxX, maxY, idx, inside, mt, kind, roundTree, building, buildings,
     height, groundOf, groundH, hasTop, GW, N } = a;
   const claimed = (i: number, bit: number) => claims !== null && (claims.bits[i] & bit) !== 0;
+  // Cells the kit's water runs under: their art is drawn without its water (Dry, alpha-tested) where
+  // it shows any, and no floor of pixel water lies under a block standing in the water.
+  const wetArt = new Map<number, boolean>();
+  const dry = (i: number) => {
+    if (!claimed(i, CLAIM_WATER_UNDER)) return false;
+    const m = mt[i];
+    let w = wetArt.get(m);
+    if (w === undefined) wetArt.set(m, (w = drawsWater(info, m)));
+    return w;
+  };
+  /** Variant and cutout flag of cell i's art drawn with `v` (Both unless dry). */
+  const art = (i: number, v: Variant): [Variant, boolean] => (dry(i) ? [Variant.Dry, true] : [v, v === Variant.Cutout]);
+  /** A surface for the connectors: drawn by the kit (its own, or its water under legacy art). */
+  const kitSurface = (i: number) => claimed(i, CLAIM_SURFACE) || claimed(i, CLAIM_WATER_UNDER);
   // Buildings the kit modelled: the cells of their door flood fill outside the model (art the fill
   // swallowed: fences, lamp posts, rock) are plain blocks again.
   const modelled = new Uint8Array(buildings.length);
@@ -99,8 +129,14 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
         const h = height[i];
         floor(x, y, h, mt[i], hasTop(i) ? Variant.Bottom : Variant.Both);
       } else if (k === K.Water) {
-        floor(x, y, height[i], mt[i], Variant.Both, false, 1);
-        quads[quads.length - 1].water = true;
+        if (claimed(i, CLAIM_WATER_UNDER)) {
+          floor(x, y, height[i] + DRY_LIFT, mt[i], Variant.Dry, true, 1);
+        } else {
+          floor(x, y, height[i], mt[i], Variant.Both, false, 1);
+          quads[quads.length - 1].water = true;
+        }
+      } else if (claimed(i, CLAIM_WATER_UNDER)) {
+        // (standing in the kit's water: no floor under it)
       } else {
         const g = groundOf[i];
         // No plain ground nearby (dense forest): use the cell itself so nothing shows through.
@@ -224,7 +260,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       if (Number.isNaN(hB)) {
         // Nothing in front: a flat top at the level behind (or ground level).
         const top = Number.isNaN(hA) ? groundH[idx(x, e)] : hA;
-        for (let r = y; r <= e; r++) floor(x, r, top, mt[idx(x, r)], Variant.Both);
+        for (let r = y; r <= e; r++) floor(x, r, top, mt[idx(x, r)], ...art(idx(x, r), Variant.Both));
         y = e + 1;
         continue;
       }
@@ -243,7 +279,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
           const zf = e + 0.5 + hB; // stand on the cell's centre line
           for (let r = y; r <= e; r++) {
             const y0 = hB + (e - r);
-            face(x, zf, y0, y0 + 1, mt[idx(x, r)], Variant.Cutout, true, 1);
+            face(x, zf, y0, y0 + 1, mt[idx(x, r)], ...art(idx(x, r), Variant.Cutout), 1);
           }
           if (ai >= 0 && kind[ai] === K.Floor && hasTop(ai) && !claimed(ai, CLAIM_TOP)) {
             consumedTop[ai] = 1;
@@ -259,10 +295,10 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       const zf = e + 1 + hB;
       for (let r = e - F + 1; r <= e; r++) {
         const y0 = hB + (e - r);
-        face(x, zf, y0, y0 + 1, mt[idx(x, r)], Variant.Both, false, 0.92);
+        face(x, zf, y0, y0 + 1, mt[idx(x, r)], ...art(idx(x, r), Variant.Both), 0.92);
       }
       const topH = hB + F;
-      for (let r = y; r <= e - F; r++) floor(x, r, topH, mt[idx(x, r)], Variant.Both, false, 1);
+      for (let r = y; r <= e - F; r++) floor(x, r, topH, mt[idx(x, r)], ...art(idx(x, r), Variant.Both), 1);
       // side skirts per top row, only where the west/east neighbour is lower
       for (let r = y; r <= e - F; r++) {
         for (const dir of [-1, 1]) {
@@ -292,7 +328,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       // south neighbour: edge (Z = y+1+h, Y = h) -> (Z = y+1+h2, Y = h2)
       if (y + 1 < maxY) {
         const j = idx(x, y + 1);
-        if (!(claimed(i, CLAIM_SURFACE) && claimed(j, CLAIM_SURFACE))) {
+        if (!(kitSurface(i) && kitSurface(j))) {
           if (surface(kind[j]) && Math.abs(height[j] - h) > 0.01) {
             const h2 = height[j];
             // Lower north cell -> this is the front of the higher cell (lit); higher south cell ->
@@ -311,7 +347,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       // east neighbour: parallelogram on the plane X = x + 1
       if (x + 1 < maxX) {
         const j = idx(x + 1, y);
-        if (!(claimed(i, CLAIM_SURFACE) && claimed(j, CLAIM_SURFACE))) {
+        if (!(kitSurface(i) && kitSurface(j))) {
           if (surface(kind[j]) && Math.abs(height[j] - h) > 0.01) {
             const h2 = height[j];
             const hi = Math.max(h, h2), lo = Math.min(h, h2);

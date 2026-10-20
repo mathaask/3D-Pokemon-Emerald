@@ -1,5 +1,5 @@
 // Decodes all 1024 metatiles of the current tileset pair from live VRAM into a
-// padded, mipmapped atlas (bottom layer / top layer / both layers composited).
+// padded, mipmapped atlas (bottom layer / top layer / both layers composited / cutout / dry).
 
 import * as THREE from 'three';
 import type { Mem } from '../../game/mem';
@@ -10,9 +10,10 @@ export const PAD = 4;
 export const COLS = 32;
 export const VARIANT_H = CELL * 32; // 768
 export const ATLAS_W = CELL * COLS; // 768
-export const ATLAS_H = VARIANT_H * 4; // bottom, top, combined, cutout
+export const ATLAS_H = VARIANT_H * 5; // bottom, top, combined, cutout, dry
 
-export const enum Variant { Bottom = 0, Top = 1, Both = 2, Cutout = 3 }
+/** Dry: both layers' own pixels without the water-coloured ones (art the kit's water shows under). */
+export const enum Variant { Bottom = 0, Top = 1, Both = 2, Cutout = 3, Dry = 4 }
 
 const DEFS_W = 10; // 8 tile entries, attributes, reference ground metatile
 
@@ -61,6 +62,14 @@ const FRAG = /* glsl */ `
     return vec4(paletteColor(0).rgb, 1.0);
   }
 
+  // Water colours (as kit/palette.ts classifyGroundColor: blue well over red, over green, not dark),
+  // on the 5-bit ROM values.
+  bool isWaterColor(vec3 c) {
+    vec3 q = floor(c * 31.0 + 0.5) / 31.0;
+    float l = dot(q, vec3(0.299, 0.587, 0.114));
+    return l >= 0.12 && q.b > q.r + 0.2 && q.b > q.g + 0.05;
+  }
+
   vec4 bothColor(int metatile, int lx, int ly) {
     vec4 top = layerColor(metatile, 1, lx, ly);
     return top.a > 0.0 ? top : groundColor(metatile, lx, ly);
@@ -83,7 +92,7 @@ const FRAG = /* glsl */ `
       c = layerColor(metatile, 1, lx, ly);
     } else if (variant == 2) {
       c = bothColor(metatile, lx, ly);
-    } else {
+    } else if (variant == 3) {
       // Cutout: only real layer pixels (never the BG3 filler/backdrop), minus pixels identical
       // to the reference ground metatile.
       c = layerColor(metatile, 1, lx, ly);
@@ -93,6 +102,11 @@ const FRAG = /* glsl */ `
         vec4 g = bothColor(ref, lx, ly);
         if (c.a > 0.0 && all(lessThan(abs(g.rgb - c.rgb), vec3(0.002)))) c = vec4(0.0);
       }
+    } else {
+      // Dry: only real layer pixels, minus the water-coloured ones.
+      c = layerColor(metatile, 1, lx, ly);
+      if (c.a == 0.0) c = layerColor(metatile, 0, lx, ly);
+      if (c.a > 0.0 && isWaterColor(c.rgb)) c = vec4(0.0);
     }
     fragColor = vec4(srgbToLinear(c.rgb), c.a);
   }

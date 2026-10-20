@@ -6,11 +6,14 @@
 import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { K, WATER_BEHAVIORS, type MapAnalysis } from '../overworld/analyze';
-import { CLAIM_SURFACE, type Claims } from '../overworld/claims';
-import { dominantColor, luma, toLinear, type RGB } from './palette';
+import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_WATER_UNDER, type Claims } from '../overworld/claims';
+import { attrBehavior } from '../../game/rom/tileset';
+import { classifyGroundColor, countPixels, dominantColor, luma, toLinear, type RGB } from './palette';
 import { hashCell } from './geom';
 import { kitMaterial } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
+
+const isWaterColor = (c: RGB) => classifyGroundColor(c) === 'water';
 
 export interface WaterCell { i: number; level: number; fall: boolean }
 export interface WaterPlacement {
@@ -27,13 +30,14 @@ export interface WaterPlacement {
 const ROCK_BL = new Set([0x158, 0x16c]);
 const ROCK_BR = new Set([0x159, 0x16d]);
 
-/** Multi-source BFS from land: 0 on land, 1 for water touching land, … capped at 15. */
-export function shoreDistance(a: MapAnalysis): Uint8Array {
+/** Multi-source BFS from land: 0 on land, 1 for water touching land, … capped at 15. `wet` cells
+ *  count as water whatever their kind (blocks standing in the water). */
+export function shoreDistance(a: MapAnalysis, wet?: Uint8Array): Uint8Array {
   const W = a.GW, H = a.GH;
   const dist = new Uint8Array(a.N).fill(255);
   const queue = new Int32Array(a.N);
   let head = 0, tail = 0;
-  for (let i = 0; i < a.N; i++) if (a.kind[i] !== K.Water) { dist[i] = 0; queue[tail++] = i; }
+  for (let i = 0; i < a.N; i++) if (a.kind[i] !== K.Water && !wet?.[i]) { dist[i] = 0; queue[tail++] = i; }
   while (head < tail) {
     const c = queue[head++];
     const col = c % W, row = (c - col) / W;
@@ -279,6 +283,31 @@ export const waterFamily: Family<WaterPlacement> = {
       counts[m]++;
       claims.claim(i, CLAIM_SURFACE);
     }
+    // The art left to the legacy emitter on the water (overhangs, boats, bank edges, rocks and other
+    // blocks standing in it): the water runs on under it, and the legacy draws it without its own
+    // pixel water (CLAIM_WATER_UNDER). A block stands in the water when the ground behind it (the
+    // analysis' groundOf, the floor the legacy laid under it) is water, and no family modelled it:
+    // water by behaviour, or drawn mostly in water colours (a boat's or sea rock's tile the analysis
+    // laid flat as water).
+    const waterTiles = new Map<number, boolean>();
+    const waterGround = (g: number) => {
+      let w = waterTiles.get(g);
+      if (w === undefined) {
+        w = WATER_BEHAVIORS.has(attrBehavior(a.info.attributes[g])) || countPixels(a.info.both, [g], isWaterColor) >= 128;
+        waterTiles.set(g, w);
+      }
+      return w;
+    };
+    const wet = new Uint8Array(a.N);
+    for (let i = 0; i < a.N; i++) {
+      if (claims.has(i, CLAIM_SURFACE) || isSecretBaseSpot(a, i)) continue;
+      const k = a.kind[i], g = a.groundOf[i];
+      const block = k === K.Block && !claims.has(i, CLAIM_OBJECT) && g >= 0 && waterGround(g);
+      if (k !== K.Water && !block) continue;
+      cells.push({ i, level: k === K.Water ? a.height[i] : a.groundH[i], fall: false });
+      claims.claim(i, CLAIM_WATER_UNDER);
+      if (block) wet[i] = 1;
+    }
     let common = -1, best = 0;
     for (let m = 0; m < counts.length; m++) if (counts[m] > best) { best = counts[m]; common = m; }
     const tint = (common >= 0 ? dominantColor(a.info.bottom, [common]) : null) ?? WATER_TINT;
@@ -287,7 +316,7 @@ export const waterFamily: Family<WaterPlacement> = {
       const stone = (c: RGB) => c[2] < c[0] + 0.15 && luma(c) >= 0.45; // the lit stone, not water or shade
       rockTint = dominantColor(a.info.both, [...ROCK_BL, ...ROCK_BR], stone) ?? rockTint;
     }
-    return { cells, dist: cells.length ? shoreDistance(a) : new Uint8Array(0), tint, rocks, rockTint };
+    return { cells, dist: cells.length ? shoreDistance(a, wet) : new Uint8Array(0), tint, rocks, rockTint };
   },
 
   build(p: WaterPlacement, { a }: SemanticContext, kit: KitContext): THREE.Object3D | null {
