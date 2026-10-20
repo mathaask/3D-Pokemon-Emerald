@@ -79,6 +79,8 @@ export class Renderer {
     this.fade.frustumCulled = false;
     this.fadeScene.add(this.fade);
     window.addEventListener('resize', () => this.resize());
+    // a restored context has lost every render target's pixels: the atlas redraws only on change
+    canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
     this.resize();
   }
 

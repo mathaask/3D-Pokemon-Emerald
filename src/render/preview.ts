@@ -117,6 +117,7 @@ export class PreviewApp {
     });
     canvas.addEventListener('wheel', (e) => { this.zoom += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
     window.addEventListener('resize', () => this.resize());
+    canvas.addEventListener('webglcontextrestored', () => this.view.atlas.invalidate());
     this.resize();
     const tick = () => {
       this.frame();
