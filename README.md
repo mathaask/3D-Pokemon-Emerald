@@ -52,9 +52,10 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   special buildings, and props such as signs, mailboxes, fences and boulders. Their colours
   are sampled from the ROM's own tiles, so every town keeps its palette. Scenery between the
   camera and the player dithers away in a small circle, so the player is never hidden.
-  Anything the models don't cover yet (caves, interiors and a few unusual tiles) is drawn
-  the original way: pixel art from live video memory on boxes, sloped roofs and
-  camera-facing cards, so tile animations and in-game map edits appear immediately.
+  Anything the models don't cover yet (caves, interiors, mountain rock and a few unusual
+  tiles; see the limitations below) is drawn the original way: pixel art from live video
+  memory on boxes, sloped roofs and camera-facing cards, so tile animations and in-game map
+  edits appear immediately.
   **Settings → World style → Retro 3D** switches the whole world back to that pixel-art
   reconstruction. NPCs, the player, and field effects are lit billboards with soft shadows.
 - **Lighting.** The sun and sky follow the in-game clock. Building windows glow at night.
@@ -95,7 +96,9 @@ npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.te
 
 `npm run regress` writes one PNG per map and hour, a contact sheet per hour
 (`_sheet_h11.png`, `_sheet_h21.png`) and render stats (`stats.json`: draw calls, triangles,
-world build time), so two labels can be compared side by side. The smoke tests need the ROM.
+world build time), so two labels can be compared side by side. Both `regress` and `shot3d`
+need the ROM in the project root and a local Chrome (or Edge) install, which they drive
+headless; the smoke tests need the ROM.
 
 `/?map=<group>.<num>` opens a static 3D preview of any map (WASD/mouse to fly; `&hour=`,
 `&weather=`, `&flash=` change the conditions).
@@ -106,6 +109,7 @@ world build time), so two labels can be compared side by side. The smoke tests n
   handles their absence the same way it does on a lone GBA.
 - The 3D reconstruction is heuristic. A few unusual maps may show odd geometry, and you
   can press V at any time to switch to the original 2D view. In Modern style the mountain
-  ridges (Mt Chimney, Route 112, Jagged Pass) and a few special buildings still use the
-  pixel-art reconstruction.
+  ridges (Mt Chimney, Route 112, Jagged Pass), much of Ever Grande City's rock, the crater
+  walls of Sootopolis and Lavaridge's cliffs, and a few special buildings (Devon Corp, the
+  Battle Pyramid, Pike and Palace) still use the pixel-art reconstruction.
 - Audio needs one key press or click before it can start (a browser requirement).

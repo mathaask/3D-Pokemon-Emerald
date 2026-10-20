@@ -25,8 +25,8 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   calls/triangles/buildMs); compare against `out/regress/before` (pre-Phase-1 baseline) or `phase1`
 - `npx tsx tools/shot3d.ts --query "map=0.9&hour=11" --name x` — screenshot a static map preview → `out/3d/x_0.png`
 - `npx tsx tools/shot3d.ts --batch "name=map=0.9;name2=map=0.10"` — several previews in one run
-- `npx tsx tools/shot3d.ts --state out/littleroot.state --wait 3000` — screenshot live play from a save state
-  (`littleroot.state` is indoors; outdoor states: `r101.state` Route 101 (free to walk), `s22.state` Littleroot;
+- `npx tsx tools/shot3d.ts --state out/r101.state --wait 3000 --keys "LEFT:600"` — screenshot live play from a save
+  state (`r101.state`: Route 101, free to walk; `s22.state`: Littleroot; `littleroot.state` is an indoor cutscene;
   `--eval` runs after the shots)
 
 ## Conventions

@@ -180,7 +180,8 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   luma³-weighted (Ever Grande yellow bfaf43 → d3c43b). The map preview takes `&h=`. 518 maps 0 failures; regress
   t16a ≤ 75 calls / 403k tris.
 - Task 16 (polish/perf): soft sun shadows by quality (`OverworldView.setShadowQuality`: 1024/2048/4096 with a PCF
-  `shadow.radius` keeping a ~0.06-unit soft edge; three r186 has no PCFSoftShadowMap any more); `Renderer.setWorldStyle`
+  `shadow.radius` keeping a ~0.06-unit soft edge; three r186 has no PCFSoftShadowMap any more; Modern only since
+  Task 17b — Retro keeps the pre-Phase-1 2048 / radius 1); `Renderer.setWorldStyle`
   (Modern tilt-shift 0.52/0.3/1.2, Retro 0.52/0.22/2.2, `tiltShiftFor`); PostFX works in drawing-buffer pixels
   (`composer.setPixelRatio(1)`, `PostFX.sceneTargetSize()`): at DPR 2 the scene target is 2560×1600, not 5120×3200
   (GPU frame 400–550 → 80–117 ms on the dev iGPU); the metatile atlas redraws only when its 32 KB of BG tiles, BG
@@ -203,11 +204,13 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   favicon 404), the player never hidden (dithered fade through tree crowns), tall grass parts around the player and
   NPCs, the GBA grass overlay hidden on blade cells and shown again after a live switch to Retro (and back: the kit
   rebuilds). Live crossing rebuilds (one per crossing) 20–45 ms once warm, 59–112 ms for the first crossing of a
-  session. **Found:** buildings in a connected map's strip of the live grid are built without that map's events
-  (`liveEvents` reads the current map only): seen from Route 101, Oldale's Pokémon Center is a plain house model and
-  its neighbour stays pixel art; both switch to the right models when you cross. Retro regress = `before` (calls/triangles −1/−2 everywhere: the atlas
-  no longer draws every frame); pixels differ only at shadow edges (the Task 16 PCF `shadow.radius` is set per quality
-  in both styles: slightly softer edges in Retro too) and in water animation phase.
+  session. **Found (fixed in Task 17b, below):** buildings in a connected map's strip of the live grid were built
+  without that map's events (`liveEvents` read the current map only): seen from Route 101, Oldale's Pokémon Center
+  was a plain house model and its neighbour pixel art, both switching models when you crossed. Retro regress at
+  Task 17 = `before` in calls/triangles (−1/−2 everywhere: the atlas no longer draws every frame); its pixels then
+  differed at shadow edges (the Task 16 PCF `shadow.radius` was set per quality in both styles — Task 17b restored
+  Retro's pre-Phase-1 shadows) and in water animation phase. Cold regress `buildMs` (first build in a page,
+  informational) peaked at 329 ms (Route 119 h11) in this run.
 - Task 17b (controller-inserted, after Phase 1): **live events include the connected maps' strips.**
   `kit/events.ts` `liveGridEvents` reads the current map's events plus every connected map's (header.connections →
   gMapGroups → its header), shifted by `stripPlacement` exactly as fieldmap.c `Fill{South,North,West,East}Connection`
@@ -230,15 +233,28 @@ Modern style draws terrain, water, cliffs/ledges, trees, tall grass, flowers, bu
 special facades) and props (signs, mailboxes, lamps, fences, rocks) on every outdoor map; Retro 3D is the old look.
 - **Stats (regress `phase1`, medium, 1280×800):** max 74 draw calls (Petalburg), max 403,269 triangles (Fortree);
   budgets 150 / 1.5 M. Warm rebuild ≤ 83 ms on every regression map (Task 16); live crossings 20–45 ms warm,
-  59–112 ms for the first crossing of a session.
+  59–112 ms for the first crossing of a session. Cold `buildMs` (first build in a fresh page; informational by
+  ruling, machine-load dominated) up to 329 ms (Route 119 h11) in the `phase1` run.
 - **Coverage (legacy share, `out/coverage*.txt`):** regression maps 5.3 % average (Littleroot/Oldale 0 %, worst
-  Sootopolis 25.2 %); all 68 outdoor maps 7.9 % of the grid, 15.8 % of map cells.
-- **Tests:** `npm test` 21 files / 410 tests; smoke golden + semantics 15 tests; `tsc` clean.
+  Sootopolis 25.2 %); all 68 outdoor maps 7.9 % of the grid, 15.8 % of map cells. Worst by map cells: Mt Chimney
+  65.9 %, Ever Grande City 53.3 %, Sky Pillar Top 46.3 % (its cloud backdrop), Route 112 44.9 %, Jagged Pass 39.5 %,
+  Sootopolis 34.7 %.
+- **Tests:** `npm test` 21 files / 423 tests (after Task 17b); smoke golden + semantics 15 tests; `tsc` clean.
 - **Known gaps:**
   - Mountain ridge fields need a 2D height solve (proposed follow-up "terrain height solver v2"): Mt Chimney (65.9 %
     of map cells legacy), Route 112 (44.9 %), Jagged Pass (39.5 %) are mostly pixel-art rock; Sootopolis' N-S crater
-    wall strips and some 1-row rock walls too.
-  - Caves, interiors (Phase 4) and Dive maps' seabed objects keep the Retro reconstruction.
+    wall strips, Mossdeep's diagonal rock ridges and some 1-row rock walls too.
+  - **Ever Grande City** (53.3 % of map cells legacy; grid: 1,410 block + 290 building cells): a rock-mountain map.
+    Its legacy blocks are General mountain rock (0x071–0x07d, 0x089: the mass-top tile is also the walkable plateau
+    floor, as on the mountain maps above). Its legacy "building" cells are rock walls, not buildings: the analysis'
+    door flood fill spreads from the Victory Road cave mouths (18,27), (18,41) and the League / PC doors into the
+    surrounding rock, so the cliffs skip it and no footprint models it (the League and the PC are modelled). Found
+    with `.scratch/t17eg.ts` (legacy-cell map + metatile histogram per map).
+  - **Sootopolis** (715 legacy building cells over the grid) and **Lavaridge** (215): crater / cliff rock the door
+    flood fill labels "building" around the houses carved into Sootopolis' crater and along Lavaridge's Mart/PC
+    cliff rows (Task 12); the houses, PC, Mart and gym themselves are modelled.
+  - Interiors keep the Retro reconstruction until Phase 4 (`gTileset_Building` furniture); caves are not scheduled
+    in the spec yet; Dive maps draw only their seabed terrain in Modern (objects legacy).
   - All outdoor water sits at one level: waterfalls are flat streaked cells; sea currents are not directional;
     puddles/hot springs are wet ground.
   - Stairs are per-cell ramps.
@@ -247,7 +263,11 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
     Pyramid/Pike/Palace, Fan Club, cable car, Battle Frontier gate/Ranking Hall.
   - ~~Buildings in the connected maps' strips are built without that map's warps~~ — **fixed (Task 17b)**: live events
     include the connected maps' strips. Left: a building the strip cuts can be narrower/shorter (or, where the
-    strip's terrain-tile counts differ, wider) than in its own map, so its extent may still change when you cross.
+    strip's terrain-tile counts differ, wider) than in its own map, so its extent may still change when you cross
+    (e.g. a Battle Frontier West special changes size on crossing).
+  - Stern's Shipyard's back pier floats behind its 3D roof (the height solver lifts the elevation-1 pier to 4).
+  - Rain streaks show below the water surface (the water no longer writes depth).
+  - Only the player gets the occlusion fade: NPCs behind tree crowns or roofs stay hidden (Phase 2).
   - The first 1–2 map rebuilds after boot may hitch (98–193 ms, JIT warm-up); a boot-time warm-up build would fix it.
   - Pixel-water squares can return under palette effects (drought weather, fades: the Dry cut follows live colours).
   - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
