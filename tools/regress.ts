@@ -3,7 +3,8 @@
 //
 //   npx tsx tools/regress.ts --label before [--style retro] [--only littleroot,oldale] [--hours 11,21]
 //
-// Output: out/regress/<label>/<name>_h<hour>.png, _sheet_h<hour>.png, stats.json
+// Output: out/regress/<label>/<name>_h<hour>.png, _sheet_h<hour>.png, stats.json (per view: draw calls,
+// triangles, cold buildMs; rebuildMs and firstFrameMs, the median of 3 warm rebuilds as a map crossing)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -88,8 +89,17 @@ async function main(): Promise<void> {
         await new Promise((r) => setTimeout(r, wait));
         const key = `${m.name}_h${hour}`;
         await page.screenshot({ path: path.join(outDir, `${key}.png`) as `${string}.png` });
-        stats[key] = await page.evaluate(() =>
-          (window as unknown as { preview?: { stats(): unknown } }).preview?.stats() ?? null);
+        // render stats of the view, then what a map crossing costs (median of 3 warm rebuilds): the
+        // rebuild and the first frame after it, where shader programs and uploads land
+        stats[key] = await page.evaluate(() => {
+          type Preview = { stats(): object; measureRebuild(): { buildMs: number; firstFrameMs: number } };
+          const p = (window as unknown as { preview?: Preview }).preview;
+          if (!p) return null;
+          const s = p.stats();
+          const runs = [0, 1, 2].map(() => p.measureRebuild());
+          const med = (f: (r: { buildMs: number; firstFrameMs: number }) => number) => Math.round(runs.map(f).sort((x, y) => x - y)[1]);
+          return { ...s, rebuildMs: med((r) => r.buildMs), firstFrameMs: med((r) => r.firstFrameMs) };
+        });
         console.log(`shot ${key} ${JSON.stringify(stats[key])}`);
       }
       await contactSheet(page, outDir, maps.map((m) => `${m.name}_h${hour}`), path.join(outDir, `_sheet_h${hour}.png`));

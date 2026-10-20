@@ -136,6 +136,19 @@ export class PreviewApp {
     this.view.setBufferSize(t.x, t.y);
   }
 
+  /**
+   * What crossing a map connection costs: a warm rebuild, then the first frame drawn after it
+   * (synchronised with the GPU), where new shader programs and uploads land. Times in ms.
+   */
+  measureRebuild(): { buildMs: number; firstFrameMs: number } {
+    const buildMs = this.rebuild();
+    const t0 = performance.now();
+    this.frame();
+    const gl = this.webgl.getContext();
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)); // (waits for the GPU)
+    return { buildMs, firstFrameMs: performance.now() - t0 };
+  }
+
   /** Render statistics of the last frame (all passes) and the last world build time. */
   stats(): { calls: number; triangles: number; buildMs: number } {
     const r = this.webgl.info.render;
