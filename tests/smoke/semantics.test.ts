@@ -5,12 +5,15 @@
 //   npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/semantics.test.ts
 
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadRom, loadStaticMap } from './helpers/staticMap';
 import { REGRESSION_MAPS } from './helpers/maps';
 import { analyze, K, type MapAnalysis } from '../../src/render/overworld/analyze';
-import { extractAll, isSecretBaseSpot, type Extracted } from '../../src/render/kit/semantics';
+import { buildAll, extractAll, isSecretBaseSpot, type Extracted } from '../../src/render/kit/semantics';
+import { createKitUniforms } from '../../src/render/kit/materials';
+import { emitLegacy } from '../../src/render/overworld/legacyQuads';
 import { FAMILIES } from '../../src/render/kit/index';
 import { gridEvents } from '../../src/render/kit/events';
 import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE } from '../../src/render/overworld/claims';
@@ -225,6 +228,39 @@ describe('semantics on real maps', () => {
       expect(w.cells.length + w.rocks.length, name).toBe(0);
       expect(payload<TerrainPlacement>(ex, 'terrain').cells.length, name).toBeGreaterThan(0);
     }
+  });
+
+  it('Dive maps: each seabed bank is drawn once, by the terrain (no legacy connector in its place)', () => {
+    // (the kit draws no water there: the terrain's banks against the pixel water and the legacy
+    // connectors were both drawn, in the same plane, on 1,037 cell edges of 11 maps until the final review)
+    const box = (pts: ArrayLike<number>[]) => {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const p of pts) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+      return [...lo, ...hi].map((v) => Math.round(v * 1000)).join(',');
+    };
+    const maps = loadAllMaps(new RomReader(loadRom())).filter((m) => m.mapType === MapType.UNDERWATER);
+    expect(maps.length).toBeGreaterThanOrEqual(11);
+    let banks = 0;
+    for (const m of maps) {
+      const s = loadStaticMap(m.group, m.num);
+      const a = analyze(s.grid, { ...s.opts, margin: 14 });
+      const ctx = { a, events: gridEvents(s.map.events, 0), quality: 'medium' as const };
+      const ex = extractAll(ctx, FAMILIES);
+      const group = buildAll(ex, ctx, FAMILIES, { uniforms: createKitUniforms(), quality: 'medium', disposables: [] });
+      expect(ex.report.filter((r) => !r.ok), m.name).toEqual([]);
+      const terrain = group.getObjectByName('terrain') as THREE.Mesh | undefined;
+      if (!terrain) continue; // (a map with no seabed of its own)
+      const pos = terrain.geometry.getAttribute('position');
+      const keys = new Set<string>();
+      // (the tops first, one quad of two triangles per cell; then the banks)
+      for (let v = payload<TerrainPlacement>(ex, 'terrain').cells.length * 6; v < pos.count; v += 6) {
+        keys.add(box(Array.from({ length: 6 }, (_, k) => [pos.getX(v + k), pos.getY(v + k), pos.getZ(v + k)])));
+      }
+      banks += keys.size;
+      const twice = emitLegacy(a, ex.claims).quads.filter((q) => q.tv0 === 0.8 && keys.has(box([q.a, q.b, q.c, q.d])));
+      expect(twice.length, m.name).toBe(0);
+    }
+    expect(banks).toBeGreaterThan(1000);
   });
 
   it('mountain maps and Sootopolis: their rock is 3D, the crater walls in their own cream', () => {

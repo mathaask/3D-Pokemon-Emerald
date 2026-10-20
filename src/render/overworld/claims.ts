@@ -15,6 +15,10 @@ export const CLAIM_BLADES = 16;
  *  boat, a bridge's or cycling road's edge, a rock standing in the sea): without its water-coloured
  *  pixels (Variant.Dry), its floor just above the water's swell, and no pixel water under a block. */
 export const CLAIM_WATER_UNDER = 32;
+/** The terrain draws the banks between the cell and the water next to it (the shore slope is the
+ *  land's), whether or not the kit draws that water: the legacy emitter draws no connector there.
+ *  (Where the kit draws no water, a Dive map, both drew each bank in the same plane.) */
+export const CLAIM_BANKS = 64;
 
 export interface ClaimsSnapshot {
   bits: Uint8Array;

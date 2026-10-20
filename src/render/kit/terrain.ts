@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { MB } from '../../game/behaviors';
 import { attrBehavior, attrLayerType, LayerType } from '../../game/rom/tileset';
 import { DOOR_BEHAVIORS, K, type MapAnalysis } from '../overworld/analyze';
-import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
+import { CLAIM_BANKS, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../overworld/claims';
 import type { TileInfo } from '../overworld/tileInfo';
 import { bgr555ToSrgb, classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
 import { bladeColor, GRASS_BEHAVIORS } from './grass';
@@ -289,7 +289,7 @@ export const terrainFamily: Family<TerrainPlacement> = {
       if (Number.isNaN(h)) h = 0;
       const look = cellLook(a, m, cache);
       cells.push({ i, h, mat: look.mat, tint: shade === 1 ? look.tint : scale(look.tint, shade) });
-      claims.claim(i, CLAIM_SURFACE);
+      claims.claim(i, CLAIM_SURFACE | CLAIM_BANKS);
     }
     return { cells };
   },

@@ -6,13 +6,18 @@
 //   row 2: floor at height 0
 // so it has two blocked runs with south faces and four N/S connectors (columns 0 and 3).
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import * as THREE from 'three';
 import { emitLegacy, type Quad } from '../src/render/overworld/legacyQuads';
 import { Claims, CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP, CLAIM_WATER_UNDER } from '../src/render/overworld/claims';
 import { Variant } from '../src/render/overworld/metatileAtlas';
 import { analyze, K } from '../src/render/overworld/analyze';
 import { MB } from '../src/game/behaviors';
 import { fakeAnalysis, fakeGrid, fakeInfo } from './helpers/fakeMap';
+import { buildAll, extractAll, type Extracted, type Family, type KitContext } from '../src/render/kit/semantics';
+import { terrainFamily, type TerrainPlacement } from '../src/render/kit/terrain';
+import { createKitUniforms } from '../src/render/kit/materials';
+import { NO_EVENTS } from '../src/render/kit/events';
 
 const MAP = ['....', '.##.', '....'];
 
@@ -197,5 +202,48 @@ describe('emitLegacy and the kit water under legacy art (CLAIM_WATER_UNDER)', ()
     const land = new Claims(a.N);
     for (let i = 0; i < a.N; i++) if (a.kind[i] === K.Floor) land.claim(i, CLAIM_SURFACE);
     expect(emitLegacy(a, land).quads.filter(isConnector).length).toBeGreaterThan(0);
+  });
+});
+
+describe('banks between the terrain and water the kit does not draw (Dive maps: no water family)', () => {
+  // Land ('.', height 0) north of the sea ('w', the water level below it): four S banks, rows 1-2.
+  const info = fakeInfo();
+  info.both.fill(14 | (24 << 5) | (20 << 10), 256, 512);
+  info.attributes[3] = MB.OCEAN_WATER;
+  const rows = ['....', '....', 'wwww', 'wwww'];
+  const code: Record<string, number> = { '.': 1 | 0x3000, w: 3 | 0x1000 };
+  const cells = new Uint16Array(16);
+  rows.forEach((r, y) => [...r].forEach((ch, x) => { cells[y * 4 + x] = code[ch]; }));
+  const a = analyze({ width: 4, height: 4, cells, border: [3, 3, 3, 3], borderW: 2, borderH: 2, borderPhase: 0 },
+    { info, generalPrimary: false, indoor: false, underground: false, underwater: true, margin: 0 });
+  const ctx = { a, events: NO_EVENTS, quality: 'medium' as const };
+  const kit = (): KitContext => ({ uniforms: createKitUniforms(), quality: 'medium', disposables: [] });
+  /** Bank quads the terrain mesh draws (its quads beyond one top per cell). */
+  const terrainBanks = (group: THREE.Group, ex: Extracted) => {
+    const mesh = group.getObjectByName('terrain') as THREE.Mesh | undefined;
+    return mesh ? mesh.geometry.getAttribute('position').count / 6 - (ex.payloads.get('terrain') as TerrainPlacement).cells.length : 0;
+  };
+
+  it('the synthetic map has the shape these tests rely on', () => {
+    expect(a.kind[a.idx(0, 1)]).toBe(K.Floor);
+    expect(a.kind[a.idx(0, 2)]).toBe(K.Water);
+    expect(a.height[a.idx(0, 2)]).toBeLessThan(a.height[a.idx(0, 1)]);
+    expect(emitLegacy(a, null).quads.filter(isConnector)).toHaveLength(4);
+  });
+
+  it('draws each once: the terrain does (the shore slope is the land\'s), the legacy connectors do not', () => {
+    const ex = extractAll(ctx, [terrainFamily]);
+    const group = buildAll(ex, ctx, [terrainFamily], kit());
+    expect(terrainBanks(group, ex)).toBe(4);
+    expect(emitLegacy(a, ex.claims).quads.filter(isConnector)).toEqual([]);
+  });
+
+  it('the legacy connectors draw them when the terrain fails', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failing: Family<unknown> = { ...terrainFamily, build() { throw new Error('boom'); } } as Family<unknown>;
+    const ex = extractAll(ctx, [failing]);
+    buildAll(ex, ctx, [failing], kit());
+    expect(emitLegacy(a, ex.claims).quads.filter(isConnector)).toHaveLength(4);
+    warn.mockRestore();
   });
 });

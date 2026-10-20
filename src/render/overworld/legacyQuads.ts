@@ -6,7 +6,7 @@ import { Variant } from './metatileAtlas';
 import { diffFromGround, type TileInfo } from './tileInfo';
 import { bgr555ToSrgb, classifyGroundColor } from '../kit/palette';
 import { K, ROOF_SLOPE, type MapAnalysis } from './analyze';
-import { type Claims, CLAIM_SURFACE, CLAIM_OBJECT, CLAIM_TOP, CLAIM_WATER_UNDER } from './claims';
+import { type Claims, CLAIM_SURFACE, CLAIM_OBJECT, CLAIM_TOP, CLAIM_WATER_UNDER, CLAIM_BANKS } from './claims';
 
 export type Vec3 = [number, number, number];
 
@@ -63,6 +63,9 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
   const art = (i: number, v: Variant): [Variant, boolean] => (dry(i) ? [Variant.Dry, true] : [v, v === Variant.Cutout]);
   /** A surface for the connectors: drawn by the kit (its own, or its water under legacy art). */
   const kitSurface = (i: number) => claimed(i, CLAIM_SURFACE) || claimed(i, CLAIM_WATER_UNDER);
+  /** A connector the kit draws: between two kit surfaces, or a bank of the terrain against water. */
+  const kitConnector = (i: number, j: number) => (kitSurface(i) && kitSurface(j)) ||
+    (claimed(i, CLAIM_BANKS) && kind[j] === K.Water) || (claimed(j, CLAIM_BANKS) && kind[i] === K.Water);
   // Buildings the kit modelled: the cells of their door flood fill outside the model (art the fill
   // swallowed: fences, lamp posts, rock) are plain blocks again.
   const modelled = new Uint8Array(buildings.length);
@@ -328,7 +331,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       // south neighbour: edge (Z = y+1+h, Y = h) -> (Z = y+1+h2, Y = h2)
       if (y + 1 < maxY) {
         const j = idx(x, y + 1);
-        if (!(kitSurface(i) && kitSurface(j))) {
+        if (!kitConnector(i, j)) {
           if (surface(kind[j]) && Math.abs(height[j] - h) > 0.01) {
             const h2 = height[j];
             // Lower north cell -> this is the front of the higher cell (lit); higher south cell ->
@@ -347,7 +350,7 @@ export function emitLegacy(a: MapAnalysis, claims: Claims | null = null): { quad
       // east neighbour: parallelogram on the plane X = x + 1
       if (x + 1 < maxX) {
         const j = idx(x + 1, y);
-        if (!(kitSurface(i) && kitSurface(j))) {
+        if (!kitConnector(i, j)) {
           if (surface(kind[j]) && Math.abs(height[j] - h) > 0.01) {
             const h2 = height[j];
             const hi = Math.max(h, h2), lo = Math.min(h, h2);
