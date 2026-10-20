@@ -96,7 +96,7 @@ npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.te
 
 `npm run regress` writes one PNG per map and hour, a contact sheet per hour
 (`_sheet_h11.png`, `_sheet_h21.png`) and render stats (`stats.json`: draw calls, triangles,
-world build time), so two labels can be compared side by side. Both `regress` and `shot3d`
+world build time, and what a map crossing costs: a warm rebuild and the first frame after it), so two labels can be compared side by side. Both `regress` and `shot3d`
 need the ROM in the project root and a local Chrome (or Edge) install, which they drive
 headless; the smoke tests need the ROM.
 

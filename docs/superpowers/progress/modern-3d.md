@@ -24,8 +24,10 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   exists for `wind` or `vertTransform`. Kit materials must not be `clone()`d (onBeforeCompile/key are not copied).
 - Task 5: `tests/helpers/fakeMap.ts` `fakeAnalysis(rows)` (no ROM) has a *blocked* border ring, so passable cells
   flanked W+E by blocks become Stairs and a `'#'` row lifts the floor north of it to height 1 (see the header of
-  `tests/legacyClaims.test.ts`). `disposeKit` disposes every material under the kit group (only geometries can opt
-  out, via `userData.shared`); textures a family creates go in `kit.disposables`.
+  `tests/legacyClaims.test.ts`). `disposeKit` frees everything under the kit group (geometries can opt out via
+  `userData.shared`), but returns kit materials to the session pool (`releaseKitMaterial`: their shader programs
+  outlive the build); textures a family creates go in `kit.disposables`. Per-build uniform values go through
+  `kitMaterial`'s `uniforms` (copied into the material's own slots when it is handed out).
 - Task 6: terrain skips walkable *structure* cells (NON_ANIMATED_DOOR, LADDER, NO_RUNNING = Fortree treehouse
   walkways/ladders, DOOR_BEHAVIORS, Acro Bike rails 0xd3–0xd6) — they stay legacy pixel art. `cellLook` ignores pixels with luma < 0.33
   (outlines/shadows, e.g. Fortree bridge canopy, Route 119 long-grass edges) and takes Deck tints from the composite
@@ -227,19 +229,34 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   texel edges in the tilt-shift bands) is Task 16a `c5d37e7`'s 5-variant metatile atlas (3072 → 3840 px tall:
   nearest-texel rounding moves); with a 4-variant atlas it is byte-identical — left as is (sub-texel, not a look change).
   Tests: `npm test` 21 files / 423; smoke golden + semantics 15; `tsc` clean.
+- **Final review fixes (2026-10-20, report `.superpowers/sdd/2026-10-19-phase1-outdoor/final-fix-report.md`).**
+  I1: every rebuild destroyed and recompiled every kit shader program (three releases a program with its last
+  material): `disposeKit` now returns kit materials to a session pool (`kit/materials.ts`, per KitUniforms, handed out
+  oldest first; each build's textures/geometries/instance buffers still freed) and the legacy tree cards keep one
+  material pair. First frame after a warm rebuild (`PreviewApp.measureRebuild()`, median of 5, Modern / Retro):
+  Oldale 193.5 / 56.0 → **28.4 / 24.5 ms**, Route 113 153.3 / 29.8 → **35.6 / 22.4**, Route 119 298.3 / 55.5 →
+  **26.5 / 26.2**; 0 programs re-created per rebuild (was 6–12). Regress `final` stats.json now has `rebuildMs` +
+  `firstFrameMs`: Modern build + first frame ≤ 131 ms on every regression map. Live (r101): warm crossings 30–61 ms
+  frames; a map's first visit in a session still compiles the programs it is the first to use (Oldale's water +
+  seabed: one 558 ms frame, then 50 ms). M1: Dive-map banks were drawn twice (terrain + legacy connector, 1,037
+  edges): `CLAIM_BANKS` → 0. M2: `safeLiveGridEvents` (unrecognised ROM: no frozen render loop). M5: family
+  failures warned once per map (`mapKey`). M6: a style switch with the settings panel open rebuilds at once. M7:
+  unknown saved `worldStyle` → Modern. P2: Fortree deck-height smoke check. Tests 22 files / 442; smoke 17.
 
 ## Phase 1 result (2026-10-20)
 Modern style draws terrain, water, cliffs/ledges, trees, tall grass, flowers, buildings (houses, lab, PC, Mart, gyms,
 special facades) and props (signs, mailboxes, lamps, fences, rocks) on every outdoor map; Retro 3D is the old look.
 - **Stats (regress `phase1`, medium, 1280×800):** max 74 draw calls (Petalburg), max 403,269 triangles (Fortree);
   budgets 150 / 1.5 M. Warm rebuild ≤ 83 ms on every regression map (Task 16); live crossings 20–45 ms warm,
-  59–112 ms for the first crossing of a session. Cold `buildMs` (first build in a fresh page; informational by
+  59–112 ms for the first crossing of a session. Since the final review fixes the first frame after a rebuild costs
+  no more than in Retro (no shader programs re-created): build + first frame ≤ 131 ms on every regression map
+  (regress `final`, `rebuildMs` + `firstFrameMs`). Cold `buildMs` (first build in a fresh page; informational by
   ruling, machine-load dominated) up to 329 ms (Route 119 h11) in the `phase1` run.
 - **Coverage (legacy share, `out/coverage*.txt`):** regression maps 5.3 % average (Littleroot/Oldale 0 %, worst
   Sootopolis 25.2 %); all 68 outdoor maps 7.9 % of the grid, 15.8 % of map cells. Worst by map cells: Mt Chimney
   65.9 %, Ever Grande City 53.3 %, Sky Pillar Top 46.3 % (its cloud backdrop), Route 112 44.9 %, Jagged Pass 39.5 %,
   Sootopolis 34.7 %.
-- **Tests:** `npm test` 21 files / 423 tests (after Task 17b); smoke golden + semantics 15 tests; `tsc` clean.
+- **Tests:** `npm test` 22 files / 442 tests (after the final review fixes); smoke golden + semantics 17 tests; `tsc` clean.
 - **Known gaps:**
   - Mountain ridge fields need a 2D height solve (proposed follow-up "terrain height solver v2"): Mt Chimney (65.9 %
     of map cells legacy), Route 112 (44.9 %), Jagged Pass (39.5 %) are mostly pixel-art rock; Sootopolis' N-S crater
@@ -269,6 +286,9 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
   - Rain streaks show below the water surface (the water no longer writes depth).
   - Only the player gets the occlusion fade: NPCs behind tree crowns or roofs stay hidden (Phase 2).
   - The first 1–2 map rebuilds after boot may hitch (98–193 ms, JIT warm-up); a boot-time warm-up build would fix it.
+  - A kit material kind's shader program compiles the first time it is drawn in a session (then never again): the
+    first visit to a map with water stalls one frame (Oldale: 558 ms on the dev iGPU), signs/emblems/flowers less.
+    Pre-compiling every kit program at boot (e.g. `compileAsync` over a sample of each kind) would remove it.
   - Pixel-water squares can return under palette effects (drought weather, fades: the Dry cut follows live colours).
   - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
 
