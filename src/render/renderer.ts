@@ -9,7 +9,8 @@ import { GbaTextures } from './gbaTextures';
 import { SpriteAtlas } from './spriteAtlas';
 import { OverworldView } from './overworld/overworldView';
 import { Hud } from './hud';
-import { PostFX, type Quality } from './post';
+import { PostFX, tiltShiftFor, type Quality } from './post';
+import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
@@ -52,6 +53,8 @@ export class Renderer {
     this.webgl = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.webgl.shadowMap.enabled = true;
+    // (three r186 removed PCFSoftShadowMap: PCF softens by the light's shadow.radius instead, set
+    // per quality by OverworldView.setShadowQuality)
     this.webgl.shadowMap.type = THREE.PCFShadowMap;
     this.webgl.toneMapping = THREE.NeutralToneMapping;
     this.webgl.toneMappingExposure = 1.0;
@@ -70,7 +73,9 @@ export class Renderer {
     const q = new URLSearchParams(location.search).get('quality') ?? quality;
     this.quality = q === 'low' || q === 'high' ? q : 'medium';
     this.overworld.quality = this.quality;
+    this.overworld.setShadowQuality(this.quality);
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
+    this.applyTiltShift(this.overworld.worldStyle);
     this.fade.frustumCulled = false;
     this.fadeScene.add(this.fade);
     window.addEventListener('resize', () => this.resize());
@@ -86,11 +91,21 @@ export class Renderer {
     this.post?.setSize(size.x, size.y);
     this.hud.resize(this.width, this.height);
     this.overworld.resize(this.width / this.height);
-    // The scene is drawn into the composer's target, which EffectComposer scales by the pixel
-    // ratio once more — size the occlusion fade from that target, not the drawing buffer.
-    const rt = this.post.composer.renderTarget1;
-    this.overworld.setBufferSize(rt.width, rt.height);
+    // the occlusion fade works in pixels of the target the scene is drawn into
+    const t = this.post.sceneTargetSize(size);
+    this.overworld.setBufferSize(t.x, t.y);
     this.battle.resize(this.width / this.height);
+  }
+
+  /** Modern / Retro world style: rebuilds the world and adapts the miniature blur. */
+  setWorldStyle(s: WorldStyle): void {
+    this.overworld.setWorldStyle(s);
+    this.applyTiltShift(s);
+  }
+
+  private applyTiltShift(s: WorldStyle): void {
+    const t = tiltShiftFor(s);
+    this.post.setTiltShift(t.focus, t.band, t.strength);
   }
 
   setEffects(tiltShift: boolean, bloom: boolean): void {

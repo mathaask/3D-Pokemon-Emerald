@@ -13,7 +13,7 @@ import { loadTileset } from '../game/rom/tileset';
 import { GbaTextures } from './gbaTextures';
 import { SpriteAtlas } from './spriteAtlas';
 import { OverworldView } from './overworld/overworldView';
-import { PostFX, type Quality } from './post';
+import { PostFX, tiltShiftFor, type Quality } from './post';
 import type { GridData } from './overworld/world';
 import { gridEvents } from './kit/events';
 
@@ -35,6 +35,7 @@ export class PreviewApp {
     this.webgl = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.webgl.shadowMap.enabled = true;
+    // (three r186 removed PCFSoftShadowMap: the sun's shadow.radius softens PCF, per quality)
     this.webgl.shadowMap.type = THREE.PCFShadowMap;
     this.webgl.toneMapping = THREE.NeutralToneMapping;
     this.webgl.outputColorSpace = THREE.SRGBColorSpace;
@@ -61,6 +62,7 @@ export class PreviewApp {
     const quality = (params.get('quality') as Quality) ?? 'medium';
     this.view = new OverworldView(tex, new SpriteAtlas(tex), this.webgl.capabilities.getMaxAnisotropy());
     this.view.quality = quality;
+    this.view.setShadowQuality(quality);
     this.view.worldStyle = params.get('style') === 'retro' ? 'retro' : 'modern';
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
@@ -94,6 +96,8 @@ export class PreviewApp {
     if (params.has('preset')) this.view.presetIndex = parseInt(params.get('preset')!, 10);
 
     this.post = new PostFX(this.webgl, this.view.scene, this.view.camera, quality);
+    const tilt = tiltShiftFor(this.view.worldStyle);
+    this.post.setTiltShift(tilt.focus, tilt.band, tilt.strength);
     window.addEventListener('keydown', (e) => this.keys.add(e.code));
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     let drag = false, lx = 0, ly = 0;
@@ -120,9 +124,9 @@ export class PreviewApp {
     const size = this.webgl.getDrawingBufferSize(new THREE.Vector2());
     this.post.setSize(size.x, size.y);
     this.view.resize(window.innerWidth / window.innerHeight);
-    // Fade pixels = the composer's scene target (EffectComposer applies the pixel ratio again).
-    const rt = this.post.composer.renderTarget1;
-    this.view.setBufferSize(rt.width, rt.height);
+    // the occlusion fade works in pixels of the target the scene is drawn into
+    const t = this.post.sceneTargetSize(size);
+    this.view.setBufferSize(t.x, t.y);
   }
 
   /** Render statistics of the last frame (all passes) and the last world build time. */

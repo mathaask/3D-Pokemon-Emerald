@@ -93,7 +93,7 @@ async function boot(): Promise<void> {
   const applySettings = (s: Settings) => {
     renderer.mode = s.view;
     renderer.overworld.presetIndex = s.camera;
-    renderer.overworld.setWorldStyle(s.worldStyle);
+    renderer.setWorldStyle(s.worldStyle);
     renderer.setEffects(s.tiltShift, s.bloom);
     audio.setVolume(s.volume);
   };

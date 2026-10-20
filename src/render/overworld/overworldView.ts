@@ -44,6 +44,21 @@ export function hidesGrassOverlay(kind: SpriteKind, style: WorldStyle, bladesOnC
   return kind === SpriteKind.Grass && style === 'modern' && bladesOnCell;
 }
 
+/** Half-width of the sun shadow camera (world units): the map covers 2x this. */
+const SHADOW_SPAN = 24;
+/** Width of the shadows' soft edge on the ground (world units), the same at every quality. */
+const SHADOW_SOFTNESS = 0.06;
+
+/**
+ * Sun shadow map size by quality (low 1024, medium 2048, high 4096) and its PCF filter radius in
+ * texels (three's PCF samples a disc of shadow.radius texels: soft edges, as wide on the ground
+ * at every quality).
+ */
+export function shadowSettings(q: Quality): { size: number; radius: number } {
+  const size = q === 'low' ? 1024 : q === 'high' ? 4096 : 2048;
+  return { size, radius: (SHADOW_SOFTNESS * size) / (2 * SHADOW_SPAN) };
+}
+
 const MAP_TYPE_INDOOR = 8;
 const MAP_TYPE_UNDERGROUND = 4;
 const MAP_TYPE_SECRET_BASE = 9;
@@ -112,11 +127,11 @@ export class OverworldView {
     this.scene.add(this.blobs.mesh);
 
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.setShadowQuality(this.quality);
     this.sun.shadow.bias = -0.0008;
     this.sun.shadow.normalBias = 0.03;
     const sc = this.sun.shadow.camera;
-    sc.left = -24; sc.right = 24; sc.top = 24; sc.bottom = -24; sc.near = 1; sc.far = 120;
+    sc.left = -SHADOW_SPAN; sc.right = SHADOW_SPAN; sc.top = SHADOW_SPAN; sc.bottom = -SHADOW_SPAN; sc.near = 1; sc.far = 120;
     this.scene.add(this.sun, this.sun.target, this.hemi, this.lantern);
     this.sky = new Sky();
     this.scene.add(this.sky.mesh);
@@ -132,6 +147,16 @@ export class OverworldView {
     this.presetIndex = (this.presetIndex + 1) % CAMERA_PRESETS.length;
     this.pitchOffset = 0;
     this.zoom = 1;
+  }
+
+  /** Sun shadow resolution and softness by quality (low 1024, medium 2048, high 4096). */
+  setShadowQuality(q: Quality): void {
+    const { size, radius } = shadowSettings(q);
+    this.sun.shadow.radius = radius;
+    if (this.sun.shadow.mapSize.x === size) return;
+    this.sun.shadow.mapSize.set(size, size);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
   }
 
   /** Switches Modern/Retro; the world is rebuilt on the next sync. */

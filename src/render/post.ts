@@ -8,8 +8,23 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import type { WorldStyle } from './overworld/world';
 
 export type Quality = 'low' | 'medium' | 'high';
+
+export interface TiltShift {
+  /** Screen-space y of the sharp band (0 bottom, 1 top). */
+  focus: number;
+  /** Half-height of the sharp band. */
+  band: number;
+  /** Largest blur radius, in pixels. */
+  strength: number;
+}
+
+/** The miniature blur per world style: Modern's models read better with a gentler, wider-focused blur. */
+export function tiltShiftFor(style: WorldStyle): TiltShift {
+  return style === 'modern' ? { focus: 0.52, band: 0.3, strength: 1.2 } : { focus: 0.52, band: 0.22, strength: 2.2 };
+}
 
 const TiltShiftShader = {
   uniforms: {
@@ -95,6 +110,9 @@ export class PostFX {
       samples: quality === 'low' ? 0 : 4,
     });
     this.composer = new EffectComposer(renderer, target);
+    // Every size given to the composer is in drawing-buffer pixels, which already include the
+    // renderer's pixel ratio: it must not scale them again (4x the pixels at a ratio of 2).
+    this.composer.setPixelRatio(1);
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
     if (quality === 'high') {
@@ -126,9 +144,16 @@ export class PostFX {
     }
   }
 
+  /** Resizes every pass to `w`×`h` drawing-buffer pixels (renderer.getDrawingBufferSize). */
   setSize(w: number, h: number): void {
     this.composer.setSize(w, h);
     for (const p of [this.tiltH, this.tiltV]) p.uniforms.uResolution.value.set(w, h);
+  }
+
+  /** Size in pixels of the render target the scene is drawn into (= the drawing buffer). */
+  sceneTargetSize(out = new THREE.Vector2()): THREE.Vector2 {
+    const rt = this.composer.renderTarget1;
+    return out.set(rt.width, rt.height);
   }
 
   setTiltShift(focus: number, band: number, strength: number): void {
