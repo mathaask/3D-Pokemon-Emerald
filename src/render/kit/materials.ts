@@ -37,6 +37,14 @@ export function createKitUniforms(): KitUniforms {
   };
 }
 
+/** Height of a character sprite (32 px) in world units: the fade's radius follows its projected size. */
+const SPRITE_H = 2;
+/** Fade radius per pixel of the character's projected height: 0.11 x the target height at the
+ *  Classic camera's default zoom (the radius tuned there), and the same share of the sprite when
+ *  the camera zooms in (or the battle zoom pushes it in) or out. */
+export const FADE_PER_SPRITE_PX = 0.69;
+const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3();
+
 /**
  * Aims the occlusion fade at a character standing at `feet` (world space), seen by `camera`
  * in a `w`×`h`-pixel render target; `null` disables the fade. The camera's matrices must be current.
@@ -46,11 +54,13 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
     u.uFadeRadius.value = 0;
     return;
   }
-  const chest = new THREE.Vector3(feet.x, feet.y + 0.7, feet.z);
-  const ndc = chest.clone().project(camera);
+  const ndc = _chest.set(feet.x, feet.y + 0.7, feet.z).project(camera);
   u.uFocusPx.value.set((ndc.x * 0.5 + 0.5) * w, (ndc.y * 0.5 + 0.5) * h);
-  u.uFocusDepth.value = -chest.applyMatrix4(camera.matrixWorldInverse).z;
-  u.uFadeRadius.value = 0.11 * h;
+  u.uFocusDepth.value = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
+  // the character's projected height: feet to the top of its sprite, in target pixels
+  const f = _feet.copy(feet).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
+  const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
+  u.uFadeRadius.value = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
 }
 
 /**

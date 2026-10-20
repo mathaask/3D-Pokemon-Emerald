@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { kitMaterial, createKitUniforms, MAX_ACTORS, setKitActors, setKitFocus } from '../src/render/kit/materials';
+import { kitMaterial, createKitUniforms, FADE_PER_SPRITE_PX, MAX_ACTORS, setKitActors, setKitFocus } from '../src/render/kit/materials';
+import { CAMERA_PRESETS } from '../src/render/overworld/overworldView';
 
 describe('setKitFocus', () => {
   // Looks straight down -Z from (0, 0.7, 10): a point at the camera's height projects to the centre.
@@ -15,7 +16,34 @@ describe('setKitFocus', () => {
     expect(u.uFocusPx.value.x).toBeCloseTo(400);
     expect(u.uFocusPx.value.y).toBeCloseTo(200);
     expect(u.uFocusDepth.value).toBeCloseTo(6);
-    expect(u.uFadeRadius.value).toBeCloseTo(44);
+    // a 2-unit character 6 units away fills 2 / 12 of the 400 px: radius FADE_PER_SPRITE_PX of that
+    expect(u.uFadeRadius.value).toBeCloseTo(FADE_PER_SPRITE_PX * 400 * (2 / 12));
+  });
+  it('scales the radius with the projected height of the character (zoomed in, the battle zoom)', () => {
+    const u = createKitUniforms();
+    setKitFocus(u, new THREE.Vector3(0, 0, 4), camera, 800, 400); // 6 units away
+    const far = u.uFadeRadius.value;
+    setKitFocus(u, new THREE.Vector3(0, 0, 7), camera, 800, 400); // 3 units away: twice as tall
+    expect(u.uFadeRadius.value).toBeCloseTo(2 * far);
+    setKitFocus(u, new THREE.Vector3(0, 0, 4), camera, 1600, 800); // a target of twice the pixels
+    expect(u.uFadeRadius.value).toBeCloseTo(2 * far);
+  });
+  it('keeps the tuned radius (0.11 x the target height) for the Classic camera at its default zoom', () => {
+    // as OverworldView places it: looking at the target + 0.9 up, from the preset's pitch and distance
+    const p = CAMERA_PRESETS[0];
+    const cam = new THREE.PerspectiveCamera(p.fov, 1.6, 0.1, 500);
+    const look = new THREE.Vector3(10, 0.9, 10);
+    cam.position.copy(look).add(new THREE.Vector3(0, Math.sin(p.pitch), Math.cos(p.pitch)).multiplyScalar(p.distance));
+    cam.lookAt(look);
+    cam.updateMatrixWorld();
+    const u = createKitUniforms();
+    setKitFocus(u, new THREE.Vector3(10, 0, 10), cam, 1280, 800);
+    expect(u.uFadeRadius.value / (0.11 * 800)).toBeCloseTo(1, 1);
+  });
+  it('caps the radius at half the target height (a character right under the camera)', () => {
+    const u = createKitUniforms();
+    setKitFocus(u, new THREE.Vector3(0, -0.7, 9.5), camera, 800, 400);
+    expect(u.uFadeRadius.value).toBe(200);
   });
   it('maps off-centre points with y up (gl_FragCoord convention)', () => {
     const u = createKitUniforms();
