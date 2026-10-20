@@ -124,7 +124,7 @@ const LEDGE_DIR: Record<number, LedgeLip['dir']> = {
 /** Hash of a lattice point in [-1, 1]. */
 const jitter = (x: number, y: number) => (hashCell(x, y, 0x5c1) / 4294967296) * 2 - 1;
 
-const FACE_N: V3 = [0, 0, 1], EAST_N: V3 = [1, 0, 0], WEST_N: V3 = [-1, 0, 0];
+const FACE_N: V3 = [0, 0, 1], EAST_N: V3 = [1, 0, 0], WEST_N: V3 = [-1, 0, 0], UP_N: V3 = [0, 1, 0], BACK_N: V3 = [0, 0, -1];
 
 /** A run while extracting: rows y..e of column x, top rows y..e-F and face rows e-F+1..e. */
 interface Run {
@@ -135,6 +135,10 @@ interface Run {
   /** A band of a terraced mass topped in its ground's colour: index of the band it stands on in
    *  its column (-1: the lowest); undefined for every other run. */
   below?: number;
+  /** For a wall at the water: the waterline row, where the sea begins in front of it (its own foot
+   *  row over water; the last sea rock below a coastline standing on sea rocks). Walls side by side
+   *  share a line at the waterline too, whichever of them stands on sea rocks. */
+  line?: number;
 }
 
 /** Roles of a block tile in a rock mass. */
@@ -330,7 +334,19 @@ export const cliffFamily: Family<CliffPlacement> = {
         const L = e - y + 1;
         const bi = e + 1 < a.maxY ? idx(x, e + 1) : -1;
         const ai = y > a.minY ? idx(x, y - 1) : -1;
-        const hB = walk(bi) ? Math.max(groundOf(bi), 0) : NaN;
+        const mts: number[] = [];
+        for (let r = y; r <= e; r++) mts.push(a.mt[idx(x, r)]);
+        // A coastline: a land rock face standing on a sea rock at the waterline stands on the water
+        // behind it (the sea rock keeps its legacy art in front). Land tops on a sea rock (an islet's)
+        // are no face: they stay legacy with it.
+        const onSeaRock = bi >= 0 && kind[bi] === K.Block && isSeaRock(a, a.mt[bi]) && !claims.has(bi, CLAIM_OBJECT) &&
+          role(mts[L - 1]) === Role.Face;
+        const hB = walk(bi) ? Math.max(groundOf(bi), 0) : onSeaRock ? 0 : NaN;
+        let line: number | undefined = bi >= 0 && kind[bi] === K.Water ? e : undefined;
+        if (onSeaRock) {
+          line = e + 1;
+          while (line + 1 < a.maxY && kind[idx(x, line + 1)] === K.Block && isSeaRock(a, a.mt[idx(x, line + 1)])) line++;
+        }
         let hA = walk(ai) ? Math.max(groundOf(ai), 0) : NaN;
         let above = walk(ai) ? a.mt[ai] : -1;
         // A run whose north end meets no ground (a tree, another block) takes the level of the
@@ -345,14 +361,12 @@ export const cliffFamily: Family<CliffPlacement> = {
             }
           }
         }
-        const mts: number[] = [];
-        for (let r = y; r <= e; r++) mts.push(a.mt[idx(x, r)]);
         // (tops in the ground's colour count where the run stands on a rock face)
         const onFace = faceTile(mts[L - 1]);
         const nRock = mts.filter((m) => rockFace(m) || (onFace && top(m))).length;
         const level = !Number.isNaN(hA) && !Number.isNaN(hB) && hA > hB + 0.01;
-        // A face over water reaches down to the water surface.
-        const foot = bi >= 0 && kind[bi] === K.Water ? Math.min(hB, height[bi]) : hB;
+        // A face over water (or a sea rock) reaches down to the water surface.
+        const foot = bi >= 0 && kind[bi] === K.Water ? Math.min(hB, height[bi]) : onSeaRock ? Math.min(hB, a.waterLevel[bi]) : hB;
         // A free-standing mass topped in the colour of its ground (the walkable ground's own tile, on
         // mountain maps) or edged with strips: its terraces, if it stands on a face and is a mass, not
         // a 1-wide strip.
@@ -360,6 +374,7 @@ export const cliffFamily: Family<CliffPlacement> = {
           const list = bands(x, y, e, hB, foot);
           if (list.length && wide(x, list[list.length - 1].y, e, massTile)) {
             list.forEach((b, k) => { b.below = k ? cands.length - 1 : -1; cands.push(b); });
+            list[0].line = line;
             y = e + 1;
             continue;
           }
@@ -385,7 +400,7 @@ export const cliffFamily: Family<CliffPlacement> = {
         }
         if (F === 0) { y = e + 1; continue; }
         const topH = hB + F;
-        cands.push({ r: { x, zf: e + 1 + hB, hB: foot, topH, tint: [0, 0, 0], lip: null }, y, e, F, above: level ? above : -1, mts });
+        cands.push({ r: { x, zf: e + 1 + hB, hB: foot, topH, tint: [0, 0, 0], lip: null }, y, e, F, above: level ? above : -1, mts, line });
         y = e + 1;
       }
     }
@@ -400,9 +415,12 @@ export const cliffFamily: Family<CliffPlacement> = {
     cands.forEach((c, k) => { if (c.below !== undefined && c.below >= 0) up[c.below] = k; });
     for (let changed = true; changed;) {
       changed = false;
-      const feet = new Set(cands.filter((_, k) => keep[k]).map((c) => footing(c.r.x, c.e, c.r.hB)));
+      const kept = cands.filter((_, k) => keep[k]);
+      const feet = new Set(kept.map((c) => footing(c.r.x, c.e, c.r.hB)));
+      const lines = new Set(kept.filter((c) => c.line !== undefined).map((c) => footing(c.r.x, c.line!, c.r.hB)));
       cands.forEach((c, k) => {
-        if (!keep[k] || feet.has(footing(c.r.x - 1, c.e, c.r.hB)) || feet.has(footing(c.r.x + 1, c.e, c.r.hB))) return;
+        const on = (set: Set<string>, l: number) => set.has(footing(c.r.x - 1, l, c.r.hB)) || set.has(footing(c.r.x + 1, l, c.r.hB));
+        if (!keep[k] || on(feet, c.e) || (c.line !== undefined && on(lines, c.line))) return;
         changed = true;
         let t = k;
         for (let u = k; u >= 0; u = up[u]) { keep[u] = false; t = u; }
@@ -446,6 +464,19 @@ export const cliffFamily: Family<CliffPlacement> = {
       list.push(k);
       groups.set(g, list);
     }
+    const byCount = [...floorIds].sort((p, q) => floorCount.get(q)! - floorCount.get(p)!);
+    const looksOf = new Map<number, number>();
+    /** The ground's look for a tile in its colour: itself if it is a floor tile, else the most common
+     *  floor tile of its colour. */
+    const lookOf = (m: number) => {
+      let v = looksOf.get(m);
+      if (v === undefined) {
+        const c = dom(m);
+        v = floorIds.has(m) || !c ? m : byCount.find((n) => { const g = dom(n); return !!g && near(c, g); }) ?? m;
+        looksOf.set(m, v);
+      }
+      return v;
+    };
     /** Most frequent key of a count map (-1: none). */
     const most = (counts: Map<number, number>) => {
       let m = -1, best = 0;
@@ -480,9 +511,13 @@ export const cliffFamily: Family<CliffPlacement> = {
           const i = idx(run.r.x, r);
           claims.claim(i, CLAIM_OBJECT);
           claims.groundY[i] = run.r.topH;
-          // the plateau above runs on to the face; a rock mass is rock on top, a terrace its ground
-          claims.groundMt[i] = run.above >= 0 ? run.above : run.below !== undefined ? (terraceTop >= 0 ? terraceTop : a.mt[i])
-            : rockTop >= 0 ? rockTop : a.mt[i];
+          // the plateau above runs on to the face; a rock mass is rock on top; a terrace is its ground,
+          // cell by cell (Sootopolis' white top and its pink slope), its strips and flattened rock the
+          // terrace's own ground
+          const m = a.mt[i];
+          claims.groundMt[i] = run.above >= 0 ? run.above
+            : run.below !== undefined ? (top(m) ? lookOf(m) : terraceTop >= 0 ? terraceTop : m)
+            : rockTop >= 0 ? rockTop : m;
         }
         for (let r = run.e - run.F + 1; r <= run.e; r++) claims.claim(idx(run.r.x, r), CLAIM_OBJECT | CLAIM_SURFACE);
       }
@@ -491,19 +526,6 @@ export const cliffFamily: Family<CliffPlacement> = {
     // into a tree or another family's model) all in the ground's colour (a mountain's top, the
     // border beyond the map) is ground, at the level legacy lays it flat at: the level behind it,
     // else its ground's. It takes the ground's look: the floor tile of its colour.
-    const byCount = [...floorIds].sort((p, q) => floorCount.get(q)! - floorCount.get(p)!);
-    const looksOf = new Map<number, number>();
-    /** The ground's look for a tile in its colour: itself if it is a floor tile, else the most common
-     *  floor tile of its colour. */
-    const lookOf = (m: number) => {
-      let v = looksOf.get(m);
-      if (v === undefined) {
-        const c = dom(m);
-        v = floorIds.has(m) || !c ? m : byCount.find((n) => { const g = dom(n); return !!g && near(c, g); }) ?? m;
-        looksOf.set(m, v);
-      }
-      return v;
-    };
     for (let x = a.minX; x < a.maxX; x++) {
       let y = a.minY;
       while (y < a.maxY) {
@@ -623,10 +645,22 @@ export const cliffFamily: Family<CliffPlacement> = {
         const k = base(cy - r.hB) * strata(r.x + 0.5, cy); // one band per row and column
         for (let u = 0; u < NX; u++) quads.quad(P(u, v + 1), P(u + 1, v + 1), P(u + 1, v), P(u, v), FACE_N, tint, k);
       }
-      // A free-standing wall: a slab behind its face, capped (the face's top edge is its front).
+      // A free-standing wall: a slab behind its face. Only what can be seen: its cap (the face's top
+      // edge is its front), its back, and its ends from the displaced face back, where no wall of the
+      // same height goes on along its line.
       if (r.wall) {
-        const k = base(r.topH - r.hB) * strata(r.x + 0.5, r.topH);
-        quads.box(r.x, r.x + 1, r.hB, r.topH, r.zf - WALL_T, r.zf, [tint[0] * k, tint[1] * k, tint[2] * k]);
+        const z0 = r.zf - WALL_T, k = base(r.topH - r.hB) * strata(r.x + 0.5, r.topH);
+        quads.quad([r.x, r.topH, z0], [r.x + 1, r.topH, z0], [r.x + 1, r.topH, r.zf], [r.x, r.topH, r.zf], UP_N, tint, k);
+        quads.quad([r.x, r.topH, z0], [r.x + 1, r.topH, z0], [r.x + 1, r.hB, z0], [r.x, r.hB, z0], BACK_N, tint, k);
+        for (const side of [0, 1]) {
+          const n = faces.get(`${r.x + (side ? 1 : -1)},${r.zf}`);
+          if (n?.wall && Math.abs(n.topH - r.topH) < 0.01 && Math.abs(n.hB - r.hB) < 0.01) continue;
+          const X = r.x + side;
+          for (let v = 0; v < ny; v++) {
+            const f0 = P(side * NX, v), f1 = P(side * NX, v + 1);
+            quads.quad([X, f1[1], z0], f1, f0, [X, f0[1], z0], side ? EAST_N : WEST_N, tint, k);
+          }
+        }
         continue;
       }
       // Side wedges: from the face's (displaced) edge back along the 45° slant under the plateau,

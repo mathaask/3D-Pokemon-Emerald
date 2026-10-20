@@ -64,7 +64,7 @@ function map(rows: string[], paint: (info: ReturnType<typeof fakeInfo>) => void 
   paint(info);
   const code: Record<string, number> = {
     '.': 1 | 0x1000, P: 1 | 0x3000, '#': 2 | 0x0400, r: 3 | 0x0400, C: 4 | 0x0400, k: 5 | 0x0400, s: 6 | 0x0400, v: 7 | 0x1000, T: 8 | 0x0400,
-    m: 1 | 0x0400, w: 10 | 0x1000,
+    m: 1 | 0x0400, w: 10 | 0x1000, f: 12 | 0x1000,
   };
   for (const [ch, m] of Object.entries(opts.ids ?? {})) code[ch] = m | 0x0400;
   const w = rows[0].length, h = rows.length;
@@ -391,25 +391,53 @@ describe('mountains: rock masses topped in the colour of their ground', () => {
 });
 
 describe('sea rocks', () => {
-  const rows = ['wwww', 'w##w', 'w##w', 'wSSw', 'wwww'];
   const SEA = 0x17a;
-  const paint = (info: ReturnType<typeof fakeInfo>) => { info.both.fill(ROCK, SEA * 256, (SEA + 1) * 256); info.bottom.fill(ROCK, SEA * 256, (SEA + 1) * 256); };
-  const sea = () => map(rows, paint, { general: true, ids: { S: SEA } });
-
-  it('never makes a cliff of a General sea rock: it keeps its legacy art, and breaks the run above it', () => {
-    expect(extract(sea()).p.runs.length).toBe(2); // (as land rock: a 2-wide mass standing in the sea)
+  const paint = (info: ReturnType<typeof fakeInfo>) => { mountain(info); info.both.fill(ROCK, SEA * 256, (SEA + 1) * 256); info.bottom.fill(ROCK, SEA * 256, (SEA + 1) * 256); };
+  const sea = (rows: string[], general = true) => map(rows, paint, { general, ids: { S: SEA } });
+  const withSeaRocks = (f: () => void) => {
     setSeaRockIds((m) => m === SEA);
-    try {
-      const a = sea();
+    try { f(); } finally { setSeaRockIds(() => false); }
+  };
+
+  it('never makes a cliff of a General sea rock: it keeps its legacy art', () => {
+    const rows = ['wwww', 'wSSw', 'wSSw', 'wwww'];
+    expect(extract(sea(rows)).p.runs.length).toBe(2); // (as land rock: a 2-wide box standing in the sea)
+    withSeaRocks(() => {
+      const a = sea(rows);
       const { p, claims } = extract(a);
       expect(p.runs).toEqual([]);
       expect(claims.bits.every((b) => b === 0)).toBe(true);
       expect(isRocky(a, SEA)).toBe(false);
       // (General ids only: the same id in a secondary tileset is something else)
-      expect(extract(map(rows, paint, { ids: { S: SEA } })).p.runs.length).toBe(2);
-    } finally {
-      setSeaRockIds(() => false);
-    }
+      expect(extract(sea(rows, false)).p.runs.length).toBe(2);
+    });
+  });
+
+  it('stands a land rock face on a sea rock at the waterline on the water behind it (a coastline)', () => {
+    withSeaRocks(() => {
+      const a = sea(['wwww', 'w##w', 'w##w', 'wSSw', 'wwww']);
+      const { p, claims } = extract(a);
+      expect(p.runs.map((r) => [r.x + 0, r.zf, r.hB, r.topH])).toEqual([[1, 3, -0.3, 1], [2, 3, -0.3, 1]].map(([x, zf, hB, t]) => [x, zf, Math.fround(hB), t]));
+      for (const x of [1, 2]) {
+        expect(claims.bits[a.idx(x, 3)]).toBe(0); // (the sea rock: its legacy card, in front of the face)
+        expect(claims.has(a.idx(x, 2), CLAIM_SURFACE)).toBe(true);
+      }
+    });
+  });
+
+  it('lines a coast standing on sea rocks up with its neighbours at the waterline', () => {
+    // column 1's land face reaches the water itself; columns 2-3 stand on a sea rock at the waterline
+    withSeaRocks(() => {
+      const a = sea(['wwwww', 'w###w', 'w###w', 'w#SSw', 'wwwww']);
+      expect(extract(a).p.runs.map((r) => r.x + 0)).toEqual([1, 2, 3]);
+    });
+  });
+
+  it('takes no land top standing on a sea rock for a cliff (an islet: legacy with its sea rock)', () => {
+    withSeaRocks(() => {
+      const { claims } = extract(sea(['......', '.mmmm.', '.SSSS.', 'wwwwww']));
+      expect(claims.bits.every((b) => b === 0)).toBe(true);
+    });
   });
 });
 
@@ -430,9 +458,24 @@ describe('Sootopolis', () => {
       expect(luma(r.tint)).toBeGreaterThan(0.6); // not brown
       expect(Math.abs(r.tint[0] - r.tint[2])).toBeLessThan(0.12);
     }
-    expect(claims.groundMt[a.idx(1, 1)]).toBe(0x2d9); // the white walkway look on top
+    expect(claims.groundMt[a.idx(1, 1)]).toBe(1); // the white walkway's look on top
     // keyed by tileset: the same ids in another secondary tileset are paving, not rock
     expect(extract(crater(SYM.gTileset_Rustboro)).p.runs).toEqual([]);
+  });
+
+  it('tops a terrace cell by cell: the white top and the pink slope down to the lake each their ground', () => {
+    // f: a pink walkway (the lake's rim); E: the crater's white-to-pink slope, in the rim's pink
+    const both = (info: ReturnType<typeof fakeInfo>) => {
+      paint(info);
+      for (const [m, c] of [[12, PINK], [0x2eb, PINK]]) { info.both.fill(c, m * 256, (m + 1) * 256); info.bottom.fill(c, m * 256, (m + 1) * 256); }
+    };
+    const a = map(['ffffff', '.WWEE.', '.WWEE.', '.GGGG.', '......'], both, { secondary: SYM.gTileset_Sootopolis, ids: { W: 0x2d9, E: 0x2eb, G: 0x2e1 } });
+    const { p, claims } = extract(a);
+    expect(p.runs.map((r) => r.x + 0)).toEqual([1, 2, 3, 4]);
+    for (const y of [1, 2]) {
+      expect(claims.groundMt[a.idx(2, y)]).toBe(1); // white
+      expect(claims.groundMt[a.idx(3, y)]).toBe(12); // pink
+    }
   });
 
   it('makes a one-row crater wall between two walkways at one level a free-standing wall', () => {
@@ -484,7 +527,7 @@ describe('cliff build', () => {
 
   it('turns every triangle the way its normal says (no inward wedge tips, caps or lips)', () => {
     const p: CliffPlacement = {
-      runs: [run(3, 0, 2, [0.4, 0.7, 0.4]), run(4, 0, 1), run(8, -0.3, 1)],
+      runs: [run(3, 0, 2, [0.4, 0.7, 0.4]), run(4, 0, 1), run(8, -0.3, 1), { ...run(20, 0, 1), wall: true }],
       sides: [
         { px: 6, dir: -1, zt: 4, zb: 5, y0: 0, y1: 2, tint: [0.6, 0.5, 0.4] },
         { px: 7, dir: 1, zt: 4, zb: 5, y0: 0, y1: 2, tint: [0.6, 0.5, 0.4] },
@@ -548,6 +591,28 @@ describe('cliff build', () => {
     expect(back).toBeGreaterThan(0);
     expect(ends).toBeGreaterThan(0);
     for (let k = 0; k < pos.count; k++) expect(pos.getZ(k)).toBeGreaterThan(6 - 0.5); // (no wedge fins reaching back)
+  });
+
+  it('draws only the faces of a free-standing wall that can be seen: no bottom, no front under its face, no ends between walls', () => {
+    const geo = (runs: CliffRun[]) => build({ runs, sides: [], ledges: [] }).geometry;
+    const one = geo([{ ...run(3, 0, 1), wall: true }]);
+    const pos = one.getAttribute('position'), nor = one.getAttribute('normal');
+    let down = 0, front = 0;
+    for (let k = 0; k < pos.count; k++) {
+      if (nor.getY(k) < -0.5) down++;
+      // (a front face at the wall's line, under the displaced face: the displaced face only touches it at the top)
+      if (nor.getZ(k) > 0.5 && Math.abs(pos.getZ(k) - 6) < 1e-6 && pos.getY(k) < 1 - 1e-6) front++;
+    }
+    expect(down).toBe(0);
+    expect(front).toBe(0);
+    // the ends close the wall back from its displaced face (no slit between them)
+    let endFront = 0;
+    for (let k = 0; k < pos.count; k++) if (Math.abs(nor.getX(k)) > 0.5 && pos.getZ(k) > 6 + 1e-6) endFront++;
+    expect(endFront).toBeGreaterThan(0);
+    // two walls side by side on one line: no end faces between them
+    const two = geo([{ ...run(3, 0, 1), wall: true }, { ...run(4, 0, 1), wall: true }]);
+    const p2 = two.getAttribute('position'), n2 = two.getAttribute('normal');
+    for (let k = 0; k < p2.count; k++) if (Math.abs(n2.getX(k)) > 0.5) expect(Math.abs(p2.getX(k) - 4) > 1e-6, `x ${p2.getX(k)}`).toBe(true);
   });
 
   it('builds nothing for an empty placement', () => {

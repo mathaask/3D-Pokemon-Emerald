@@ -87,11 +87,13 @@ export const GENERAL_ROCK: ReadonlySet<number> = new Set<number>([
 ]);
 
 /** Brown rock standing in the sea: sea cliffs, their tops and 2x2 cone rocks drawn over water
- *  (0x172-0x17f, 0x182, 0x184), and the rocks and low ridges on the shoals (0x157, 0x15e/0x15f,
- *  0x166/0x167, 0x16e/0x16f, drawn over the shoal). The cliffs would make square blocks of them,
- *  topped in the water's or the shoal's colours: they are never rock, and keep their legacy art. */
+ *  (0x172-0x17f, 0x182, 0x184), and the tops of the rocks and low ridges on the shoals (0x157,
+ *  0x15e/0x15f; their edges and lower corners 0x166/0x167, 0x16e/0x16f are also the corners of
+ *  coastal cliffs over the shoal, Mossdeep's: land rock). The cliffs would make square blocks of
+ *  them, topped in the water's or the shoal's colours: they are never rock, and keep their legacy
+ *  art (a shoal rock's lower row alone is no mass either). */
 export const GENERAL_SEA_ROCK: ReadonlySet<number> = new Set<number>([
-  ...range(0x172, 0x17f), 0x182, 0x184, 0x157, 0x15e, 0x15f, 0x166, 0x167, 0x16e, 0x16f,
+  ...range(0x172, 0x17f), 0x182, 0x184, 0x157, 0x15e, 0x15f,
 ]);
 
 /** The secret-base tree: a 2x2 conical tree (blocked bottom row, also its "open" variant; the

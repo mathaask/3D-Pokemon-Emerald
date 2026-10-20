@@ -159,12 +159,34 @@ describe('semantics on real maps', () => {
   });
 
   it('mountain maps and Sootopolis: their rock is 3D, the crater walls in their own cream', () => {
-    // (legacy share of the whole grid, with some slack over the Task 15b numbers; before it: Mt Chimney
-    // 90 %, Jagged Pass 81 %, Route 112 80 %, Route 111 62 %, Lavaridge 88 %, Sootopolis 78 %)
-    const limits: [number, number, number][] = [[24, 12, 0.5], [24, 13, 0.3], [0, 27, 0.3], [0, 26, 0.2], [0, 12, 0.25], [0, 7, 0.3]];
-    for (const [g, n, max] of limits) {
+    // Legacy shares at most (whole grid with its margin, the map's own cells), a hair over the Task 15b
+    // numbers. Before it (all / map): Mt Chimney 89.9 / 72.7 %, Jagged Pass 81.1 / 41.3, Route 112
+    // 79.6 / 49.3, Route 111 62.0 / 30.1, Route 114 19.0 / 43.5, Lavaridge 87.6 / 28.5, Sootopolis
+    // 77.6 / 51.8. The map's cells guard the 3D rock itself (the margin is mostly flat ground).
+    const limits: [number, number, number, number][] = [
+      [24, 12, 0.45, 0.66], [24, 13, 0.22, 0.396], [0, 27, 0.235, 0.45], [0, 26, 0.16, 0.289], [0, 29, 0.135, 0.31],
+      [0, 12, 0.165, 0.234], [0, 7, 0.255, 0.348],
+    ];
+    for (const [g, n, all, own] of limits) {
       const r = run(g, n);
-      expect(coverage(r).share, r.name).toBeLessThanOrEqual(max);
+      const c = coverage(r);
+      expect(c.share, `${r.name} all`).toBeLessThanOrEqual(all);
+      expect(c.inMap, `${r.name} map`).toBeLessThanOrEqual(own);
+    }
+    // Sea-rock coasts: no land cell is legacy that was modelled before Task 15b. Mossdeep 365 / 3200
+    // legacy map cells (11.41 %) and Route 126 1523 / 6400 (23.80 %) before, with General sea-rock
+    // cells 72 and 132 of them; their sea rocks (27 and 17 cells, the cliff boxes before) are legacy
+    // now by design, so the land shares are the guard: Mossdeep 293 -> 293, Route 126 1391 -> 1376.
+    for (const [g, n, land, own] of [[0, 6, 293 / 3200, 0.1225], [0, 41, 1391 / 6400, 0.2383]]) {
+      const r = run(g, n);
+      let cells = 0, legacyLand = 0;
+      for (let i = 0; i < r.a.N; i++) {
+        if (r.a.kind[i] === K.Void || !inMap(r, i)) continue;
+        cells++;
+        if (isLegacy(r.a, r.ex, i) && !(r.a.isGeneralId(r.a.mt[i]) && GENERAL_SEA_ROCK.has(r.a.mt[i]))) legacyLand++;
+      }
+      expect(legacyLand / cells, `${r.name} land`).toBeLessThanOrEqual(land + 1e-9);
+      expect(coverage(r).inMap, `${r.name} map`).toBeLessThanOrEqual(own);
     }
     // Sootopolis: the walls of its crater rock (its own table's ids) are light, not brown
     const r = run(0, 7);

@@ -339,7 +339,9 @@ describe('General tables', () => {
 
   it('installs the sea rocks into the cliffs: brown rock standing in the sea is never rock', () => {
     for (const m of GENERAL_SEA_ROCK) expect(GENERAL_ROCK.has(m)).toBe(false);
-    expect([0x172, 0x17a, 0x17f, 0x182, 0x184, 0x15e, 0x16e].every((m) => GENERAL_SEA_ROCK.has(m))).toBe(true);
+    expect([0x172, 0x17a, 0x17f, 0x182, 0x184, 0x157, 0x15e, 0x15f].every((m) => GENERAL_SEA_ROCK.has(m))).toBe(true);
+    // (the shoal rocks' edges and lower corners are also the corners of coastal cliffs: land rock)
+    expect([0x166, 0x167, 0x16e, 0x16f].some((m) => GENERAL_SEA_ROCK.has(m))).toBe(false);
     installGeneralTables();
     const a = world(['...'], {}, { general: true });
     a.info.both.fill(px(22, 14, 10), 0x17a * 256, 0x17b * 256); // brown rock pixels
