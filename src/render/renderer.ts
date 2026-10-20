@@ -47,6 +47,8 @@ export class Renderer {
   private inBattleTransition = false;
   private battleHud: import('../game/state').SpriteSnap[] = [];
   private emulatedSinceRender = 0;
+  /** Sync with the emulator at the next render even if no frame was emulated (a world style change). */
+  private resync = false;
   cameraInput = { yaw: 0, pitch: 0, zoom: 0 };
 
   constructor(private canvas: HTMLCanvasElement, private gba: Gba, quality: Quality = 'medium') {
@@ -101,8 +103,13 @@ export class Renderer {
 
   /** Modern / Retro world style: rebuilds the world and adapts the miniature blur. */
   setWorldStyle(s: WorldStyle): void {
+    const changed = s !== this.overworld.worldStyle;
     this.overworld.setWorldStyle(s);
     this.applyTiltShift(s);
+    // The world is rebuilt by the next sync, which follows an emulated frame; while the settings
+    // panel is open emulation is paused, so sync at the next render: the new world shows at once,
+    // with the style's shadows and blur.
+    if (changed && this.presented === 'overworld') this.resync = true;
   }
 
   private applyTiltShift(s: WorldStyle): void {
@@ -170,9 +177,10 @@ export class Renderer {
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastTime) / 1000);
     this.lastTime = now;
-    if (this.emulatedSinceRender > 0) {
+    if (this.emulatedSinceRender > 0 || this.resync) {
       this.syncFromEmulator();
       this.emulatedSinceRender = 0;
+      this.resync = false;
     }
     const r = this.webgl;
     if (this.presented === 'overworld') {
