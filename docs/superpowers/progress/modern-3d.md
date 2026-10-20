@@ -163,6 +163,22 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   trees (Trainer Hill facade, Mauville/Route 111/117 log posts, Verdanturf's green fence, Petalburg Woods' south
   exits, Mt Pyre summit passage); the warp-passage rule runs past them. Coverage all/map 7.81/15.59 → 7.85/15.73 %;
   regression average 5.3 %.
+- Task 16a (polish backlog, 9 items): (1) a COVERED tile whose top layer paints ≥ 128 px over its bottom in other
+  colours is tinted from the composite (not ledges, not Dive maps): Ever Grande's brick path, General/Fallarbor rock
+  tops, Fallarbor's orange paths, boardwalks — 441 cells on 31 maps, plain ground unchanged;
+  `SECONDARY_KEEP_LEGACY` (tables/secondary.ts) keeps BF East's Poké Ball emblem (15 cells), the Battle Pike's jaw
+  (BF West, 6) and Route 109's loungers/float (72) as pixel art. (2) The water family draws its surface under the art
+  it leaves to legacy on the water (boats, cycling-road and bridge edges, overhangs, blocks standing in water by
+  behaviour or colour) and claims `CLAIM_WATER_UNDER` (32); legacy draws them with the new atlas variant
+  `Variant.Dry` (water colours cut out, alpha-tested, floors +0.06 over the swell) and drops pixel-water floors under
+  such blocks: water-showing legacy quads beside kit water 10,090 → 343. (3) `CLAIM_BLADES` (16): the grass overlay
+  sprite is hidden only on cells with 3D blades (`World.hasGrassBlades`, `hidesGrassOverlay`). (4) The fade radius is
+  0.69 × the character's projected height (= 0.11 h at Classic's default zoom), capped at h/2. (5) No family claims a
+  secret-base spot, opened or not (trees' crown/run-top, flowers, water, buildings' and props' overhangs). (6) Trees
+  use an explicit style index (seeds/variants). (7) Depth twins drop KIT_BEND. (8) Special facades' window panes
+  (glass colours in pane-sized runs) glow at night (tGlass mask, 32 of 44 facades). (9) Bed petal colours are
+  luma³-weighted (Ever Grande yellow bfaf43 → d3c43b). The map preview takes `&h=`. 518 maps 0 failures; regress
+  t16a ≤ 75 calls / 403k tris.
 
 ## Next step
 - Continue Phase 1 at the first unticked task below (ledger has the exact state).
