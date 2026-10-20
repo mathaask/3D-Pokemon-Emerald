@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { kitMaterial, createKitUniforms, FADE_PER_SPRITE_PX, MAX_ACTORS, setKitActors, setKitFocus } from '../src/render/kit/materials';
+import { kitMaterial, createKitUniforms, FADE_CORE, FADE_PER_SPRITE_PX, MAX_ACTORS, setKitActors, setKitFocus, WARM_GLOW_GLSL } from '../src/render/kit/materials';
+import { createWorldMaterials } from '../src/render/overworld/materials';
 import { CAMERA_PRESETS } from '../src/render/overworld/overworldView';
 
 describe('setKitFocus', () => {
@@ -10,11 +11,12 @@ describe('setKitFocus', () => {
   camera.lookAt(0, 0.7, 0);
   camera.updateMatrixWorld();
 
-  it('centres on the chest (feet + 0.7) in target pixels, depth along the view axis', () => {
+  it("centres on the sprite's middle (feet + 1) in target pixels, depth of the chest along the view axis", () => {
     const u = createKitUniforms();
     setKitFocus(u, new THREE.Vector3(0, 0, 4), camera, 800, 400);
     expect(u.uFocusPx.value.x).toBeCloseTo(400);
-    expect(u.uFocusPx.value.y).toBeCloseTo(200);
+    // fov 90 at depth 6: the middle, 0.3 above the axis, is 0.3 / 6 of the half-height up
+    expect(u.uFocusPx.value.y).toBeCloseTo(200 + 200 * (0.3 / 6));
     expect(u.uFocusDepth.value).toBeCloseTo(6);
     // a 2-unit character 6 units away fills 2 / 12 of the 400 px: radius FADE_PER_SPRITE_PX of that
     expect(u.uFadeRadius.value).toBeCloseTo(FADE_PER_SPRITE_PX * 400 * (2 / 12));
@@ -48,10 +50,34 @@ describe('setKitFocus', () => {
   it('maps off-centre points with y up (gl_FragCoord convention)', () => {
     const u = createKitUniforms();
     // fov 90 at depth 5: the top edge is 5 units above the axis, the right edge 10 units right
-    // (aspect 2); the chest lands half-way to both.
-    setKitFocus(u, new THREE.Vector3(5, 2.5, 5), camera, 800, 400);
+    // (aspect 2); the sprite's middle lands half-way to both.
+    setKitFocus(u, new THREE.Vector3(5, 2.2, 5), camera, 800, 400);
     expect(u.uFocusPx.value.x).toBeCloseTo(600);
     expect(u.uFocusPx.value.y).toBeCloseTo(300);
+  });
+  it('the whole sprite, feet to head top, lies in the fully faded core (never hidden), from every camera', () => {
+    // as OverworldView places the camera: looking at the target + 0.9 up, from a preset's pitch and
+    // distance, at its zoom and with the battle zoom pushing in
+    for (const p of CAMERA_PRESETS) {
+      for (const zoom of [0.45, 1, 2.5]) {
+        const cam = new THREE.PerspectiveCamera(p.fov, 1.6, 0.1, 500);
+        const look = new THREE.Vector3(10, 0.9, 10);
+        cam.position.copy(look).add(new THREE.Vector3(0, Math.sin(p.pitch), Math.cos(p.pitch)).multiplyScalar(p.distance * zoom));
+        cam.lookAt(look);
+        cam.updateMatrixWorld();
+        const u = createKitUniforms();
+        const feet = new THREE.Vector3(10, 0, 10);
+        setKitFocus(u, feet, cam, 1280, 800);
+        const r = u.uFadeRadius.value;
+        if (r >= 400) continue; // (capped: a character filling the screen)
+        // feet, head top (2 up), and the head's corners (a 16-px sprite's head spans about +-0.3, its feet +-0.25)
+        for (const [dx, dy] of [[0, 0], [0, 2], [-0.3, 2], [0.3, 2], [-0.25, 0], [0.25, 0]]) {
+          const q = new THREE.Vector3(feet.x + dx, feet.y + dy, feet.z).project(cam);
+          const d = Math.hypot((q.x * 0.5 + 0.5) * 1280 - u.uFocusPx.value.x, (q.y * 0.5 + 0.5) * 800 - u.uFocusPx.value.y);
+          expect(d, `${p.name} zoom ${zoom} (${dx}, ${dy})`).toBeLessThanOrEqual(FADE_CORE * r);
+        }
+      }
+    }
   });
   it('null disables the fade', () => {
     const u = createKitUniforms();
@@ -63,6 +89,16 @@ describe('setKitFocus', () => {
 
 describe('kitMaterial', () => {
   const u = createKitUniforms();
+  it('house windows, special facades and the legacy walls glow in one warm colour', () => {
+    const shader = () => ({ uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <emissivemap_fragment>' });
+    const kitGlass = shader();
+    kitMaterial(u, { glow: 1.6 }).material.onBeforeCompile(kitGlass as never, undefined as never);
+    expect(kitGlass.fragmentShader).toContain(`totalEmissiveRadiance += ${WARM_GLOW_GLSL}`);
+    const legacy = shader();
+    createWorldMaterials(new THREE.Texture(), u).opaque.onBeforeCompile(legacy as never, undefined as never);
+    expect(legacy.fragmentShader).toContain(`totalEmissiveRadiance += ${WARM_GLOW_GLSL}`);
+    expect(WARM_GLOW_GLSL).toBe('vec3(1.0, 0.72, 0.38)');
+  });
   it('wind adds a matching depth material', () => {
     const k = kitMaterial(u, { wind: 0.1, windHeight: 2 });
     expect(k.material.defines).toHaveProperty('KIT_WIND');

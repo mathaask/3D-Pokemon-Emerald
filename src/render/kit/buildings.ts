@@ -9,7 +9,7 @@ import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP, type Claims } from '../overworl
 import { bgr555ToSrgb, luma, mix, saturation, scale, soften, toLinear, type RGB } from './palette';
 import { MeshBuilder, type V3 } from './geom';
 import { buildingKind, buildingLayout, TERRAIN, type BuildingKind } from './footprints';
-import { kitMaterial } from './materials';
+import { kitMaterial, WARM_GLOW_GLSL } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 import { pokeballTexture, signTexture, SIGN_ASPECT } from './text';
 import { scale4x } from './upscale';
@@ -483,7 +483,7 @@ const FACADE_GLASS_HEAD = 'uniform sampler2D tGlass;';
 /** Alpha byte marking a facade's glass pixels through the upscaler (every other pixel is 255). */
 const GLASS_ALPHA = 0xfe;
 /** A special facade's glass texels (tGlass, over its map's uv) glow at night as windows do. */
-const FACADE_GLASS_GLOW = `totalEmissiveRadiance += vec3(1.0, 0.72, 0.38) * uNight * ${WINDOW_GLOW.toFixed(2)} * texture(tGlass, vMapUv).r;`;
+const FACADE_GLASS_GLOW = `totalEmissiveRadiance += ${WARM_GLOW_GLSL} * uNight * ${WINDOW_GLOW.toFixed(2)} * texture(tGlass, vMapUv).r;`;
 /** The roof emblem, in full sun by day (its white would bloom), is lit at night only. */
 const EMBLEM_GLOW = 'totalEmissiveRadiance += diffuseColor.rgb * 0.35 * uNight;';
 const WHITE = toLinear([0.95, 0.95, 0.93]);

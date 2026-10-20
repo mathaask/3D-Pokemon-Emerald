@@ -2,6 +2,7 @@
 // night-time window glow on building walls (shader injection into MeshStandardMaterial).
 
 import * as THREE from 'three';
+import { WARM_GLOW_GLSL } from '../kit/materials';
 
 export interface WorldUniforms {
   uNight: { value: number };
@@ -20,7 +21,7 @@ function injectGlow(shader: THREE.WebGLProgramParametersWithUniforms, u: WorldUn
         // saturated blue only (pale blue-grey wall paint must not glow)
         float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
         float glass = step(max(c.r, c.g), c.b) * smoothstep(0.22, 0.4, sat) * smoothstep(0.05, 0.2, c.b);
-        totalEmissiveRadiance += vec3(1.0, 0.72, 0.38) * glass * uNight * 1.6;
+        totalEmissiveRadiance += ${WARM_GLOW_GLSL} * glass * uNight * 1.6;
       }`);
 }
 

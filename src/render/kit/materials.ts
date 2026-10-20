@@ -43,6 +43,13 @@ const SPRITE_H = 2;
  *  Classic camera's default zoom (the radius tuned there), and the same share of the sprite when
  *  the camera zooms in (or the battle zoom pushes it in) or out. */
 export const FADE_PER_SPRITE_PX = 0.69;
+/** Share of the fade radius that is fully faded (the rest is the soft edge). Centred on the sprite's
+ *  middle, the core (0.85 x 0.69 = 0.59 of its projected height) holds all of it, feet to head top:
+ *  whatever stands in front, the character is never hidden. */
+export const FADE_CORE = 0.85;
+/** Warm light of lit windows at night (GLSL, linear RGB): house windows (KIT_GLOW), special facades'
+ *  panes and the legacy walls' glass. */
+export const WARM_GLOW_GLSL = 'vec3(1.0, 0.72, 0.38)';
 const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3();
 
 /**
@@ -54,11 +61,12 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
     u.uFadeRadius.value = 0;
     return;
   }
-  const ndc = _chest.set(feet.x, feet.y + 0.7, feet.z).project(camera);
-  u.uFocusPx.value.set((ndc.x * 0.5 + 0.5) * w, (ndc.y * 0.5 + 0.5) * h);
-  u.uFocusDepth.value = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
-  // the character's projected height: feet to the top of its sprite, in target pixels
+  // the character as projected: feet and the top of its sprite (NDC)
   const f = _feet.copy(feet).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
+  // the circle centres on the sprite's middle on screen; what is nearer the camera than its chest fades
+  u.uFocusPx.value.set(((f.x + t.x) * 0.25 + 0.5) * w, ((f.y + t.y) * 0.25 + 0.5) * h);
+  u.uFocusDepth.value = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
+  // its projected height, in target pixels
   const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
   u.uFadeRadius.value = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
 }
@@ -199,7 +207,7 @@ ${KIT_NOISE_GLSL}
 const FADE = /* glsl */ `
 #ifdef KIT_FADE
 if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
-  float kf = 1.0 - smoothstep(uFadeRadius * 0.55, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
+  float kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
   if (kf > 0.0 && kitBayer4(gl_FragCoord.xy) < kf * 0.9) discard;
 }
 #endif
@@ -231,7 +239,7 @@ const PATTERNS = /* glsl */ `
 
 const GLOW = /* glsl */ `
 #ifdef KIT_GLOW
-totalEmissiveRadiance += vec3(1.0, 0.72, 0.38) * uNight * uGlow;
+totalEmissiveRadiance += ${WARM_GLOW_GLSL} * uNight * uGlow;
 #endif
 `;
 
