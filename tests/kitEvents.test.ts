@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
-  gridEvents, stripPlacement, backupGridEvents, liveGridEvents, type StripPlacement,
+  gridEvents, stripPlacement, backupGridEvents, liveGridEvents, safeLiveGridEvents, NO_EVENTS, type StripPlacement,
 } from '../src/render/kit/events';
 import { Connection, loadMap, mapName, RomReader, type MapEvents } from '../src/game/rom/index';
 
@@ -155,6 +155,41 @@ describe('backupGridEvents', () => {
 
   it('no connections: the current map\'s events, as before', () => {
     expect(backupGridEvents(ev, [], MO)).toEqual(gridEvents(ev, MO));
+  });
+});
+
+describe('safeLiveGridEvents (an unrecognised ROM)', () => {
+  // A tiny ROM: the current map's events (one warp at (2, 3)) and a connections table naming a map
+  // whose header the map groups table should give; that table lies past the end of this ROM, so
+  // reading the connected map throws a RomError (live, inside the render loop's sync).
+  const R = 0x08000000;
+  const data = new Uint8Array(0x100);
+  const dv = new DataView(data.buffer);
+  dv.setInt32(0x10, 1, true); dv.setUint32(0x14, R + 0x20, true); // connections: 1, list
+  data.set([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0x20); // south, offset 0, map 0.0
+  data.set([0, 1, 0, 0], 0x40); dv.setUint32(0x48, R + 0x60, true); // events: one warp
+  dv.setInt16(0x60, 2, true); dv.setInt16(0x62, 3, true); data.set([0, 0, 9, 0], 0x64); // warp (2, 3) to 0.9
+  const rom = new RomReader(data);
+  const main = { width: 10, height: 10 };
+
+  it("falls back to the current map's events, warning once", () => {
+    expect(() => liveGridEvents(rom, R + 0x40, R + 0x10, main, MO)).toThrow();
+    const warnings: unknown[] = [];
+    const g = safeLiveGridEvents(rom, R + 0x40, R + 0x10, main, MO, (e) => warnings.push(e));
+    expect(g).toEqual(gridEvents({ objects: [], warps: [{ x: 2, y: 3, elevation: 0, warpId: 0, mapNum: 9, mapGroup: 0 }], coordEvents: [], bgEvents: [] }, MO));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('and to no events when even those cannot be read', () => {
+    const warnings: unknown[] = [];
+    expect(safeLiveGridEvents(rom, R + 0xfc, R + 0x10, main, MO, (e) => warnings.push(e))).toEqual(NO_EVENTS);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('a readable ROM: exactly liveGridEvents, no warning', () => {
+    const warnings: unknown[] = [];
+    expect(safeLiveGridEvents(rom, R + 0x40, 0, main, MO, (e) => warnings.push(e))).toEqual(liveGridEvents(rom, R + 0x40, 0, main, MO));
+    expect(warnings).toEqual([]);
   });
 });
 

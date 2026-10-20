@@ -8,7 +8,7 @@ import { RomReader } from '../../game/rom/reader';
 import type { GbaTextures } from '../gbaTextures';
 import type { SpriteAtlas } from '../spriteAtlas';
 import type { Quality } from '../post';
-import { liveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
+import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldStyle } from './world';
 import { Billboards, BlobShadows, type BillboardSpec } from './billboards';
@@ -90,6 +90,7 @@ export class OverworldView {
   private shadowQuality: Quality = 'medium';
   private romReader: RomReader | null = null;
   private eventsCache: { key: string; events: GridEvents } = { key: '', events: NO_EVENTS };
+  private eventsWarned = false;
 
   // camera rig state
   presetIndex = 0;
@@ -180,7 +181,8 @@ export class OverworldView {
 
   /**
    * Warps and signs in backup-grid coordinates: the current map's and those in the strips of the
-   * maps connected to it (cached per events table, connections table and layout).
+   * maps connected to it (cached per events table, connections table and layout). Never throws: on
+   * a ROM whose tables do not read (an unrecognised one), the current map's or none, warned once.
    */
   private liveEvents(state: GameState): GridEvents {
     const h = state.header;
@@ -189,7 +191,11 @@ export class OverworldView {
     const key = `${h.events}.${h.connections}.${h.layout}.${l.width}x${l.height}`;
     if (key !== this.eventsCache.key) {
       this.romReader ??= new RomReader(state.mem.bus.rom);
-      this.eventsCache = { key, events: liveGridEvents(this.romReader, h.events, h.connections, l, MAP_OFFSET) };
+      const warn = (e: unknown) => {
+        if (!this.eventsWarned) console.warn('[kit] map events unreadable (unrecognised ROM?); buildings get fewer cues', e);
+        this.eventsWarned = true;
+      };
+      this.eventsCache = { key, events: safeLiveGridEvents(this.romReader, h.events, h.connections, l, MAP_OFFSET, warn) };
     }
     return this.eventsCache.events;
   }

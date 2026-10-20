@@ -122,3 +122,22 @@ export function liveGridEvents(rom: RomReader, eventsAddr: number, connectionsAd
   }
   return backupGridEvents(readEvents(rom, eventsAddr), connected, mapOffset);
 }
+
+/**
+ * liveGridEvents for the render loop, which must not throw: on an unrecognised ROM (main.ts lets one
+ * run) a table may not read. Then `warn` gets the error and the current map's events alone are used,
+ * or none if those do not read either.
+ */
+export function safeLiveGridEvents(rom: RomReader, eventsAddr: number, connectionsAddr: number, main: MapSize,
+  mapOffset: number, warn: (e: unknown) => void): GridEvents {
+  try {
+    return liveGridEvents(rom, eventsAddr, connectionsAddr, main, mapOffset);
+  } catch (e) {
+    warn(e);
+    try {
+      return gridEvents(readEvents(rom, eventsAddr), mapOffset);
+    } catch {
+      return NO_EVENTS;
+    }
+  }
+}
