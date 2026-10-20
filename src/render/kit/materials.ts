@@ -284,9 +284,10 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
   let depth: THREE.MeshDepthMaterial | null = null;
   if (o.wind || o.vertTransform) {
     depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    // Wind only: KIT_BEND parts the blades as the camera sees them (cameraPosition), which in the
+    // shadow pass is the light's camera; the shadow is cast by the unbent blades.
     const depthDefines: Record<string, string> = {};
     if (defines.KIT_WIND !== undefined) depthDefines.KIT_WIND = '';
-    if (defines.KIT_BEND !== undefined) depthDefines.KIT_BEND = '';
     depth.defines = depthDefines;
     depth.onBeforeCompile = (s) => patchKit(s, u, local, o, false);
     depth.customProgramCacheKey = () => key + ':depth';

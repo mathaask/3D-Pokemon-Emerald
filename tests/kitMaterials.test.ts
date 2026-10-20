@@ -57,6 +57,14 @@ describe('kitMaterial', () => {
     expect(a.customProgramCacheKey()).not.toBe(b.customProgramCacheKey());
     expect(a.customProgramCacheKey()).toBe(a2.customProgramCacheKey());
   });
+  it('the shadow-depth twin sways with the wind but does not bend around actors', () => {
+    // KIT_BEND parts the blades as the camera sees them (cameraPosition); in the shadow pass that is
+    // the light's camera, so the shadow would bend the wrong way: the twin casts the unbent blades.
+    const k = kitMaterial(u, { wind: 0.08, windHeight: 0.6, bend: true });
+    expect(k.material.defines).toHaveProperty('KIT_BEND');
+    expect(k.depth!.defines).toHaveProperty('KIT_WIND');
+    expect(k.depth!.defines).not.toHaveProperty('KIT_BEND');
+  });
   it('vertTransform alone adds a depth material', () => {
     const k = kitMaterial(u, { vertTransform: 'transformed.y += 0.1;' });
     expect(k.depth).not.toBeNull();
