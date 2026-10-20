@@ -10,7 +10,7 @@ import { Variant, type MetatileAtlas } from './metatileAtlas';
 import type { Quality } from '../post';
 import type { GridEvents } from '../kit/events';
 import type { KitUniforms } from '../kit/materials';
-import { runKit, disposeKit, type Family, type KitContext, type FamilyReport } from '../kit/semantics';
+import { runKit, disposeKit, warnFailure, type Family, type KitContext, type FamilyReport } from '../kit/semantics';
 import { FAMILIES } from '../kit/index';
 import { analyze, queries } from './analyze';
 import { emitLegacy } from './legacyQuads';
@@ -24,6 +24,8 @@ export interface WorldBuildContext {
   style: WorldStyle;
   events: GridEvents;
   quality: Quality;
+  /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build). */
+  mapKey?: string;
 }
 
 export interface GridData {
@@ -102,7 +104,7 @@ export class World {
     uniforms: KitUniforms,
     private families: readonly Family<unknown>[] = FAMILIES,
   ) {
-    this.kit = { uniforms, quality: 'medium', disposables: [] };
+    this.kit = { uniforms, quality: 'medium', disposables: [], warned: new Set() };
     this.base.receiveShadow = true;
     this.group.add(this.base);
   }
@@ -129,13 +131,14 @@ export class World {
     if (ctx.style === 'modern' && !opts.indoor && !opts.underground && this.families.length) {
       try {
         this.kit.quality = ctx.quality;
-        const r = runKit({ a, events: ctx.events, quality: ctx.quality }, this.families, this.kit);
+        const r = runKit({ a, events: ctx.events, quality: ctx.quality, mapKey: ctx.mapKey }, this.families, this.kit);
         claims = r.claims;
         this.kitReport = r.report;
         this.kitGroup = r.group;
         this.group.add(r.group);
       } catch (e) {
-        console.warn('[kit] semantic layer failed; this map uses Retro 3D', e);
+        warnFailure({ a, events: ctx.events, quality: ctx.quality, mapKey: ctx.mapKey }, this.kit.warned, 'semantic layer',
+          `${String(e)}; this map uses Retro 3D`);
         claims = null;
         if (this.kitGroup) { disposeKit(this.kitGroup, this.kit); this.kitGroup = null; }
       }

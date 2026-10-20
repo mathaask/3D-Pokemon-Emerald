@@ -188,6 +188,41 @@ describe('semantic core', () => {
     expect(live).toEqual({ textures: 0, geometries: 0, instanced: 0 });
   });
 
+  it('a World runs the kit outdoors (Dive maps too), never on indoor or underground maps', () => {
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u, [claimer('box', 5, CLAIM_OBJECT)]);
+    const grid = fakeGrid(['....', '.#..', '....']);
+    const outdoor = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const modern = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
+    const kitGroups = () => world.group.children.filter((o) => o.name === 'kit').length;
+    for (const [opts, runs] of [[outdoor, true], [{ ...outdoor, underwater: true }, true],
+      [{ ...outdoor, indoor: true }, false], [{ ...outdoor, underground: true }, false]] as const) {
+      world.build(grid, opts, modern);
+      expect(kitGroups(), JSON.stringify(opts)).toBe(runs ? 1 : 0);
+      expect(world.kitReport.map((r) => r.name), JSON.stringify(opts)).toEqual(runs ? ['box'] : []);
+    }
+  });
+
+  it('warns about a failing family once per map, not on every rebuild of it (spec §11)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u,
+      [claimer('bad', 5, CLAIM_OBJECT, 'build'), claimer('worse', 6, CLAIM_OBJECT, 'extract')]);
+    const grid = fakeGrid(['....', '.#..', '....']);
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const on = (mapKey: string) => ({ style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const, mapKey });
+    for (let n = 0; n < 3; n++) world.build(grid, opts, on('0.28')); // (every step in the ash rebuilds)
+    expect(warn).toHaveBeenCalledTimes(2); // bad, worse
+    expect(world.kitReport.map((r) => r.ok)).toEqual([false, false]); // (the report still says so)
+    world.build(grid, opts, on('0.29'));
+    expect(warn).toHaveBeenCalledTimes(4);
+    world.build(grid, opts, on('0.28'));
+    expect(warn).toHaveBeenCalledTimes(4);
+    warn.mockRestore();
+  });
+
   it("rebuilding a World keeps the legacy tree cards' materials and frees each build's cards", () => {
     const info = fakeInfo();
     info.green[2] = 1; // ('#' is a green block: a tree the legacy art draws as cards)

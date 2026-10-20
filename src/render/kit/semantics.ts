@@ -14,6 +14,9 @@ export interface SemanticContext {
   a: MapAnalysis;
   events: GridEvents;
   quality: Quality;
+  /** The map being built ("group.num"): a family that fails is warned about once per map, not on
+   *  every rebuild of it (spec §11). Unset: every time. */
+  mapKey?: string;
 }
 
 export interface KitContext {
@@ -21,6 +24,8 @@ export interface KitContext {
   quality: Quality;
   /** Extra resources (textures) freed with the world. */
   disposables: { dispose(): void }[];
+  /** Failures already warned about, as "mapKey|family" (kept by the world for the session). */
+  warned?: Set<string>;
 }
 
 export interface Family<P> {
@@ -51,7 +56,17 @@ export interface Extracted {
   report: FamilyReport[];
 }
 
-export function extractAll(ctx: SemanticContext, families: readonly Family<unknown>[]): Extracted {
+/** Warns that a family failed, once per map when the map is known (`warned` keeps the record). */
+export function warnFailure(ctx: SemanticContext, warned: Set<string> | undefined, name: string, what: string): void {
+  if (ctx.mapKey !== undefined && warned) {
+    const key = `${ctx.mapKey}|${name}`;
+    if (warned.has(key)) return;
+    warned.add(key);
+  }
+  console.warn(`[kit] ${name} failed${ctx.mapKey !== undefined ? ` on map ${ctx.mapKey}` : ''} (${what})`);
+}
+
+export function extractAll(ctx: SemanticContext, families: readonly Family<unknown>[], warned?: Set<string>): Extracted {
   const claims = new Claims(ctx.a.N);
   const ex: Extracted = { claims, payloads: new Map(), added: new Map(), report: [] };
   for (const f of families) {
@@ -65,7 +80,7 @@ export function extractAll(ctx: SemanticContext, families: readonly Family<unkno
     } catch (e) {
       claims.restore(snap);
       ex.report.push({ name: f.name, ok: false, error: String(e) });
-      console.warn(`[kit] ${f.name} failed (extract): ${String(e)}`);
+      warnFailure(ctx, warned, f.name, `extract: ${String(e)}`);
     }
   }
   return ex;
@@ -88,14 +103,14 @@ export function buildAll(ex: Extracted, ctx: SemanticContext, families: readonly
       const r = ex.report.find((x) => x.name === f.name)!;
       r.ok = false;
       r.error = String(e);
-      console.warn(`[kit] ${f.name} failed (build): ${String(e)}`);
+      warnFailure(ctx, kit.warned, f.name, `build: ${String(e)}`);
     }
   }
   return group;
 }
 
 export function runKit(ctx: SemanticContext, families: readonly Family<unknown>[], kit: KitContext) {
-  const ex = extractAll(ctx, families);
+  const ex = extractAll(ctx, families, kit.warned);
   const group = buildAll(ex, ctx, families, kit);
   return { group, claims: ex.claims, report: ex.report };
 }

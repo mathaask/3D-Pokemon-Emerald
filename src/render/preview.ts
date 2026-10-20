@@ -80,7 +80,8 @@ export class PreviewApp {
     this.view.renderAtlas(this.webgl);
     this.rebuild = () => {
       const t0 = performance.now();
-      this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset);
+      this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset,
+        `${group}.${num}`);
       return performance.now() - t0;
     };
     // (the first build in the page: cold code, an upper bound of a rebuild)
