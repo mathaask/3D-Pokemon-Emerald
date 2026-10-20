@@ -26,14 +26,23 @@ const BERRY_STAGES = 5;
 const ANIM_REMOVE_OBSTACLE = 1;
 const DIR_SOUTH = 1; // (frame 0 of a character faces south)
 const MOVEMENT_TYPE_INVISIBLE = 0x4c;
+const SUBSPRITES_OFF = 0;
 const SUBSPRITES_ON = 1;
 /** pokeemerald sElevationToPriority / sElevationToSubspriteTableNum. */
 const ELEVATION_TO_PRIORITY = [2, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 0, 0, 2];
 const ELEVATION_TO_SUBSPRITE_TABLE = [1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 1];
 /**
- * Palette tags of the berry tree stages: the berry graphics (60-62) carry the Pecha tree's images,
- * which live play draws in palette slots {3, 4, 4, 4, 4} (gBerryTreePaletteSlotTable_Pecha) =
- * OBJ_EVENT_PAL_TAG_NPC_2, NPC_3 ×4 — not the graphics info's own tag (NPC_1).
+ * Graphics id of each berry tree stage (gBerryTreeObjectEventGraphicsIdTable): live play's
+ * SetBerryTreeGraphics switches the object to it (ObjectEventSetGraphicsId: its OAM size,
+ * centre-to-corner and subsprite tables), BERRY_TREE_EARLY_STAGES (16×16) for the dirt pile and the
+ * sprout, BERRY_TREE_LATE_STAGES (16×32) for the plants.
+ */
+const BERRY_STAGE_GFX = [61, 61, 62, 62, 62];
+/**
+ * Palette tags of the berry tree stages. Tied to the images: berry graphics 60-62 carry the Pecha
+ * tree's images (sPicTable_PechaBerryTree), which live play draws in OBJ palette slots {3, 4, 4, 4, 4}
+ * (gBerryTreePaletteSlotTable_Pecha) = OBJ_EVENT_PAL_TAG_NPC_2, NPC_3 ×4, not the graphics info's own
+ * tag (NPC_1: it would draw the plants blue). Other berries have other images and slot tables.
  */
 const PECHA_STAGE_PALETTE_TAGS = [0x1104, 0x1105, 0x1105, 0x1105, 0x1105];
 
@@ -84,9 +93,10 @@ export function blankSprite(p: Partial<SpriteSnap> = {}): SpriteSnap {
  * order; an image that no longer fits leaves its objects out) and each distinct palette tag gets one
  * OBJ palette slot (`palette[256 + slot * 16 …]`; past 16 tags, slot 15 is reused). Frame 0 is shown,
  * except on berry trees (gfx 60-62): animNum = localId % 5, so a map shows every growth stage, each
- * with its stage's first anim frame at that frame's own size. `removing` puts Cut trees and
- * breakable rocks (gfx 82, 86) on their breaking anim (animNum 1). Positions are map-local (the
- * preview grid has no offset); the caller sets the objects' mapGroup / mapNum.
+ * as live play shows it (the stage's graphics id 61 / 62 and its first anim frame). `removing` puts
+ * Cut trees and breakable rocks (gfx 82, 86) on their breaking anim (animNum 1). Positions are
+ * map-local (the preview grid has no offset); the caller sets the objects' mapGroup / mapNum.
+ * Whatever is left out or drawn with a stand-in palette is reported with console.warn.
  */
 export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Uint16Array,
   templates: readonly ObjectEventTemplate[], opts: { removing: boolean }): PreviewActors {
@@ -95,22 +105,32 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
   const tiles = new Map<string, number>(); // "graphicsId:frame" -> first tile
   const slots = new Map<number, number>(); // palette tag -> OBJ palette slot
   let nextTile = 0;
-  for (const t of templates) {
-    if (t.graphicsId >= NUM_OBJ_EVENT_GFX) continue;
-    const info = readObjectGraphicsInfo(rom, t.graphicsId);
-    if (!info) continue;
+  templates.forEach((t, n) => {
+    if (t.graphicsId >= NUM_OBJ_EVENT_GFX) return;
+    const what = `template ${n} (local id ${t.localId}, gfx ${t.graphicsId})`;
+    // the graphics the object spawns with, and those it shows (a berry tree switches per stage)
+    const spawnInfo = readObjectGraphicsInfo(rom, t.graphicsId);
     const berry = t.graphicsId >= GFX_BERRY_TREE && t.graphicsId <= GFX_BERRY_TREE_LATE_STAGES;
     let animNum = 0;
     if (berry) animNum = t.localId % BERRY_STAGES;
     else if (opts.removing && (t.graphicsId === GFX_CUTTABLE_TREE || t.graphicsId === GFX_BREAKABLE_ROCK)) animNum = ANIM_REMOVE_OBSTACLE;
+    const graphicsId = berry ? BERRY_STAGE_GFX[animNum] : t.graphicsId;
+    const info = berry ? readObjectGraphicsInfo(rom, graphicsId) : spawnInfo;
+    if (!spawnInfo || !info) {
+      console.warn(`[previewActors] ${what}: no graphics info for gfx ${graphicsId}; left out`);
+      return;
+    }
     const frame = berry ? firstAnimFrame(rom, info, animNum) : 0;
 
-    const key = `${t.graphicsId}:${frame}`;
+    const key = `${graphicsId}:${frame}`;
     let tile = tiles.get(key);
-    const image = readFrameImage(rom, info, frame);
     if (tile === undefined) {
+      const image = readFrameImage(rom, info, frame);
       const count = Math.ceil(image.length / TILE_BYTES);
-      if (nextTile + count > OBJ_VRAM_TILES) continue;
+      if (nextTile + count > OBJ_VRAM_TILES) {
+        console.warn(`[previewActors] ${what}: its ${count} tiles overflow OBJ VRAM (${nextTile} of ${OBJ_VRAM_TILES} used); left out`);
+        return;
+      }
       vram.set(image, OBJ_VRAM + nextTile * TILE_BYTES);
       tile = nextTile;
       nextTile += count;
@@ -123,28 +143,21 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
       slot = Math.min(slots.size, OBJ_PALETTE_SLOTS - 1);
       slots.set(tag, slot);
       const colours = readObjectPalette(rom, tag);
-      if (colours && slots.size <= OBJ_PALETTE_SLOTS) palette.set(colours, OBJ_PALETTE + slot * 16);
+      const hex = `0x${tag.toString(16)}`;
+      if (!colours) console.warn(`[previewActors] ${what}: no palette with tag ${hex}; drawn with OBJ palette ${slot} as it is`);
+      else if (slots.size > OBJ_PALETTE_SLOTS) console.warn(`[previewActors] ${what}: palette tag ${hex} past ${OBJ_PALETTE_SLOTS} slots; drawn with slot ${slot}'s colours`);
+      else palette.set(colours, OBJ_PALETTE + slot * 16);
     }
 
-    // Size: the base OAM (the image may be larger and drawn as subsprites: the truck); a berry
-    // tree's stage frame is its own size (16×16 dirt pile and sprout, 16×32 plants).
-    let width: number, height: number, imageH: number;
-    if (berry) {
-      width = 16;
-      height = image.length / 8;
-      imageH = height;
-    } else {
-      const { shape, size } = readOamShape(rom, info);
-      [width, height] = OBJ_SIZES[shape][size];
-      imageH = info.height;
-    }
-    const imageW = berry ? width : info.width;
+    // Size: the base OAM (the image may be larger and drawn as subsprites: the truck).
     // SetSpritePosToMapCoords + centerToCornerVec: x = cell * 16 + 8, y = cell * 16 + 16 + c2cY
-    const c2cX = -(imageW >> 1);
-    const c2cY = -(imageH >> 1);
+    const { shape, size } = readOamShape(rom, info);
+    const [width, height] = OBJ_SIZES[shape][size];
+    const c2cX = -(info.width >> 1);
+    const c2cY = -(info.height >> 1);
     const worldX = t.x * 16 + 8;
     // (live play: y + c2cY + OAM height, i.e. y*16 + 16 + 2 c2cY + OAM height; image heights are even)
-    const worldY = t.y * 16 + 16 - imageH + height;
+    const worldY = t.y * 16 + 16 - info.height + height;
     const i = sprites.length;
     const elevation = t.elevation & 0xf;
     const data = new Int16Array(8);
@@ -155,14 +168,17 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
       x: worldX, y: worldY - c2cY - height, c2cX, c2cY, worldX, worldY, data,
       invisible: t.movementType === MOVEMENT_TYPE_INVISIBLE,
       animNum, images: info.images, subspriteTables: info.subspriteTables,
-      subspriteTableNum: info.subspriteTables ? ELEVATION_TO_SUBSPRITE_TABLE[elevation] : 0,
-      subspriteMode: info.subspriteTables ? SUBSPRITES_ON : 0,
+      // (InitObjectPriorityByElevation: whether or not there are tables)
+      subspriteTableNum: ELEVATION_TO_SUBSPRITE_TABLE[elevation],
+      // subsprites are switched on at spawn only if the spawn graphics have tables (SetSubspriteTables):
+      // a berry tree spawns as gfx 60 (none); ObjectEventSetGraphicsId swaps tables, not the mode
+      subspriteMode: spawnInfo.subspriteTables ? SUBSPRITES_ON : SUBSPRITES_OFF,
     }));
     objects.push({
-      index: i, spriteId: i, graphicsId: t.graphicsId, localId: t.localId, mapGroup: 0, mapNum: 0,
+      index: i, spriteId: i, graphicsId, localId: t.localId, mapGroup: 0, mapNum: 0,
       x: t.x, y: t.y, prevX: t.x, prevY: t.y, elevation, prevElevation: elevation, facing: DIR_SOUTH,
       invisible: t.movementType === MOVEMENT_TYPE_INVISIBLE, isPlayer: false, offScreen: false,
     });
-  }
+  });
   return { sprites, objects };
 }

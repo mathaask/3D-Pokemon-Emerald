@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RomReader } from '../../src/game/rom/reader';
 import { readObjectGraphicsInfo, readFrameImage, readObjectPalette } from '../../src/game/rom/objectGraphics';
 import { loadMap } from '../../src/game/rom/maps';
@@ -61,7 +61,7 @@ describe('preview actors from map templates', () => {
     });
   });
 
-  it('shows every berry growth stage (animNum = localId % 5) at its frame size', () => {
+  it('shows every berry growth stage (animNum = localId % 5) with its stage graphics, as live play', () => {
     const { actors, palette } = build(0, 19); // Route 104
     const trees = actors.objects.filter((o) => o.graphicsId >= 60 && o.graphicsId <= 62);
     expect(trees.length).toBeGreaterThan(4);
@@ -70,7 +70,14 @@ describe('preview actors from map templates', () => {
       const s = actors.sprites[o.index];
       expect(s.animNum).toBe(o.localId % 5);
       stages.add(s.animNum);
-      expect(s.height).toBe(s.animNum < 2 ? 16 : 32);
+      // SetBerryTreeGraphics: early stages gfx 61 (16x16), late stages gfx 62 (16x32), their tables;
+      // subsprites stay off (spawned as gfx 60, which has none); the table number follows elevation
+      const stageGfx = s.animNum < 2 ? 61 : 62;
+      expect(o.graphicsId).toBe(stageGfx);
+      const info = readObjectGraphicsInfo(rom, stageGfx)!;
+      expect(s).toMatchObject({ width: 16, height: s.animNum < 2 ? 16 : 32, c2cX: -8, c2cY: s.animNum < 2 ? -8 : -16 });
+      expect(s).toMatchObject({ images: info.images, subspriteTables: info.subspriteTables, subspriteMode: 0, subspriteTableNum: 1 });
+      expect(info.subspriteTables).not.toBe(0);
       expect(s.worldY).toBe(o.y * 16 + 16);
       // live play draws the (Pecha) stages in OBJ palettes 3, 4, 4, 4, 4: tags NPC_2, NPC_3
       expect(palette.subarray(256 + s.palette * 16, 256 + s.palette * 16 + 16))
@@ -85,5 +92,38 @@ describe('preview actors from map templates', () => {
     expect(trees.length).toBeGreaterThan(0);
     for (const o of trees) expect(actors.sprites[o.index].animNum).toBe(1);
     expect(build(0, 31).actors.sprites[trees[0].index].animNum).toBe(0);
+  });
+
+  it('warns about what it leaves out (OBJ VRAM full) or draws with a stand-in palette (> 16 tags)', () => {
+    const template = (g: number, i: number) => ({
+      localId: i + 1, graphicsId: g, kind: 0, x: i % 20, y: (i / 20) | 0, elevation: 3, movementType: 0,
+      movementRangeX: 0, movementRangeY: 0, trainerType: 0, trainerRangeOrBerryTreeId: 0, script: 0, flagId: 0,
+    });
+    const run = (gfx: number[]) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const actors = buildPreviewActors(rom, new Uint8Array(0x18000), new Uint16Array(512), gfx.map(template), { removing: false });
+        return { actors, messages: warn.mock.calls.map((c) => String(c[0])) };
+      } finally {
+        warn.mockRestore();
+      }
+    };
+    // one object of every graphics id: more tiles than OBJ VRAM holds
+    const all = run(Array.from({ length: 239 }, (_, g) => g));
+    expect(all.messages.some((m) => m.includes('overflow OBJ VRAM'))).toBe(true);
+    expect(all.actors.sprites.length).toBe(all.actors.objects.length);
+    expect(all.actors.sprites.length).toBeLessThan(239);
+    expect(all.actors.sprites.every((s) => s.tileNum + (s.width * s.height) / 64 <= 1024)).toBe(true);
+    // one object per distinct palette tag: more tags than 16 slots
+    const byTag = new Map<number, number>();
+    for (let g = 0; g < 239; g++) {
+      const tag = readObjectGraphicsInfo(rom, g)?.paletteTag;
+      if (tag !== undefined && !byTag.has(tag)) byTag.set(tag, g);
+    }
+    expect(byTag.size).toBeGreaterThan(16);
+    const tags = run([...byTag.values()]);
+    expect(tags.messages.some((m) => m.includes('past 16 slots'))).toBe(true);
+    expect(tags.actors.sprites.length).toBe(byTag.size);
+    expect(tags.actors.sprites.every((s) => s.palette <= 15)).toBe(true);
   });
 });

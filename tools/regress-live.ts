@@ -50,12 +50,17 @@ const LIVE: LiveEntry[] = [
  * Static preview scenes, run with --static (or named by --only): the map preview with the map's
  * object events from their ROM templates (`/?autostart=1&manual=1&actors=1&<q>&style=…`), 60 frames
  * at 1/60 s, hour 11 unless q sets one (the preview's default). The camera looks at the first
- * template with graphics id G (focusGfx) or at template N (focusObj).
+ * template with graphics id G (focusGfx) or at template N (focusObj); one naming no template fails
+ * the entry. littleroot_npcs looks at the fat man (12,13): Birch, the twin, the boy and a truck are
+ * in frame too (Mom's cell is inside her house). Berry trees show stage localId % 5: Route 104's
+ * patches hold 3 stages each (r104_berries / r104_night: stages 0-2); r123_berries frames Route 123's
+ * two rows of six (templates 0-3, 9-16), all five stages.
  */
 interface StaticEntry { name: string; q: string }
 const STATIC: StaticEntry[] = [
-  { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=94' }, { name: 'rustboro_npcs', q: 'map=0.3' },
+  { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=17' }, { name: 'rustboro_npcs', q: 'map=0.3' },
   { name: 'r104_berries', q: 'map=0.19&focusGfx=60' }, { name: 'r104_night', q: 'map=0.19&focusGfx=60&hour=21' },
+  { name: 'r123_berries', q: 'map=0.38&focusObj=3' },
   { name: 'r116_cut', q: 'map=0.31&focusGfx=82' }, { name: 'r114_rocks', q: 'map=0.29&focusGfx=86' },
   { name: 'fiery_boulders', q: 'map=24.14&focusGfx=87' }, { name: 'r119_items', q: 'map=0.34&focusGfx=59' },
   { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
@@ -288,6 +293,9 @@ async function main(): Promise<void> {
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
             }
           } else {
+            // a focus naming no template would frame the map centre instead: never a baseline
+            const focusError = await page.evaluate('preview.focusError') as string | null;
+            if (focusError) throw new Error(`preview: ${focusError}`);
             await page.evaluate('preview.frames(60)');
           }
           // the page chrome's CSS transitions (the loader fading out) run on the wall clock: end them

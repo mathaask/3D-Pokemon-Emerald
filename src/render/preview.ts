@@ -32,6 +32,8 @@ export class PreviewApp {
   private fakeState: GameState;
   /** Object events drawn (&actors=1): the sprite atlas is baked every frame. */
   private actors = false;
+  /** Set when &focusObj / &focusGfx names no template (the harness fails such an entry). */
+  focusError: string | null = null;
   private target = new THREE.Vector3();
   private keys = new Set<string>();
   private last = performance.now();
@@ -156,13 +158,17 @@ export class PreviewApp {
     requestAnimationFrame(tick);
   }
 
-  /** The template named by &focusObj=N (index) or &focusGfx=G (first with graphics id G), if any. */
+  /** The template named by &focusObj=N (index) or &focusGfx=G (first with graphics id G), if any.
+   *  One that names no template sets focusError (the view falls back to x / y or the map centre). */
   private focusTemplate(templates: readonly ObjectEventTemplate[], params: URLSearchParams): ObjectEventTemplate | null {
     const obj = params.get('focusObj');
     const gfx = params.get('focusGfx');
     const t = obj !== null ? templates[Number(obj)]
       : gfx !== null ? templates.find((e) => e.graphicsId === Number(gfx)) : undefined;
-    if ((obj !== null || gfx !== null) && !t) console.warn(`[preview] no object template for focusObj=${obj} focusGfx=${gfx}`);
+    if ((obj !== null || gfx !== null) && !t) {
+      this.focusError = `no object template for ${obj !== null ? `focusObj=${obj}` : `focusGfx=${gfx}`} (${templates.length} templates)`;
+      console.warn(`[preview] ${this.focusError}`);
+    }
     return t ?? null;
   }
 
