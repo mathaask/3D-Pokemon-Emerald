@@ -318,12 +318,20 @@ function palmGeo(seed: number): THREE.BufferGeometry {
   return g;
 }
 
+/** Index of each style: tells them apart in geometry seeds and variant hashes. */
+const STYLE_INDEX: Readonly<Record<TreeStyle, number>> = { round: 0, bushy: 1, pine: 2, palm: 3 };
+/** Seed of a style variant's geometry. */
+export const treeSeed = (style: TreeStyle, variant: number) => 1000 + variant * 77 + STYLE_INDEX[style] * 7919;
+/** The variant a map chunk draws its trees of a style with (palms and pines have one shape). */
+export const chunkVariant = (style: TreeStyle, chunk: number) =>
+  style === 'round' || style === 'bushy' ? hashCell(chunk % 4096, Math.floor(chunk / 4096), STYLE_INDEX[style]) % VARIANTS : 0;
+
 /** Merged crown + trunk of a style variant (cached for the session, never disposed). */
 function treeGeo(style: TreeStyle, variant: number, detail: number): THREE.BufferGeometry {
   const id = `${style}:${variant}:${detail}`;
   let g = geoCache.get(id);
   if (!g) {
-    const seed = 1000 + variant * 77 + style.length * 7919;
+    const seed = treeSeed(style, variant);
     let crown: THREE.BufferGeometry, trunk: THREE.BufferGeometry | null;
     if (style === 'round') {
       crown = blobCrown(seed, 6, 0.64, 0.46, 0.76, 1.0, 0.6, detail);
@@ -491,7 +499,7 @@ export const treeFamily: Family<TreePlacement[]> = {
     // Crown art overhanging the walkable cells around a tree (top-layer leaves; not grass tufts):
     // the 3D crowns replace it.
     for (let i = 0; i < a.N; i++) {
-      if (kind[i] !== K.Floor || !a.hasTop(i) || GRASS.has(a.beh[i]) || st(mt[i])[LEAF_N] < MIN_LEAF || spotBelow[i]) continue;
+      if (kind[i] !== K.Floor || !a.hasTop(i) || GRASS.has(a.beh[i]) || st(mt[i])[LEAF_N] < MIN_LEAF || spotBelow[i] || isSecretBaseSpot(a, i)) continue;
       const x = a.cellX(i), y = a.cellY(i);
       let near = false;
       for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (isTreeAt(tree, a, x + dx, y + dy)) { near = true; break; }
@@ -512,7 +520,7 @@ export const treeFamily: Family<TreePlacement[]> = {
         const below = e + 1 < a.maxY ? idx(x, e + 1) : -1;
         const base = below >= 0 && !Number.isNaN(height[below]) ? Math.max(0, height[below]) : a.groundH[idx(x, e)];
         const above = y > a.minY ? idx(x, y - 1) : -1;
-        if (above >= 0 && kind[above] === K.Floor && a.hasTop(above)) claims.claim(above, CLAIM_TOP);
+        if (above >= 0 && kind[above] === K.Floor && a.hasTop(above) && !isSecretBaseSpot(a, above)) claims.claim(above, CLAIM_TOP);
         // A forest running from higher ground (behind it) down to the level in front: its first
         // rows stand on the higher ground, so their crowns don't rise through it (Route 113's ash
         // forest below the plateau). The step between the levels hides under the canopy.
@@ -655,7 +663,7 @@ export const treeFamily: Family<TreePlacement[]> = {
         mats.set(style, km);
       }
       // (palms and pines are rare: one shape each, varied by rotation and scale)
-      const variant = style === 'round' || style === 'bushy' ? hashCell(chunk % 4096, Math.floor(chunk / 4096), style.length) % VARIANTS : 0;
+      const variant = chunkVariant(style, chunk);
       const mesh = new THREE.InstancedMesh(treeGeo(style, variant, detailOf(style)), km.material, list.length);
       applyKitMaterial(mesh, km);
       list.forEach(({ t, k: size }, i) => {

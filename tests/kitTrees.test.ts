@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { blobCrown, pairRoundTrees, treeFamily, type TreePlacement } from '../src/render/kit/trees';
+import { blobCrown, chunkVariant, pairRoundTrees, treeFamily, treeSeed, type TreePlacement, type TreeStyle } from '../src/render/kit/trees';
 import { Claims, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { doorStructures } from '../src/render/kit/cliffs';
@@ -381,5 +381,44 @@ describe('blobCrown', () => {
     expect(Array.from(a.getAttribute('position').array)).toEqual(Array.from(b.getAttribute('position').array));
     a.computeBoundingBox();
     expect(a.boundingBox!.max.y).toBeLessThan(1);
+  });
+});
+
+describe('tree styles', () => {
+  // Styles are told apart by an explicit index (the name's length made 'round' and 'bushy', 'pine'
+  // and 'palm' the same key).
+  const styles: TreeStyle[] = ['round', 'bushy', 'pine', 'palm'];
+  it('give every style and variant its own geometry seed', () => {
+    const seeds = styles.flatMap((s) => [0, 1, 2].map((v) => treeSeed(s, v)));
+    expect(new Set(seeds).size).toBe(seeds.length);
+  });
+  it('pick the chunk variants of round and bushy trees independently', () => {
+    const chunks = Array.from({ length: 64 }, (_, k) => (2048 + (k >> 3)) * 4096 + 2048 + (k & 7));
+    const same = chunks.filter((c) => chunkVariant('round', c) === chunkVariant('bushy', c)).length;
+    expect(same).toBeLessThan(chunks.length);
+    for (const c of chunks) for (const s of styles) expect(chunkVariant(s, c)).toBeLessThan(3);
+    // (palms and pines have one shape each)
+    expect(chunks.every((c) => chunkVariant('palm', c) === 0 && chunkVariant('pine', c) === 0)).toBe(true);
+  });
+});
+
+describe('tree extract: secret-base spots', () => {
+  // An opened secret-base tree or shrub is walkable, its crown art drawn over it: no claim of any kind
+  // on it (its art stays legacy), whether it overhangs a tree beside it or tops a tree column.
+  it('claims no crown art on an opened spot beside a tree', () => {
+    const plain = map(['oN', '.N']);
+    expect(extract(plain).claims.has(plain.idx(0, 0), CLAIM_TOP)).toBe(true); // (the crown art, without a spot)
+    const a = map(['oN', '.N']);
+    a.beh[a.idx(0, 0)] = MB.SECRET_BASE_SPOT_TREE_LEFT_OPEN;
+    expect(extract(a).claims.bits[a.idx(0, 0)]).toBe(0);
+  });
+  it('claims no overhang on an opened spot on top of a tree column', () => {
+    // (its overhang art draws no foliage: only the run's top claims it)
+    const noLeaves = (a: MapAnalysis) => { a.info.both.fill(px(4, 6, 14), 6 * 256, 6 * 256 + 128); return a; };
+    const plain = noLeaves(map(['o.', 'N.', 'N.']));
+    expect(extract(plain).claims.has(plain.idx(0, 0), CLAIM_TOP)).toBe(true);
+    const a = noLeaves(map(['o.', 'N.', 'N.']));
+    a.beh[a.idx(0, 0)] = MB.SECRET_BASE_SPOT_SHRUB_OPEN;
+    expect(extract(a).claims.bits[a.idx(0, 0)]).toBe(0);
   });
 });
