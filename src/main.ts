@@ -16,12 +16,14 @@ const FAST_FORWARD = 4;
 /** Emulated RTC in manual mode (local time): the game's clock re-reads replay identically. */
 const MANUAL_RTC = '2026-01-01T10:00:00';
 
-/** Setting overrides from the URL (?style=modern|retro, ?camera=0..3): applied, never saved. */
+/** Setting overrides from the URL (?style=modern|retro, ?camera=0..3, ?spriteFilter=smooth|pixel): applied, never saved. */
 function urlOverrides(params: URLSearchParams, s: Settings): void {
   const style = params.get('style');
   if (style === 'modern' || style === 'retro') s.worldStyle = style;
   const camera = params.get('camera');
   if (camera !== null && /^[0-3]$/.test(camera)) s.camera = Number(camera);
+  const spriteFilter = params.get('spriteFilter');
+  if (spriteFilter === 'smooth' || spriteFilter === 'pixel') s.spriteFilter = spriteFilter;
 }
 
 async function sha1(data: Uint8Array): Promise<string> {
@@ -147,6 +149,7 @@ async function boot(): Promise<void> {
     renderer.mode = s.view;
     renderer.overworld.presetIndex = s.camera;
     renderer.setWorldStyle(s.worldStyle);
+    renderer.setSpriteFilter(s.spriteFilter);
     renderer.setEffects(s.tiltShift, s.bloom);
     audio.setVolume(s.volume);
   };
@@ -213,7 +216,7 @@ async function boot(): Promise<void> {
   shell.hideLoader();
   canvas.focus();
 
-  // inflation-field self-test (between frames, Modern overworld) and its slots as a PNG data URL
+  // actor self-test (between frames, Modern overworld: the inflation field, the xBR shader) and the field's slots as a PNG data URL
   const debug = { gba, renderer, input, selfTest: () => renderer.actorSelfTest(), fieldDump: () => renderer.actorFieldDump() };
   if (manual) {
     exposeManual(gba, renderer, debug);

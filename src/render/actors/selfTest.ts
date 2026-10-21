@@ -1,13 +1,16 @@
-// Inflation-field self-test (harness --selftest, emu.selfTest(), preview.selfTest()): the live field on
-// the GPU against inflateMath's CPU reference of the *current* atlas (a stale or mis-slotted field
+// Actor self-test (harness --selftest, emu.selfTest(), preview.selfTest()). The inflation field: the live
+// field on the GPU against inflateMath's CPU reference of the *current* atlas (a stale or mis-slotted field
 // fails), a bleed fixture (fully opaque neighbouring slots: no read may cross a sprite rectangle), and
-// the GPU time of one field update.
+// the GPU time of one field update. The HD sprite edges: XBR_GLSL against its CPU reference xbrSample on a
+// fixture (xbrSelfTest).
 
 import * as THREE from 'three';
 import { SLOT, type SpriteAtlas } from '../spriteAtlas';
 import { SpriteField } from './spriteField';
 import { heights, inflateMax, type InflateParams } from './inflateMath';
 import { timeGpuFrames } from '../gpuTiming';
+import { XBR_GLSL } from './xbr.glsl';
+import { xbrSample } from '../kit/upscale';
 
 export interface FieldSelfTest {
   /** Used atlas slots compared. */
@@ -119,6 +122,122 @@ export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: Sprite
   const t = await timeGpuFrames(renderer.getContext() as WebGL2RenderingContext, TIMED_UPDATES,
     () => field.update(renderer, atlas.target.texture, atlas.slotRects, count));
   return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs };
+}
+
+export interface XbrSelfTest {
+  /** Max |GPU − CPU| (RGBA, 0..1) over the fixture's sample points. */
+  maxErr: number;
+}
+
+/** The actors' whole self-test: the field's, and the xBR shader's (`xbr`). */
+export interface ActorSelfTest extends FieldSelfTest {
+  xbr: XbrSelfTest;
+}
+
+/** The xBR fixture's size (texels), the sample grid over it (points per side) and the fixed blend half-width. */
+const XBR_FIX = 16;
+const XBR_POINTS = 64;
+const XBR_DELTA = 0.1;
+/** The fixture's sprite rectangle [x0, y0, x1, y1): columns 14-15 are an opaque neighbour no read may reach. */
+export const XBR_FIX_RECT: [number, number, number, number] = [0, 0, 14, XBR_FIX];
+
+/**
+ * The xBR fixture (16×16, 0xAABBGGRR, rows in order of y): on transparency, a disc (blue), a 2:1 staircase
+ * (red), a 45° staircase (skin, a slightly different skin shade in its lower part: "equal") whose far part
+ * is red (an edge between two opaque colours), a dark eye pixel inside the skin, an isolated skin pixel, a
+ * diagonal and a horizontal 1-px line (dark); skin columns 14-15 outside the rectangle (a read across it
+ * would take the skin there for the sprite's inside: no silhouette). Its colours' distances lie well away
+ * from the "equal" threshold (tests/kitXbr.test.ts), so float rounding cannot flip a decision between the
+ * GPU and the CPU.
+ */
+export function xbrFixture(): Uint32Array {
+  const T = 0, SKIN = 0xffa8d0ff, SKIN2 = 0xffa8d0f8, BLUE = 0xffc06030, DARK = 0xff282020, RED = 0xff3030e0;
+  const img = new Uint32Array(XBR_FIX * XBR_FIX);
+  for (let y = 0; y < XBR_FIX; y++) {
+    for (let x = 0; x < XBR_FIX; x++) {
+      let c = T;
+      if ((x + 0.5 - 4) ** 2 + (y + 0.5 - 4) ** 2 < 3.2 ** 2) c = BLUE;
+      if (x >= 8 && x - 8 >= 2 * y) c = RED;
+      if (x + y >= 17) c = x + y >= 22 ? RED : y >= 12 ? SKIN2 : SKIN;
+      if ((x === 11 && y === 9) || (y === 7 && x >= 7 && x <= 12) || (x >= 1 && x <= 6 && y === x + 8)) c = DARK;
+      if (x === 9 && y === 3) c = SKIN;
+      if (x >= 14) c = SKIN;
+      img[y * XBR_FIX + x] = c;
+    }
+  }
+  return img;
+}
+
+const XBR_VERT = /* glsl */ `
+in vec3 position;
+void main() {
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const XBR_FRAG = /* glsl */ `
+precision highp float;
+precision highp int;
+uniform sampler2D tFix;
+uniform vec4 uRect;
+out vec4 fragColor;
+${XBR_GLSL}
+void main() {
+  fragColor = xbrSample(tFix, gl_FragCoord.xy * ${(XBR_FIX / XBR_POINTS).toFixed(4)}, uRect, ${XBR_DELTA.toFixed(2)});
+}
+`;
+
+/**
+ * XBR_GLSL against xbrSample: the fixture as an RGBA8 texture, sampled through the shader at a 64×64 grid of
+ * points ((i + 0.5) / 4 texels) into an RGBA8 target with delta 0.1, read back and compared with the CPU
+ * reference at the same points (NaN-sticky max). Frees everything it made.
+ */
+export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
+  const src = xbrFixture();
+  const tex = new THREE.DataTexture(new Uint8Array(src.buffer), XBR_FIX, XBR_FIX, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  const target = new THREE.WebGLRenderTarget(XBR_POINTS, XBR_POINTS, {
+    depthBuffer: false, generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+  });
+  const material = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3, vertexShader: XBR_VERT, fragmentShader: XBR_FRAG,
+    uniforms: { tFix: { value: tex }, uRect: { value: new THREE.Vector4(...XBR_FIX_RECT) } },
+    depthTest: false, depthWrite: false,
+  });
+  const quad = new THREE.PlaneGeometry(2, 2);
+  const mesh = new THREE.Mesh(quad, material);
+  mesh.frustumCulled = false;
+  const scene = new THREE.Scene().add(mesh);
+  const prev = renderer.getRenderTarget();
+  try {
+    renderer.setRenderTarget(target);
+    renderer.render(scene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+    renderer.setRenderTarget(prev);
+    const gpu = readPixels(renderer, target, new Uint8Array(XBR_POINTS * XBR_POINTS * 4));
+    let maxErr = 0;
+    for (let j = 0; j < XBR_POINTS; j++) {
+      for (let i = 0; i < XBR_POINTS; i++) {
+        const k = XBR_FIX / XBR_POINTS;
+        const want = xbrSample(src, XBR_FIX, XBR_FIX, (i + 0.5) * k, (j + 0.5) * k, XBR_DELTA, XBR_FIX_RECT);
+        for (let c = 0; c < 4; c++) maxErr = Math.max(maxErr, Math.abs(gpu[(j * XBR_POINTS + i) * 4 + c] / 255 - want[c]));
+      }
+    }
+    return { maxErr };
+  } finally {
+    renderer.setRenderTarget(prev);
+    target.dispose();
+    material.dispose();
+    quad.dispose();
+    tex.dispose();
+  }
+}
+
+/** Both self-tests: the field's (as fieldSelfTest) and the xBR shader's. */
+export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): Promise<ActorSelfTest> {
+  const f = await fieldSelfTest(renderer, atlas, field);
+  return { ...f, xbr: xbrSelfTest(renderer) };
 }
 
 /**

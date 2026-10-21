@@ -22,7 +22,8 @@
 // _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
 // `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png).
 // Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax()) px (SELFTEST_TOL: half-float
-// rounding grows with the field's height).
+// rounding grows with the field's height). The same call checks the HD sprite-edge shader (XBR_GLSL) against
+// its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
 // --ab (live entries, Modern) measures what the inflated actors cost over the same build with inflation off
 // (every character a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
 // --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot
@@ -112,12 +113,14 @@ const CROP_H = 400;
 /** Inflation-field self-test parity tolerance (sprite px: half-float rounding grows with the height) and the
  *  field update's GPU target (ms, reported). */
 const SELFTEST_TOL = Math.max(0.02, 0.003 * inflateMax());
+/** xBR self-test parity tolerance (RGBA 0..1: the RGBA8 target's rounding plus float differences). */
+const XBR_TOL = 2 / 255;
 const FIELD_GPU_MS = 0.3;
 /** --ab budgets over inflation off (Phase 2: GPU frame +1.0 ms, renderer CPU +0.5 ms): flagged in the table. */
 const AB_GPU_MS = 1.0;
 const AB_CPU_MS = 0.5;
 
-interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number }
+interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; xbr: { maxErr: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 /** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. */
 interface ActorLum { ratio: number; modern: number; retro: number; pixels: number }
@@ -302,15 +305,18 @@ async function buildSheets(page: Page, dir: string): Promise<void> {
 
 /**
  * One self-test point: `api`.selfTest() and the field dump (_field_<dump>.png). ok: some slots were
- * compared and both parity errors are finite and within SELFTEST_TOL (NaN arrives as null).
+ * compared and both parity errors are finite and within SELFTEST_TOL (NaN arrives as null), and the xBR
+ * shader's within XBR_TOL.
  */
 async function selfTestPoint(page: Page, api: string, outDir: string, dump: string): Promise<{ result: SelfTest; ok: boolean; text: string }> {
   const result = await page.evaluate(`${api}.selfTest()`) as SelfTest;
   const png = await page.evaluate(`${api}.fieldDump()`) as string;
   fs.writeFileSync(path.join(outDir, `_field_${dump}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
   const within = (v: number) => Number.isFinite(v) && v <= SELFTEST_TOL;
-  const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr);
-  let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} gpu ${round(result.gpuMs, 3)} ms`;
+  const xbrOk = Number.isFinite(result.xbr?.maxErr) && result.xbr.maxErr <= XBR_TOL;
+  const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr) && xbrOk;
+  let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} gpu ${round(result.gpuMs, 3)} ms`
+    + ` xbr maxErr ${result.xbr?.maxErr}`;
   if (!(result.gpuMs <= FIELD_GPU_MS)) text += ` (> ${FIELD_GPU_MS} ms target)`;
   return { result, ok, text };
 }
@@ -589,7 +595,7 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
-  if (selftestFailures.length) console.log(`self-test failed (no slots, or parity > ${SELFTEST_TOL} px) in: ${selftestFailures.join(', ')}`);
+  if (selftestFailures.length) console.log(`self-test failed (no slots, field parity > ${SELFTEST_TOL} px or xbr > ${XBR_TOL.toFixed(4)}) in: ${selftestFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || selftestFailures.length) process.exitCode = 1;
 }
 

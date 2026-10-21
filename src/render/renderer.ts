@@ -15,7 +15,8 @@ import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
 import { SpriteField } from './actors/spriteField';
-import { fieldDump, fieldSelfTest, type FieldSelfTest } from './actors/selfTest';
+import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
+import type { SpriteFilter } from './actors/actorLayer';
 
 export type ViewMode = 'auto' | 'classic';
 
@@ -132,6 +133,11 @@ export class Renderer {
     this.post.setEnabled(tiltShift, bloom);
   }
 
+  /** Sprite edges of the Modern overworld's actors: HD smooth (xBR) or Pixel. Retro ignores it. */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.overworld.setSpriteFilter(f);
+  }
+
   /** Called after every emulated frame (possibly several per displayed frame). */
   onEmulatedFrame(): void {
     this.emulatedSinceRender++;
@@ -210,10 +216,11 @@ export class Renderer {
     }
   }
 
-  /** Inflation-field self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas. */
-  actorSelfTest(): Promise<FieldSelfTest> {
+  /** Actor self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas, and the
+   *  xBR shader vs its CPU reference on a fixture. */
+  actorSelfTest(): Promise<ActorSelfTest> {
     this.checkFieldLive();
-    return fieldSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
   }
 
   /** The used slots of the inflation field as a grey PNG data URL (harness --selftest: _field_<entry>.png). */

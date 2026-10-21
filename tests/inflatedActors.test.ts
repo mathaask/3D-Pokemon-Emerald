@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL } from '../src/render/actors/inflatedActors';
 import { heights, INFLATE } from '../src/render/actors/inflateMath';
+import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
 import { Billboards } from '../src/render/overworld/billboards';
 
 const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2, lift: 0, flat: false,
@@ -104,6 +105,29 @@ describe('InflatedActors', () => {
     }
     expect(mag / n).toBeGreaterThan(0.5); // a real tilt …
     expect(Math.hypot(sx, sy) / n).toBeLessThan(0.1 * (mag / n)); // … that cancels over the sprite
+  });
+  it('samples through xBR with HD edges and the nearest texel with Pixel, in the actor and its shadow twin', () => {
+    const a = make();
+    const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+      uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms;
+    (a.mesh.material as THREE.MeshStandardMaterial).onBeforeCompile(s, null as unknown as THREE.WebGLRenderer);
+    const depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+    for (const f of [s.fragmentShader, depth.fragmentShader]) {
+      expect(f).toContain(XBR_GLSL);
+      // Pixel: Task 5's nearest texel, fetched before (outside) the smoothing branch; the derivative too
+      expect(f).toMatch(/vec4 t = texture\(tAtlas, uv\);[^]*fwidth\(p\.x \+ p\.y\)[^]*if \(uSmooth > 0\.5\) \{[^]*xbrSample\(tAtlas, p, rect, delta\)/);
+    }
+    expect(s.fragmentShader).toContain('vec4 actorTexel = actorSample(vAtlasUv, vRect);\nif (actorTexel.a < 0.5) discard;');
+    expect(depth.fragmentShader).toContain('if (actorSample(vUv, vRect).a < 0.5) discard;');
+    // one uniform for both (the cast shadow's silhouette follows the actor's); HD by default
+    const u = (a as unknown as { uniforms: { uSmooth: { value: number } } }).uniforms.uSmooth;
+    expect((s.uniforms as Record<string, unknown>).uSmooth).toBe(u);
+    expect(depth.uniforms.uSmooth).toBe(u);
+    expect(u.value).toBe(1);
+    a.setSmoothing(false);
+    expect(u.value).toBe(0);
+    a.setSmoothing(true);
+    expect(u.value).toBe(1);
   });
   it('draws flat magenta for the harness\'s actor mask (inflated actors and cards)', () => {
     const a = make();

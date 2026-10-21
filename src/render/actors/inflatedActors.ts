@@ -4,14 +4,16 @@
 // highlight shoulder. It casts its silhouette as a shadow (an alpha-tested depth twin with the same
 // displacement, pushed away from the light) and receives shadows (trees).
 // One instanced draw call; the instance layout is the cards' (Billboards): aFoot, aSize (width,
-// height, lift, 0), aUv. The front silhouette is the sprite's own (alpha test on the game's frame).
+// height, lift, 0), aUv. The front silhouette is the sprite's own (alpha test on the game's frame; with HD
+// edges, setSmoothing, on its xBR-smoothed outline — the shadow's too).
 // Not tied to the overworld: battles can reuse it with any atlas and field of the same layout.
 
 import * as THREE from 'three';
-import { DEPTH_FRAG, type BillboardSpec } from '../overworld/billboards';
+import type { BillboardSpec } from '../overworld/billboards';
 import { put, markRange } from '../instanceUpload';
 import { INFLATE } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
+import { XBR_GLSL } from './xbr.glsl';
 
 /** Grid segments per actor (spec §6): one per sprite pixel of a 16×32 character. */
 export const ACTOR_GRID = { x: 16, y: 32 };
@@ -113,6 +115,26 @@ float relief = smoothstep(${glsl(RELIEF_FADE.from)}, ${glsl(RELIEF_FADE.to)}, lo
 vec3 transformed = card + normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief);
 `;
 
+// The sprite's colour at an atlas uv (after tAtlas, uAtlasSize): the nearest texel (Pixel), or with uSmooth its
+// HD edges — xBR at the continuous texel position, blended over about one screen pixel (delta), straight
+// alpha (the atlas's transparent texels are black: a blend with them comes out premultiplied). Shared by the
+// actors and their depth twin, so the cast shadow has the smoothed silhouette too. The nearest fetch and the
+// derivative stay outside the branch (uniform control flow; the Pixel path is Task 5's code).
+const SAMPLE_GLSL = /* glsl */ `
+uniform float uSmooth;  // 1: HD edges (xBR), 0: nearest texels
+${XBR_GLSL}
+vec4 actorSample(vec2 uv, vec4 rect) {
+  vec4 t = texture(tAtlas, uv);
+  vec2 p = uv * uAtlasSize;
+  float delta = clamp(0.5 * fwidth(p.x + p.y), 0.02, 0.5);
+  if (uSmooth > 0.5) {
+    t = xbrSample(tAtlas, p, rect, delta);
+    t.rgb /= max(t.a, 1e-4);
+  }
+  return t;
+}
+`;
+
 const FRAG_PRELUDE = /* glsl */ `
 uniform sampler2D tAtlas;
 uniform vec3 uRimColor;
@@ -122,10 +144,11 @@ uniform float uMask;    // 1: flat magenta (the harness's actor mask)
 varying vec2 vAtlasUv;
 varying vec4 vRect;
 ${FIELD_GLSL}
+${SAMPLE_GLSL}
 `;
 
 const FRAG_COLOR = /* glsl */ `
-vec4 actorTexel = texture(tAtlas, vAtlasUv);
+vec4 actorTexel = actorSample(vAtlasUv, vRect);
 if (actorTexel.a < 0.5) discard;
 diffuseColor.rgb *= actorTexel.rgb;
 `;
@@ -200,6 +223,21 @@ ${VERT_POSITION}
 }
 `;
 
+// The twin's alpha test: the actors' own sample (smoothed silhouette with uSmooth); otherwise billboards.ts's DEPTH_FRAG.
+const DEPTH_FRAG = /* glsl */ `
+#include <common>
+#include <packing>
+uniform sampler2D tAtlas;
+uniform vec2 uAtlasSize;
+varying vec2 vUv;
+varying vec4 vRect;
+${SAMPLE_GLSL}
+void main() {
+  if (actorSample(vUv, vRect).a < 0.5) discard;
+  gl_FragColor = packDepthToRGBA(gl_FragCoord.z);
+}
+`;
+
 /** Replaces `chunk` in `src`; throws if three renamed it (the patch would silently do nothing). */
 function patch(src: string, chunk: string, by: string): string {
   const include = `#include <${chunk}>`;
@@ -226,7 +264,7 @@ export class InflatedActors {
   private uniforms: {
     tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
     uEye: { value: THREE.Vector3 }; uAtlasSize: { value: THREE.Vector2 }; uRimColor: { value: THREE.Color };
-    uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number };
+    uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number }; uSmooth: { value: number };
   };
 
   /**
@@ -251,7 +289,7 @@ export class InflatedActors {
     const u = this.uniforms = {
       tAtlas: { value: atlas }, tField: { value: field }, uRight: { value: new THREE.Vector3(1, 0, 0) },
       uEye: { value: new THREE.Vector3(0, 0, 1e5) }, uAtlasSize: { value: atlasSize.clone() }, uRimColor: rimColor,
-      uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) }, uMask: { value: 0 },
+      uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) }, uMask: { value: 0 }, uSmooth: { value: 1 },
     };
     const material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
     // the sun may light the sheet from behind: its depth twin draws both faces
@@ -277,7 +315,7 @@ export class InflatedActors {
     const depth = new THREE.ShaderMaterial({
       vertexShader: DEPTH_VERT,
       fragmentShader: DEPTH_FRAG,
-      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize },
+      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth },
       side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(this.geometry, material);
@@ -334,8 +372,11 @@ export class InflatedActors {
     this.uniforms.uFloor.value.copy(cardLight).multiplyScalar(LIGHT_FLOOR);
   }
 
-  /** HD edge smoothing of the sprite pixels (Task 6); no-op for now. */
-  setSmoothing(_on: boolean): void {}
+  /** HD sprite edges (xBR at the continuous texel position, the default) or the nearest texels (Pixel);
+   *  the cast shadow's silhouette follows. */
+  setSmoothing(on: boolean): void {
+    this.uniforms.uSmooth.value = on ? 1 : 0;
+  }
 
   /** A 4-vertex quad geometry sharing this mesh's aFoot / aSize instance attributes (BlobShadows). */
   geometryForShadows(): THREE.InstancedBufferGeometry {

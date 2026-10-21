@@ -1,4 +1,4 @@
-// Settings panel (Esc / O): view, camera, graphics quality, effects, audio, save management.
+// Settings panel (Esc / O): view, world style, sprite edges, camera, graphics quality, effects, audio, save management.
 
 export interface Settings {
   view: 'auto' | 'classic';
@@ -8,13 +8,16 @@ export interface Settings {
   bloom: boolean;
   volume: number;
   camera: number;
+  /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (nearest texels). Retro ignores it. */
+  spriteFilter: 'smooth' | 'pixel';
 }
 
 const KEY = 'emerald3d.settings';
 
 /** Settings from their saved JSON (null: none saved); defaults for what is missing or unreadable. */
 export function parseSettings(raw: string | null): Settings {
-  const defaults: Settings = { view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0 };
+  const defaults: Settings = { view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0,
+    spriteFilter: 'smooth' };
   let s: Settings;
   try {
     s = { ...defaults, ...JSON.parse(raw || '{}') };
@@ -23,6 +26,7 @@ export function parseSettings(raw: string | null): Settings {
   }
   // an unknown style would turn the kit off yet keep Modern's shadows and blur
   if (s.worldStyle !== 'modern' && s.worldStyle !== 'retro') s.worldStyle = 'modern';
+  if (s.spriteFilter !== 'smooth' && s.spriteFilter !== 'pixel') s.spriteFilter = 'smooth';
   return s;
 }
 
@@ -56,6 +60,8 @@ export class SettingsPanel {
         <select data-k="view"><option value="auto">3D</option><option value="classic">Classic 2D</option></select></label>
       <label>World style
         <select data-k="worldStyle"><option value="modern">Modern 3D</option><option value="retro">Retro 3D (pixel art)</option></select></label>
+      <label>Sprite edges (Modern)
+        <select data-k="spriteFilter"><option value="smooth">HD smooth</option><option value="pixel">Pixel</option></select></label>
       <label>Camera
         <select data-k="camera"><option value="0">Classic</option><option value="1">Close</option><option value="2">Wide</option><option value="3">Low</option></select></label>
       <label>Graphics quality

@@ -4,7 +4,14 @@ import { parseSettings } from '../src/ui/settings';
 describe('saved settings', () => {
   it('defaults when nothing is saved, or the save is not JSON', () => {
     for (const raw of [null, '', '{', 'null']) expect(parseSettings(raw).worldStyle, String(raw)).toBe('modern');
-    expect(parseSettings(null)).toEqual({ view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0 });
+    expect(parseSettings(null)).toEqual({ view: 'auto', worldStyle: 'modern', quality: 'medium', tiltShift: true, bloom: true, volume: 0.8, camera: 0,
+      spriteFilter: 'smooth' });
+  });
+
+  it('sprite edges default to HD smooth and reject unknown values', () => {
+    expect(parseSettings(null).spriteFilter).toBe('smooth');
+    expect(parseSettings('{"spriteFilter":"pixel"}').spriteFilter).toBe('pixel');
+    expect(parseSettings('{"spriteFilter":"blurry"}').spriteFilter).toBe('smooth');
   });
 
   it('keeps the saved choices', () => {

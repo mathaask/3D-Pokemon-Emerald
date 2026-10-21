@@ -184,6 +184,18 @@ describe('ActorLayer with inflated actors', () => {
     expect(overlayCard(layer, 1).z).toBeCloseTo(3.56); // (Retro: card 0 = the upright, card 1 = the overlay)
   });
 
+  it('switches the inflated actors between HD smooth (default) and Pixel sprite edges, their shadow twin with them', () => {
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const mesh = (layer.group.children as THREE.Mesh[]).find((m) => m.name === 'inflatedActors')!;
+    const smooth = () => (mesh.customDepthMaterial as THREE.ShaderMaterial).uniforms.uSmooth.value;
+    expect(smooth()).toBe(1);
+    layer.setSpriteFilter('pixel');
+    expect(smooth()).toBe(0);
+    layer.setSpriteFilter('smooth');
+    expect(smooth()).toBe(1);
+    new ActorLayer(atlas).setSpriteFilter('pixel'); // (no field, no inflated actors: nothing to switch)
+  });
+
   it('draws characters as cards while inflation is off (the --ab baseline)', () => {
     const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
     layer.inflation = false;

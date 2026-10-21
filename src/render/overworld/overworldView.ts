@@ -19,7 +19,7 @@ import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
 import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
-import { ActorLayer, uprightFoot, type ActorFrame } from '../actors/actorLayer';
+import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -312,6 +312,11 @@ export class OverworldView {
   /** Modern inflates its characters (false: cards, as in Retro — the harness's `--ab` baseline). */
   setActorInflation(on: boolean): void {
     this.actors.inflation = on;
+  }
+
+  /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (Retro's cards are unaffected). */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.actors.setSpriteFilter(f);
   }
 
   /** Draws the world sprites flat magenta (the harness's visible-actor mask) or normally. */

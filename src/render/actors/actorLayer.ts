@@ -16,6 +16,8 @@ import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
+/** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. */
+export type SpriteFilter = 'smooth' | 'pixel';
 
 /** Retro: every visible sprite is a card. Modern: decals/grass are cards, uprights inflate, mapped objects are models. */
 export function routeSprite(kind: SpriteKind, style: WorldStyle, mapped: boolean): ActorRoute {
@@ -154,6 +156,11 @@ export class ActorLayer {
       this.contact.mesh.name = 'contactShadows';
       this.group.add(this.inflated.mesh, this.contact.mesh);
     }
+  }
+
+  /** Sprite edges of the inflated actors (Modern): HD smooth (xBR, the default) or Pixel. Cards are unaffected. */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.inflated?.setSmoothing(f === 'smooth');
   }
 
   /** Draws every actor (cards and inflated) flat magenta: the harness's visible-actor mask. */

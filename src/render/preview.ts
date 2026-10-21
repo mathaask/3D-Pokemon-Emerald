@@ -6,6 +6,7 @@
 //                        templates, through the live sprite atlas and billboards (&removing=1: Cut
 //                        trees and rocks on their breaking anim)
 //   &focusGfx=G / &focusObj=N   look at the first template with graphics id G / at template N
+//   &spriteFilter=pixel  Modern actors with nearest texels (default: HD smooth sprite edges)
 //   &manual=1            no frame loop: frames advance through preview.frames(n) (1/60 s each)
 
 import * as THREE from 'three';
@@ -24,7 +25,7 @@ import { gridEvents } from './kit/events';
 import { buildPreviewActors } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
 import { SpriteField } from './actors/spriteField';
-import { fieldDump, fieldSelfTest, type FieldSelfTest } from './actors/selfTest';
+import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
 
 export class PreviewApp {
   readonly webgl: THREE.WebGLRenderer;
@@ -92,6 +93,7 @@ export class PreviewApp {
     this.view.quality = quality;
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
+    this.view.setSpriteFilter(params.get('spriteFilter') === 'pixel' ? 'pixel' : 'smooth');
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
     const grid: GridData = {
@@ -203,10 +205,11 @@ export class PreviewApp {
     }
   }
 
-  /** Inflation-field self-test (as emu.selfTest): the last frame's field vs the CPU reference of its atlas. */
-  selfTest(): Promise<FieldSelfTest> {
+  /** Actor self-test (as emu.selfTest): the last frame's field vs the CPU reference of its atlas, and the xBR
+   *  shader vs its CPU reference on a fixture. */
+  selfTest(): Promise<ActorSelfTest> {
     this.checkFieldLive();
-    return fieldSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
   }
 
   /** The used slots of the inflation field as a grey PNG data URL (as emu.fieldDump). */

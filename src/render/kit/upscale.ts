@@ -30,3 +30,95 @@ export function scale2x(src: Uint32Array, w: number, h: number): Uint32Array {
 export function scale4x(src: Uint32Array, w: number, h: number): Uint32Array {
   return scale2x(scale2x(src, w, h), w * 2, h * 2);
 }
+
+// Scale-free xBR (lv2): the CPU reference of actors/xbr.glsl.ts (XBR_GLSL), the same steps in the same
+// order. A sample at any continuous texel position: the texel E containing it, rounded at each of its four
+// corners where an edge runs diagonally through that corner — a 45° cut, or the 30° / 60° lines of a 2:1
+// staircase — towards the more similar of the corner's two neighbours. Edges are smoothed at any
+// magnification; texel centres keep their colour (one-pixel details stay).
+//
+// Colours are compared by a weighted distance on a perceptual key (√rgb, alpha): the atlas stores linear
+// colour, and dark palette shades differ little in linear terms. The CPU reference applies it to the
+// texel values as given (as the shader does to what it fetches).
+
+/** "Equal" threshold of the weighted colour distance, and the lv2 (2:1 staircase) slope coefficient. */
+export const XBR = { eq: 0.06, coef: 2.0 };
+/** Comparisons whose two sides are mathematically equal resolve the same way on the CPU (float64) and the GPU
+ *  (float32): the left side must win by more than this. */
+export const XBR_TIE = 1e-4;
+
+const smoothstep = (e0: number, e1: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Weighted distance of two keys (√r, √g, √b, a): luma weights on the colour, alpha counted fully. */
+const xbrDf = (a: Float64Array, b: Float64Array): number =>
+  0.299 * Math.abs(a[0] - b[0]) + 0.587 * Math.abs(a[1] - b[1]) + 0.114 * Math.abs(a[2] - b[2]) + Math.abs(a[3] - b[3]);
+
+/**
+ * One corner in its own frame (the corner at +x/+y; B, D, C, G, F4, I4, H5, I5 named as in xBR); `fx`, `fy`:
+ * the sample's position in the texel in that frame. Returns [coverage, 1 when the blend goes towards F, 0: H].
+ */
+function xbrCorner(E: Float64Array, F: Float64Array, H: Float64Array, I: Float64Array, B: Float64Array, D: Float64Array,
+  C: Float64Array, G: Float64Array, F4: Float64Array, I4: Float64Array, H5: Float64Array, I5: Float64Array,
+  fx: number, fy: number, d: number): [number, number] {
+  const dEF = xbrDf(E, F), dEH = xbrDf(E, H);
+  if (dEF <= XBR.eq || dEH <= XBR.eq) return [0, 0];
+  // (none of the three lines reaches this sample: no coverage, whatever the edge)
+  if (fx + fy <= 1.5 - d && fy + 0.5 * fx <= 1.0 - d && 2.0 * fx + fy <= 2.0 - d) return [0, 0];
+  const edge = xbrDf(E, C) + xbrDf(E, G) + xbrDf(I, H5) + xbrDf(I, F4) + 4.0 * xbrDf(H, F) + XBR_TIE
+    < xbrDf(H, D) + xbrDf(H, I5) + xbrDf(F, I4) + xbrDf(F, B) + 4.0 * xbrDf(E, I);
+  if (!edge) return [0, 0];
+  const dFG = xbrDf(F, G), dHC = xbrDf(H, C);
+  let cov = smoothstep(1.5 - d, 1.5 + d, fx + fy);
+  // lv2: a 30° line into G's side, a 60° line into C's side
+  if (XBR.coef * dFG <= dHC + XBR_TIE && xbrDf(E, G) > XBR.eq && xbrDf(D, G) > XBR.eq) cov = Math.max(cov, smoothstep(1.0 - d, 1.0 + d, fy + 0.5 * fx));
+  if (XBR.coef * dHC <= dFG + XBR_TIE && xbrDf(E, C) > XBR.eq && xbrDf(B, C) > XBR.eq) cov = Math.max(cov, smoothstep(2.0 - d, 2.0 + d, 2.0 * fx + fy));
+  return [cov, dEF <= dEH + XBR_TIE ? 1 : 0];
+}
+
+/**
+ * The xBR-smoothed colour (RGBA 0..1) of `src` (w×h, 0xAABBGGRR, rows in order of y) at continuous texel
+ * coordinates (x, y) (texel centres at k + 0.5). `delta`: half-width of the blend across an edge (in units of
+ * the texel's diagonal coordinate, ~ one screen pixel). `rect` = [x0, y0, x1, y1) in texels: texels outside it
+ * (and outside the image) read as transparent black. Where transparent texels blend with opaque ones the
+ * colour comes out premultiplied (as the GPU's mix of them does).
+ */
+export function xbrSample(src: Uint32Array, w: number, h: number, x: number, y: number, delta: number,
+  rect: [number, number, number, number] = [0, 0, w, h]): [number, number, number, number] {
+  const x0 = Math.max(0, rect[0]), y0 = Math.max(0, rect[1]), x1 = Math.min(w, rect[2]), y1 = Math.min(h, rect[3]);
+  const ex = Math.floor(x), ey = Math.floor(y);
+  const fx = x - ex, fy = y - ey;
+  const color = (dx: number, dy: number): number[] => {
+    const tx = ex + dx, ty = ey + dy;
+    if (tx < x0 || ty < y0 || tx >= x1 || ty >= y1) return [0, 0, 0, 0];
+    const v = src[ty * w + tx];
+    return [(v & 0xff) / 255, ((v >>> 8) & 0xff) / 255, ((v >>> 16) & 0xff) / 255, (v >>> 24) / 255];
+  };
+  const keyOf = (c: number[]) => Float64Array.of(Math.sqrt(c[0]), Math.sqrt(c[1]), Math.sqrt(c[2]), c[3]);
+  const key = (dx: number, dy: number) => keyOf(color(dx, dy));
+  const cE = color(0, 0), cF = color(1, 0), cH = color(0, 1), cD = color(-1, 0), cB = color(0, -1);
+  const E = keyOf(cE), F = keyOf(cF), H = keyOf(cH), D = keyOf(cD), B = keyOf(cB);
+  const nF = xbrDf(E, F) > XBR.eq, nH = xbrDf(E, H) > XBR.eq, nD = xbrDf(E, D) > XBR.eq, nB = xbrDf(E, B) > XBR.eq;
+  // every corner needs both of its sides to differ from E: when none can, E stands as it is
+  if (!((nF || nD) && (nH || nB))) return [cE[0], cE[1], cE[2], cE[3]];
+  const kmm = key(-1, -1), kpm = key(1, -1), kmp = key(-1, 1), kpp = key(1, 1);
+  const km20 = key(-2, 0), kp20 = key(2, 0), k0m2 = key(0, -2), k0p2 = key(0, 2);
+  const km2m = key(-2, -1), km2p = key(-2, 1), kp2m = key(2, -1), kp2p = key(2, 1);
+  const km1m2 = key(-1, -2), kp1m2 = key(1, -2), km1p2 = key(-1, 2), kp1p2 = key(1, 2);
+  // the four corners in a fixed order, each in its frame (mirrored: the rule is symmetric under transposition)
+  const corners: [[number, number], number[], number[]][] = [
+    [xbrCorner(E, F, H, kpp, B, D, kpm, kmp, kp20, kp2p, k0p2, kp1p2, fx, fy, delta), cF, cH],          // +x +y
+    [xbrCorner(E, D, H, kmp, B, F, kmm, kpp, km20, km2p, k0p2, km1p2, 1 - fx, fy, delta), cD, cH],      // −x +y
+    [xbrCorner(E, F, B, kpm, H, D, kpp, kmm, kp20, kp2m, k0m2, kp1m2, fx, 1 - fy, delta), cF, cB],      // +x −y
+    [xbrCorner(E, D, B, kmm, H, F, kmp, kpm, km20, km2m, k0m2, km1m2, 1 - fx, 1 - fy, delta), cD, cB],  // −x −y
+  ];
+  const out = [cE[0], cE[1], cE[2], cE[3]];
+  for (const [[cov, towardsF], sideF, sideH] of corners) {
+    if (cov <= 0) continue;
+    const px = towardsF ? sideF : sideH;
+    for (let i = 0; i < 4; i++) out[i] = out[i] * (1 - cov) + px[i] * cov; // (GLSL mix)
+  }
+  return [out[0], out[1], out[2], out[3]];
+}
