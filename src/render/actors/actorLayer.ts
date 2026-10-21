@@ -1,9 +1,9 @@
 // Overworld actors: decides per world sprite (gSprites) how the 3D view draws it and owns what draws
 // them: camera-facing cards (billboards) with their blob shadows, the inflated actors with their
 // contact shadows, and the object models. Retro draws every sprite as a card; Modern inflates characters
-// (given the inflation field) and draws mapped objects (item balls, boulders, rocks, Cut trees, the truck)
-// as procedural models coloured from their own sprite's pixels. Every list is rebuilt from the frame's
-// sprites, so nothing outlives a sprite (despawns, warps, map crossings).
+// (given the inflation field) and draws mapped objects (item balls, boulders, rocks, Cut trees, the truck,
+// berry trees by growth stage) as procedural models coloured from their own sprite's pixels. Every list is
+// rebuilt from the frame's sprites, so nothing outlives a sprite (despawns, warps, map crossings).
 
 import * as THREE from 'three';
 import type { GameState, ObjectEventSnap, SpriteSnap } from '../../game/state';

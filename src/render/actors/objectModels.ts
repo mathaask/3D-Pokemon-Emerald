@@ -1,24 +1,29 @@
-// Object models (Modern): instanced meshes per kind (Poké Ball, boulder, cracked rock, Cut tree, truck) drawn
-// where the objects' sprites stand, rebuilt every frame from the list ActorLayer hands over (a model never
-// outlives its sprite). Each kind is tinted from the sprite of its first instance (uTintA / uTintB, linear) by
+// Object models (Modern): instanced meshes per kind (Poké Ball, boulder, cracked rock, Cut tree, truck, berry
+// plants) drawn where the objects' sprites stand, rebuilt every frame from the list ActorLayer hands over (a model
+// never outlives its sprite). Each kind is tinted from the sprite of its first instance (uTintA / uTintB, linear) by
 // the geometry's tint codes (models.ts), from the sprite's tones and colours: the rocks' body, the highlight tone
 // their up-facing surfaces blend to and the crevice tone of their cracks; the Cut tree's lime highlight and dark
 // base band; the truck's navy (crevice), blue (accent) and grey-blue (main); the ball's red (accent). The Cut tree
 // keeps the kit trees' convention (crown × the material colour, band and stump = uTrunk). The boulder varies by
 // object: a full turn and a mirror image (a second, rewound mesh: an instance's negative scale would turn it
-// inside out). Every model is lit like the world but never
-// below the floor the inflated actors get (LIGHT_FLOOR × the cards' light). Materials are kit materials made once
-// and never released (not part of a world build). Instance matrices upload only when they change.
+// inside out). A berry plant has its growth stage's body, and at stages 4 and 5 its flowers or berries instanced
+// at the body's anchors; each plant is coloured from its own sprite (instance colours: its leaves, its accent).
+// Every model is lit like the world but never below the floor the inflated actors get (LIGHT_FLOOR × the cards'
+// light). Materials are kit materials made once and never released (not part of a world build). Instance matrices
+// (and colours) upload only when they change.
 
 import * as THREE from 'three';
-import { applyKitMaterial, kitMaterial, type KitUniforms } from '../kit/materials';
+import { applyKitMaterial, kitMaterial, type KitMaterial, type KitUniforms } from '../kit/materials';
 import { luma, lush, soften, toLinear, type RGB } from '../kit/palette';
 import { TRUNK_FRAG, TRUNK_HEAD } from '../kit/trees';
 import { put, markRange } from '../instanceUpload';
 import type { ObjectModelKind } from './objectMap';
 import type { SpriteColors, SpriteTones } from './spriteColors';
 import { FRAG_SHOULDER, LIGHT_FLOOR, MASK_GLSL, lampCeiling } from './inflatedActors';
-import { boulderGeo, crackedRockGeo, cutTreeGeo, mirroredGeo, pokeBallGeo, truckGeo, truckLogoGeo } from './models';
+import {
+  berryFlowerGeo, berryFruitGeo, berryPlantGeo, boulderGeo, crackedRockGeo, cutTreeGeo, mirroredGeo, pokeBallGeo, truckGeo, truckLogoGeo,
+  type BerryStage,
+} from './models';
 
 /** Instances per kind: gObjectEvents has 16 slots. */
 export const MAX_PER_KIND = 16;
@@ -120,6 +125,31 @@ const SPECS: Partial<Record<ObjectModelKind, KindSpec>> = {
 const NO_COLORS: SpriteColors = { main: null, accent: null, green: null };
 const NO_TONES: SpriteTones = { body: null, highlight: null, crevice: null, dark: null };
 
+/** Berry plants: the most flowers or berries one carries (berryPlantGeo: 5–7); the geometry seed of every plant
+ *  (shared anchors: each plant's own turn keeps them from looking alike); how far that turn goes (rad either way:
+ *  a sprout's seed leaves keep their V across the default view, open east and west). */
+const BERRY = { anchors: 7, seed: 0, spin: 0.5 };
+/** Fallback colours (sRGB) of the berries and the petals (the leaves': DEFAULT.leaves). */
+export const BERRY_DEFAULT = { fruit: [0.85, 0.2, 0.25] as RGB, petals: [0.95, 0.55, 0.75] as RGB };
+/** Safety floors (sRGB luma), hue kept: the berries' and petals' colours (the sprites' fruit and flower colours sit
+ *  well above them: Pecha (222, 148, 115) 0.64, Cheri (206, 99, 74) 0.47; a dark accent, an outline, does not), and
+ *  the leaves' (the picker's green is a mean taking in the dark outline green: (60, 115, 0) → lush 0.27; a fresh
+ *  leaf green, as the sprites' lime (115, 189, 0) 0.58, also reads at night). */
+export const BERRY_MIN_LUMA = { leaves: 0.5, fruit: 0.3, petals: 0.45 };
+/** A berry plant's colours (linear): leaves and stems, berries, petals. */
+export interface BerryColors { leaves: RGB; fruit: RGB; petals: RGB }
+
+/** The colours of a berry plant from its sprite: leaves = its green (lush, lifted to BERRY_MIN_LUMA.leaves),
+ *  berries and petals = its accent (the fruit's or the flower's colour, lifted to their floors), each to its
+ *  default where the sprite has none. */
+export function berryColors(c: SpriteColors): BerryColors {
+  return {
+    leaves: toLinear(c.green ? lumaWithin(lush(c.green), BERRY_MIN_LUMA.leaves) : DEFAULT.leaves),
+    fruit: toLinear(c.accent ? lumaWithin(c.accent, BERRY_MIN_LUMA.fruit) : BERRY_DEFAULT.fruit),
+    petals: toLinear(c.accent ? lumaWithin(c.accent, BERRY_MIN_LUMA.petals) : BERRY_DEFAULT.petals),
+  };
+}
+
 // Tint codes (models.ts): colour alpha 1 = the vertex colour as it is, 0.5 = × tint A, 0 = × tint B. Tint A blends
 // towards uTintH on up-facing surfaces (uHighlight: 0 off, 1 on): the view-space normal against the view-space up.
 const TINT_HEAD = /* glsl */ `
@@ -143,6 +173,17 @@ const TINT_FRAG = /* glsl */ `
   diffuseColor.rgb *= vColor.a > 0.75 ? vec3(1.0) : (vColor.a > 0.25 ? tintA : uTintB);
   diffuseColor.a = 1.0;
 }
+#endif
+`;
+// Three's <color_vertex>, except that an instance colour (the berry plants' per-plant leaves, berries, petals)
+// multiplies the tinted parts only (colour alpha < 0.75): fixed colours (the soil, the flowers' yellow heart)
+// keep their own. Without instance colours it is three's: the other models compile as before.
+const COLOR_VERTEX = /* glsl */ `
+#if defined( USE_INSTANCING_COLOR ) && defined( USE_COLOR_ALPHA )
+  vColor = color;
+  if (color.a < 0.75) vColor.rgb *= instanceColor.rgb;
+#else
+  #include <color_vertex>
 #endif
 `;
 // (the Cut tree: the trees' hooks, plus the harness mask and the light floor)
@@ -193,6 +234,22 @@ interface Group {
   dirty: boolean;
 }
 
+/** One berry mesh: this frame's instances; the most ever set (the uploaded part of its instance buffers);
+ *  matrices / colours changed. */
+interface Batch { mesh: THREE.InstancedMesh; n: number; used: number; dirty: boolean; colorDirty: boolean }
+
+interface BerryMeshes {
+  /** Stage s's bodies at [s − 1]. */
+  bodies: Batch[];
+  flower: Batch;
+  fruit: Batch;
+  /** The flowers' (stage 4) and berries' (stage 5) placements on a plant (plant space). */
+  anchors: Record<4 | 5, THREE.Matrix4[]>;
+  /** Plants this frame. */
+  plants: number;
+}
+const _plant = new THREE.Matrix4(), _anchor = new THREE.Matrix4();
+
 interface Kind {
   spec: KindSpec;
   /** [0]: the kind's meshes; [1]: their mirror images (`flips`). */
@@ -240,6 +297,13 @@ export class ObjectModels {
    * map) the first time a model appeared after a live Retro→Modern switch. Back faces, as three draws them.
    */
   private depth = new THREE.MeshDepthMaterial({ side: THREE.BackSide });
+  /** The berry bodies' shadow-depth material: their instance colours make three pick another depth program, so
+   *  they get one of their own (sharing `depth` would re-pick its program between them and the other models). */
+  private berryDepth = new THREE.MeshDepthMaterial({ side: THREE.BackSide });
+  /** The berry plants' meshes. */
+  private berry: BerryMeshes;
+  /** Each sprite's berry colours (SpriteColorCache hands out one colours object per key). */
+  private berryColorCache = new WeakMap<SpriteColors, BerryColors>();
 
   constructor(kit: KitUniforms) {
     this.group.name = 'objectModels';
@@ -251,33 +315,94 @@ export class ObjectModels {
       this.tint(k, NO_COLORS, NO_TONES);
       this.kinds.set(name, k);
     }
+    this.berry = this.berryMeshes(kit);
   }
 
-  private part(kit: KitUniforms, name: ObjectModelKind, spec: KindSpec, p: PartSpec): Part {
-    const tintA = new THREE.Color(), tintB = new THREE.Color(), tintH = new THREE.Color();
-    const km = spec.tree
+  /**
+   * The berry plants: a body mesh per growth stage (berry1…berry5), the flowers and the berries (berryFlower,
+   * berryFruit: up to BERRY.anchors per plant, at its anchors). Every plant has its own colours (instance colours:
+   * its leaves on the body, its accent on the flowers and berries); the materials' tints stay white. Leaves and
+   * petals share a matte material, the berries a glossy one (one program: the tint hooks with instance colours).
+   * The flowers and berries cast no shadow (too small to read in the shadow map; two draws saved).
+   */
+  private berryMeshes(kit: KitUniforms): BerryMeshes {
+    const white = () => ({ a: new THREE.Color(1, 1, 1), b: new THREE.Color(1, 1, 1), h: new THREE.Color(1, 1, 1) });
+    const matte = this.material(kit, 0.8, false, white(), 0).material;
+    const glossy = this.material(kit, 0.32, false, white(), 0).material;
+    const batch = (name: string, g: THREE.BufferGeometry, material: THREE.Material, capacity: number, castShadow: boolean): Batch => {
+      const mesh = new THREE.InstancedMesh(g, material, capacity);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.customDepthMaterial = this.berryDepth;
+      mesh.name = name;
+      mesh.count = 0;
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      mesh.castShadow = castShadow;
+      mesh.receiveShadow = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.group.add(mesh);
+      return { mesh, n: 0, used: 0, dirty: false, colorDirty: false };
+    };
+    const stages: BerryStage[] = [1, 2, 3, 4, 5];
+    const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), twist = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    // flowers face out of the crown (their +Y along its normal), each turned its own way; berries hang upright,
+    // leaning a little out with the crown
+    const anchors = (stage: 4 | 5) => {
+      const p = berryPlantGeo(stage, BERRY.seed);
+      return p.anchors.map((a, j) => {
+        q.setFromUnitVectors(up, p.normals[j]);
+        if (stage === 5) q.slerp(twist.identity(), 0.7);
+        q.multiply(twist.setFromAxisAngle(up, j * 2.4));
+        return new THREE.Matrix4().compose(a, q, one);
+      });
+    };
+    return {
+      bodies: stages.map((s) => batch(`berry${s}`, berryPlantGeo(s, BERRY.seed).body, matte, MAX_PER_KIND, true)),
+      flower: batch('berryFlower', berryFlowerGeo(), matte, MAX_PER_KIND * BERRY.anchors, false),
+      fruit: batch('berryFruit', berryFruitGeo(), glossy, MAX_PER_KIND * BERRY.anchors, false),
+      anchors: { 4: anchors(4), 5: anchors(5) },
+      plants: 0,
+    };
+  }
+
+  /**
+   * A model material: a kit material (the kit trees' for `tree`: crown × material colour, band = uTrunk = tint B)
+   * or one applying the tint codes, plus the inflated actors' lamp ceiling (a model next to the Flash lantern is
+   * not blown out) and soft shoulder (no glow), the light floor after the lights and the harness's actor mask
+   * (flat magenta) after everything else — no uniform or define of their own: no extra program. An instance
+   * colour (berry plants) tints only the tinted parts (COLOR_VERTEX).
+   */
+  private material(kit: KitUniforms, roughness: number, tree: boolean, t: { a: THREE.Color; b: THREE.Color; h: THREE.Color },
+    highlight: number): KitMaterial {
+    const km = tree
       ? kitMaterial(kit, {
-        vertexColors: true, roughness: spec.roughness, wind: TREE_WIND.amp, windHeight: TREE_WIND.height, fade: true,
-        uniforms: { uTrunk: { value: tintB } }, fragHead: TREE_HEAD, fragColor: TRUNK_FRAG, hookKey: 'cutTree',
+        vertexColors: true, roughness, wind: TREE_WIND.amp, windHeight: TREE_WIND.height, fade: true,
+        uniforms: { uTrunk: { value: t.b } }, fragHead: TREE_HEAD, fragColor: TRUNK_FRAG, hookKey: 'cutTree',
       })
       : kitMaterial(kit, {
-        vertexColors: true, roughness: spec.roughness,
-        uniforms: { uTintA: { value: tintA }, uTintB: { value: tintB }, uTintH: { value: tintH },
-          uHighlight: { value: p.tints(NO_COLORS, NO_TONES).h ? 1 : 0 } },
+        vertexColors: true, roughness,
+        uniforms: { uTintA: { value: t.a }, uTintB: { value: t.b }, uTintH: { value: t.h }, uHighlight: { value: highlight } },
         fragHead: TINT_HEAD, fragColor: TINT_FRAG, hookKey: 'objectModel',
       });
-    // the inflated actors' lamp ceiling (a model next to the Flash lantern is not blown out) and soft shoulder (no
-    // glow), the light floor after the lights, the harness's actor mask (flat magenta) after everything else; no
-    // uniform or define of their own: no extra program
     const material = km.material, base = material.onBeforeCompile;
     material.onBeforeCompile = (s, r) => {
       base.call(material, s, r);
       s.uniforms.uMask = this.mask;
       s.uniforms.uFloor = this.floor;
+      s.vertexShader = include(s.vertexShader, 'color_vertex', COLOR_VERTEX);
       let fs = include(s.fragmentShader, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
       fs = include(fs, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
       s.fragmentShader = after(after(fs, 'lights_fragment_end', FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
     };
+    return km;
+  }
+
+  private part(kit: KitUniforms, name: ObjectModelKind, spec: KindSpec, p: PartSpec): Part {
+    const tintA = new THREE.Color(), tintB = new THREE.Color(), tintH = new THREE.Color();
+    const km = this.material(kit, spec.roughness, spec.tree ?? false, { a: tintA, b: tintB, h: tintH },
+      p.tints(NO_COLORS, NO_TONES).h ? 1 : 0);
+    const material = km.material;
     const mesh = new THREE.InstancedMesh(p.geometry(), material, MAX_PER_KIND);
     applyKitMaterial(mesh, km);
     if (!km.depth) mesh.customDepthMaterial = this.depth;
@@ -310,14 +435,14 @@ export class ObjectModels {
     return { ...p, mesh };
   }
 
-  /** Whether a kind has meshes (berry plants: Task 9). */
+  /** Whether a kind has meshes. */
   supports(kind: ObjectModelKind): boolean {
-    return this.kinds.has(kind);
+    return kind === 'berry' || this.kinds.has(kind);
   }
 
-  /** Instances drawn (last set). */
+  /** Objects drawn (last set; a berry plant counts once, its flowers or berries with it). */
   get count(): number {
-    let n = 0;
+    let n = this.berry.plants;
     for (const k of this.kinds.values()) n += k.n;
     return n;
   }
@@ -335,7 +460,14 @@ export class ObjectModels {
       k.n = 0;
       for (const g of k.groups) g.n = 0;
     }
+    const b = this.berry;
+    b.plants = 0;
+    for (const m of this.berryBatches()) m.n = 0;
     for (const inst of list) {
+      if (inst.kind === 'berry') {
+        this.placeBerry(inst);
+        continue;
+      }
       const k = this.kinds.get(inst.kind);
       if (!k || k.n >= MAX_PER_KIND) continue;
       if (k.n === 0) this.tint(k, inst.colors, inst.tones ?? NO_TONES);
@@ -355,6 +487,58 @@ export class ObjectModels {
         g.dirty = false;
       }
     }
+    for (const m of this.berryBatches()) {
+      m.mesh.count = m.n;
+      m.mesh.visible = m.n > 0;
+      if (m.dirty) markRange(m.mesh.instanceMatrix, m.used);
+      if (m.colorDirty) markRange(m.mesh.instanceColor!, m.used);
+      m.dirty = m.colorDirty = false;
+    }
+  }
+
+  private berryBatches(): Batch[] {
+    return [...this.berry.bodies, this.berry.flower, this.berry.fruit];
+  }
+
+  /**
+   * A berry plant: its stage's body at (x, y, z) turned by its yaw (a full turn, stable per object), in its leaves'
+   * colour; at stage 4 its flowers, at stage 5 its berries, at its anchors (the plant's placement × the anchor's),
+   * in its accent.
+   */
+  private placeBerry(inst: ModelInstance): void {
+    const b = this.berry;
+    const stage = Math.min(5, Math.max(1, Math.round(inst.stage))) as BerryStage;
+    const body = b.bodies[stage - 1];
+    if (body.n >= MAX_PER_KIND) return;
+    let col = this.berryColorCache.get(inst.colors);
+    if (!col) this.berryColorCache.set(inst.colors, (col = berryColors(inst.colors)));
+    // (yaw in 0..2π → −spin..spin)
+    const yaw = ((inst.yaw ?? Math.PI) / Math.PI - 1) * BERRY.spin, c = Math.cos(yaw), s = Math.sin(yaw);
+    const e = body.mesh.instanceMatrix.array as Float32Array, o = body.n * 16;
+    // (column-major; the other elements keep the identity the mesh was made with)
+    if (put(e, o, c) | put(e, o + 2, -s) | put(e, o + 8, s) | put(e, o + 10, c) | put(e, o + 12, inst.x) | put(e, o + 13, inst.y)
+      | put(e, o + 14, inst.z)) body.dirty = true;
+    this.colorAt(body, body.n, col.leaves);
+    if (++body.n > body.used) { body.used = body.n; body.dirty = body.colorDirty = true; }
+    b.plants++;
+    if (stage < 4) return;
+    const batch = stage === 4 ? b.flower : b.fruit, tint = stage === 4 ? col.petals : col.fruit;
+    _plant.makeRotationY(yaw).setPosition(inst.x, inst.y, inst.z);
+    for (const local of b.anchors[stage as 4 | 5]) {
+      if (batch.n >= batch.mesh.instanceMatrix.count) break;
+      const m = _anchor.multiplyMatrices(_plant, local).elements, a = batch.mesh.instanceMatrix.array as Float32Array, ao = batch.n * 16;
+      let d = 0;
+      for (let k = 0; k < 16; k++) d |= put(a, ao + k, m[k]);
+      if (d) batch.dirty = true;
+      this.colorAt(batch, batch.n, tint);
+      if (++batch.n > batch.used) { batch.used = batch.n; batch.dirty = batch.colorDirty = true; }
+    }
+  }
+
+  /** Instance i's colour (linear RGB); flags a change. */
+  private colorAt(m: Batch, i: number, c: RGB): void {
+    const a = m.mesh.instanceColor!.array as Float32Array;
+    if (put(a, i * 3, c[0]) | put(a, i * 3 + 1, c[1]) | put(a, i * 3 + 2, c[2])) m.colorDirty = true;
   }
 
   /** Draws the models flat magenta (the harness's visible-actor mask) or normally. */
@@ -369,7 +553,8 @@ export class ObjectModels {
    */
   precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, root: THREE.Object3D = this.group,
     frame?: () => void): Promise<void> {
-    const meshes = [...this.kinds.values()].flatMap((k) => k.groups.flatMap((g) => g.parts.map((p) => p.mesh)));
+    const meshes = [...this.kinds.values()].flatMap((k) => k.groups.flatMap((g) => g.parts.map((p) => p.mesh)))
+      .concat(this.berryBatches().map((m) => m.mesh));
     const saved = meshes.map((m) => [m.visible, m.count] as const);
     const groupVisible = this.group.visible;
     this.group.visible = true;

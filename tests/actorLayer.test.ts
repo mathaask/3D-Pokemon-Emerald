@@ -250,10 +250,10 @@ describe('ActorLayer object models', () => {
     layer.update(state({ invisible: true }), modern);
     expect(layer.counts()).toMatchObject({ models: 0 });
   });
-  it('keeps berry trees as inflated sprites until their model exists', () => {
+  it('draws berry trees as their plant model', () => {
     const layer = newLayer();
     layer.update(state({ graphicsId: 60 }), modern);
-    expect(layer.counts()).toMatchObject({ inflated: 1, models: 0 });
+    expect(layer.counts()).toMatchObject({ inflated: 0, models: 1 });
   });
 
   // ---- beyond the brief ----
@@ -302,6 +302,32 @@ describe('ActorLayer object models', () => {
     expect(e00()).toBeCloseTo(1, 6);
     layer.update(truck(true), modern);
     expect(e00()).toBeCloseTo(-1, 6);
+  });
+  it('draws a berry tree at its growth stage (gfx 61: anims 0-1, gfx 62: anims 2-4), with its flowers or berries', () => {
+    const layer = newLayer();
+    const tree = (gfx: number, animNum: number, frame: number) =>
+      state({ graphicsId: gfx, localId: 3 }, { animNum, height: gfx === 61 ? 16 : 32, c2cY: gfx === 61 ? -8 : -16 }, frame);
+    const shown = () => ['berry1', 'berry2', 'berry3', 'berry4', 'berry5', 'berryFlower', 'berryFruit'].map((k) => mesh(layer, k).count);
+    layer.update(tree(61, 0, 1), modern);
+    expect(shown()).toEqual([1, 0, 0, 0, 0, 0, 0]);
+    layer.update(tree(61, 1, 2), modern);
+    expect(shown()).toEqual([0, 1, 0, 0, 0, 0, 0]);
+    layer.update(tree(62, 2, 3), modern);
+    expect(shown()).toEqual([0, 0, 1, 0, 0, 0, 0]);
+    layer.update(tree(62, 3, 4), modern);
+    expect(shown().slice(0, 5)).toEqual([0, 0, 0, 1, 0]);
+    expect(shown()[5]).toBeGreaterThanOrEqual(5);
+    layer.update(tree(62, 4, 5), modern);
+    expect(shown().slice(0, 6)).toEqual([0, 0, 0, 0, 1, 0]);
+    expect(shown()[6]).toBeGreaterThanOrEqual(5);
+    expect(placed(layer, 'berry5').toArray()).toEqual([2.5, 0, 3.5]);   // in its cell, where its card stood
+    expect(layer.counts()).toEqual({ cards: 0, inflated: 0, models: 1 });
+  });
+  it('draws nothing for an empty soil cell (a NO_BERRY tree keeps gfx 60, its sprite invisible)', () => {
+    const layer = newLayer();
+    layer.update(state({ graphicsId: 60 }, { invisible: true }), modern);
+    expect(layer.counts()).toEqual({ cards: 0, inflated: 0, models: 0 });
+    expect(mesh(layer, 'berry1').count).toBe(0);
   });
   it('forgets which objects it has seen over a Retro (or Phase 2 off) period', () => {
     const layer = newLayer();
@@ -364,6 +390,14 @@ describe('ActorLayer object models', () => {
       fill(src.vram, 1);
       layer.update(ball(4, 0x8500100), modern);     // decoded again: RED (BLUE had frame 3 stored it)
       expect(tints(layer, 'pokeball').a.equals(linear(RED))).toBe(true);
+    });
+    it("colours a berry plant's berries with its own sprite's accent", () => {
+      const layer = newLayer();
+      layer.setPixelSource(source());
+      layer.update(state({ graphicsId: 62 }, { animNum: 4, images: 0x8500300 }, 1), modern);
+      const c = mesh(layer, 'berryFruit').instanceColor!.array;
+      const want = linear(RED);
+      expect([c[0], c[1], c[2]].map((v) => +v.toFixed(5))).toEqual([want.r, want.g, want.b].map((v) => +v.toFixed(5)));
     });
     it('samples the truck at its 48×48 image size', () => {
       const layer = newLayer();

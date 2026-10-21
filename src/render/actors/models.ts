@@ -1,16 +1,20 @@
-// Procedural object models (Modern): the Poké Ball, the Strength boulder, the cracked rock, the Cut tree and the
-// moving truck, drawn by ObjectModels where their sprites stand. Every geometry stands on y = 0, centred on
-// x = z = 0, with position, normal and a 4-component colour: RGB = a shade (× a tint) or a fixed linear colour,
+// Procedural object models (Modern): the Poké Ball, the Strength boulder, the cracked rock, the Cut tree, the
+// moving truck and the berry plants (a body per growth stage, flowers and berries), drawn by ObjectModels where
+// their sprites stand. Every geometry stands on y = 0, centred on x = z = 0 (a flower or berry: centred on its
+// anchor), with position, normal and a 4-component colour: RGB = a shade (× a tint) or a fixed linear colour,
 // alpha = a tint code read by the models' material (TINT): 1 fixed colour, 0.5 tint A × shade, 0 tint B × shade.
 // The tints are the object's own sprite colours and tones (objectModels.ts). Shapes follow the kit's look:
 // noise-displaced icospheres for rocks (props.ts; the boulder a low, softly cut stone, the cracked rock a pile of
 // chiselled chunks), a scalloped mushroom cap with a dark under-rim for the Cut tree (the trees' TRUNK convention),
-// darker occluded undersides baked into the shade. Cached for the session (`userData.shared`).
+// the kit's bushy foliage under a coat of leaves for the berry bush, darker occluded undersides baked into the
+// shade. Cached for the session (`userData.shared`).
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { noise3, rng } from '../kit/geom';
+import { blobCrown } from '../kit/trees';
+import { SOIL_LINEAR } from '../kit/soil';
 import type { RGB } from '../kit/palette';
 
 /** Tint codes (the colour attribute's alpha). */
@@ -522,6 +526,394 @@ export function truckLogoGeo(): THREE.BufferGeometry {
         parts.add(new THREE.PlaneGeometry(len, 0.075), TINT.a, k3(1), at(centre + 0.68 + len / 2, base + 0.5 - k * 0.16));
       }
     }
+    return parts.build();
+  });
+}
+
+// ---------------------------------------------------------------- berry plants
+
+/** A berry tree's growth stage (objectMap.ts berryStage): planted, sprouted, taller, flowering, berries. */
+export type BerryStage = 1 | 2 | 3 | 4 | 5;
+
+/** Fixed colours (linear): the plants' turned soil, the flowers' yellow heart, the berries' green calyx. */
+const SOIL: RGB = SOIL_LINEAR;
+const POLLEN: RGB = [0.95, 0.62, 0.06];
+const CALYX: RGB = [0.045, 0.12, 0.03];
+
+/** Adds `g` (taken over) as a part: vertex k (of the indexed geometry, if it is one) painted shade[k] × the code's
+ *  tint, or × `fixed`. Smooth normals must be on `g` already (they are kept). */
+function addShaded(parts: Parts, g: THREE.BufferGeometry, shade: ArrayLike<number>, code: Code, fixed?: RGB, m?: THREE.Matrix4): void {
+  const index = g.index;
+  const s = index ? Array.from(index.array as ArrayLike<number>, (k) => shade[k]) : Array.from(shade);
+  const flat = index ? g.toNonIndexed() : g;
+  if (flat !== g) g.dispose();
+  parts.add(flat, code, (_p, _n, i) => (fixed ? times(fixed, s[i]) : k3(s[i])), m);
+}
+
+/** An indexed disc grid facing +Y: a centre vertex and `rings` rings of `segs` vertices, vertex placed by
+ *  `at(rho, angle, out)` (rho = ring / rings, 0..1; angle 0..2π from +X towards +Z); smooth normals. */
+function polarGrid(rings: number, segs: number, at: (rho: number, a: number, out: THREE.Vector3) => void): THREE.BufferGeometry {
+  const pos: number[] = [], idx: number[] = [];
+  const v = new THREE.Vector3();
+  at(0, 0, v);
+  pos.push(v.x, v.y, v.z);
+  for (let k = 1; k <= rings; k++) {
+    for (let j = 0; j < segs; j++) {
+      at(k / rings, (j / segs) * Math.PI * 2, v);
+      pos.push(v.x, v.y, v.z);
+    }
+  }
+  const vi = (k: number, j: number) => (k === 0 ? 0 : 1 + (k - 1) * segs + (j % segs));
+  for (let j = 0; j < segs; j++) idx.push(0, vi(1, j + 1), vi(1, j));
+  for (let k = 1; k < rings; k++) {
+    for (let j = 0; j < segs; j++) idx.push(vi(k, j), vi(k, j + 1), vi(k + 1, j + 1), vi(k, j), vi(k + 1, j + 1), vi(k + 1, j));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A tube through `pts`, its radius tapering r0 → r1, `sides` round, closed to a point past the last; smooth normals. */
+function tube(pts: THREE.Vector3[], r0: number, r1: number, sides: number): THREE.BufferGeometry {
+  const pos: number[] = [], idx: number[] = [];
+  const t = new THREE.Vector3(), n = new THREE.Vector3(), b = new THREE.Vector3(), X = new THREE.Vector3(1, 0, 0);
+  const last = pts.length - 1;
+  for (let i = 0; i <= last; i++) {
+    t.subVectors(pts[Math.min(i + 1, last)], pts[Math.max(i - 1, 0)]).normalize();
+    n.crossVectors(t, X).normalize();
+    b.crossVectors(t, n);
+    const r = lerp(r0, r1, i / last);
+    for (let j = 0; j < sides; j++) {
+      const a = (j / sides) * Math.PI * 2, c = Math.cos(a) * r, s = Math.sin(a) * r;
+      pos.push(pts[i].x + c * n.x + s * b.x, pts[i].y + c * n.y + s * b.y, pts[i].z + c * n.z + s * b.z);
+    }
+  }
+  const tip = pts[last].clone().addScaledVector(t, r1 * 1.5);
+  pos.push(tip.x, tip.y, tip.z);
+  for (let i = 0; i < last; i++) {
+    for (let j = 0; j < sides; j++) {
+      const a = i * sides + j, b2 = i * sides + ((j + 1) % sides), c = b2 + sides, d = a + sides;
+      idx.push(a, b2, c, a, c, d);
+    }
+  }
+  for (let j = 0; j < sides; j++) idx.push(last * sides + j, last * sides + ((j + 1) % sides), (last + 1) * sides);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+interface BladeShape {
+  len: number; wid: number;
+  /** The margins this × the half-width above the midrib (a V fold; a cupped petal). */
+  fold: number;
+  /** The tip bent this × len up (< 0: down). */
+  bend: number;
+  /** 0: a pointed leaf, widest a third of the way out; 1: a rounded petal or cotyledon. */
+  round: number;
+}
+
+/**
+ * A leaf or petal along +Z from the origin (its stalk end), its face up (+Y): `len` long, `wid` wide, folded
+ * along its midrib, its tip bent; a thin closed blade (top and underside meet at the margins). Shade per vertex:
+ * lighter towards the tip, the midrib a little darker, the underside darker.
+ */
+function bladeGeo(s: BladeShape, NU = 8, NV = 4): { g: THREE.BufferGeometry; shade: number[] } {
+  const pos: number[] = [], idx: number[] = [], shade: number[] = [];
+  const pw = lerp(0.75, 0.5, s.round), pe = lerp(0.9, 0.55, s.round);
+  const hw = (u: number) => (s.wid / 2) * Math.pow(Math.sin(Math.PI * Math.pow(u, pw)), pe);
+  for (const top of [true, false]) {
+    const base = pos.length / 3;
+    for (let i = 0; i <= NU; i++) {
+      const u = i / NU, w = hw(u);
+      for (let j = 0; j <= NV; j++) {
+        const v = (j / NV) * 2 - 1;
+        // (the underside hangs below the midrib, up to 1 % of the length, meeting the top at the margins)
+        const under = top ? 0 : 0.012 * s.len * Math.sin(Math.PI * u) * (1 - Math.abs(v)) + 0.0015;
+        pos.push(v * w, s.fold * Math.abs(v) * w + s.bend * s.len * u * u - under, u * s.len);
+        shade.push(top ? lerp(0.8, 1.06, u) * (j === NV / 2 ? 0.9 : 1) : 0.66);
+      }
+    }
+    for (let i = 0; i < NU; i++) {
+      for (let j = 0; j < NV; j++) {
+        const a = base + i * (NV + 1) + j, b = a + 1, c = a + NV + 2, d = a + NV + 1;
+        if (top) idx.push(a, d, c, a, c, b);
+        else idx.push(a, c, d, a, b, c);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return { g, shade };
+}
+
+const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _one = new THREE.Vector3(1, 1, 1);
+/** Placement of a blade at `p`: turned `az` about the vertical from +Z, its tip raised `elev` rad, rolled `roll`. */
+function bladeAt(p: THREE.Vector3, az: number, elev: number, roll = 0): THREE.Matrix4 {
+  return new THREE.Matrix4().compose(p, _q.setFromEuler(_e.set(-elev, az, roll, 'YXZ')), _one);
+}
+
+/** Adds a blade (tint A) placed by `m` (`nu` × `nv` quads a side: fewer for the bush's many leaves). */
+function addBlade(parts: Parts, s: BladeShape, m: THREE.Matrix4, nu = 8, nv = 4): void {
+  const { g, shade } = bladeGeo(s, nu, nv);
+  addShaded(parts, g, shade, TINT.a, undefined, m);
+}
+
+/**
+ * A soil mound `w` wide and `h` tall on y = 0, in fixed soil brown: a lumpy low bump, its foot flaring into the
+ * ground (darker there, lighter on top, mottled), with `clods` crumbs round its foot; `dimple`: a freshly planted
+ * mound, a seed hole on top, its drier top lighter still (it reads on its bed at night too).
+ */
+function soilMound(parts: Parts, seed: number, w: number, h: number, clods: number, dimple = false): void {
+  const r = rng(seed);
+  const o = [r() * 50, r() * 50, r() * 50];
+  const g = polarGrid(7, 28, (rho, a, out) => {
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const rr = (rho * w) / 2 * (1 + 0.1 * noise3(ca * 1.3 + o[0], sa * 1.3 + o[1], o[2]));
+    let y = h * Math.pow(1 - rho * rho, 1.6) * (1 + 0.22 * noise3(ca * rho * 3.5 + o[1], sa * rho * 3.5 + o[2], o[0]));
+    if (dimple) y -= h * 0.4 * Math.exp(-((rho / 0.2) ** 2));
+    out.set(ca * rr, y, sa * rr);
+  });
+  const pos = g.getAttribute('position');
+  const shade = Array.from({ length: pos.count }, (_, i) => {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const hole = dimple ? lerp(0.55, 1, smooth(Math.hypot(x, z), 0.02, 0.07)) : 1;
+    return lerp(0.6, dimple ? 1.5 : 1.3, smooth(y / h, 0, 0.85)) * (1 + 0.16 * noise3(x * 16 + o[0], y * 16, z * 16 + o[1])) * hole;
+  });
+  addShaded(parts, g, shade, TINT.fixed, SOIL);
+  for (let k = 0; k < clods; k++) {
+    const a = ((k + r() * 0.6) / clods) * Math.PI * 2, d = (w / 2) * lerp(0.82, 1.08, r()), s = lerp(0.018, 0.032, r());
+    const c = new THREE.IcosahedronGeometry(1, 0);
+    c.deleteAttribute('uv');
+    c.applyMatrix4(new THREE.Matrix4().makeScale(s, s * 0.7, s));
+    c.translate(Math.cos(a) * d, s * 0.35, Math.sin(a) * d);
+    addShaded(parts, c, new Array(c.getAttribute('position').count).fill(lerp(0.7, 1.0, r())), TINT.fixed, SOIL);
+  }
+}
+
+/** A plant stem (tint A, darker than the leaves) through `pts`. */
+function stem(parts: Parts, pts: THREE.Vector3[], r0: number, r1: number): void {
+  const g = tube(pts, r0, r1, 7);
+  const pos = g.getAttribute('position');
+  const top = pts[pts.length - 1].y;
+  addShaded(parts, g, Array.from({ length: pos.count }, (_, i) => lerp(0.45, 0.68, smooth(pos.getY(i), 0, top))), TINT.a);
+}
+
+/** Points along a gently swaying stem from (0, y0, 0) to height y1 (`sway` × a seeded wiggle sideways). */
+function stemPath(seed: number, y0: number, y1: number, sway: number, n = 7): THREE.Vector3[] {
+  const r = rng(seed), p = r() * 6, q = r() * 6;
+  return Array.from({ length: n }, (_, i) => {
+    const t = i / (n - 1);
+    return new THREE.Vector3(sway * Math.sin(t * 2.6 + p) * t, lerp(y0, y1, t), sway * 0.8 * Math.sin(t * 2.1 + q) * t);
+  });
+}
+
+/** The mound at a growing plant's foot (stages 2–5; the bed it stands in is the soil's: kit/soil.ts). */
+const FOOT = { w: 0.3, h: 0.045 };
+
+/** Stage 2: a sprout, two round seed leaves opening in a V on a short stem (≈0.35 tall). */
+function sproutGeo(seed: number): THREE.BufferGeometry {
+  const parts = new Parts();
+  const r = rng(seed ^ 0x51ed);
+  soilMound(parts, seed, FOOT.w, FOOT.h, 2);
+  const path = stemPath(seed, 0.01, 0.19, 0.025, 5);
+  stem(parts, path, 0.026, 0.019);
+  // (the seed leaves open east and west: the plant's turn (objectModels.ts) keeps their V across the view)
+  const top = path[path.length - 1], turn = (r() - 0.5) * 0.4;
+  for (const side of [-1, 1]) {
+    addBlade(parts, { len: 0.21, wid: 0.17, fold: 0.34, bend: 0.3, round: 0.9 },
+      bladeAt(top, turn + (side * Math.PI) / 2, 0.36 + 0.08 * r(), side * 0.12));
+  }
+  return parts.build();
+}
+
+/** Stage 3: a young plant, a slender stem with four leaf pairs (crossing, smaller and steeper up the stem) and a
+ *  bud of two small leaves (≈0.65 tall). */
+function saplingGeo(seed: number): THREE.BufferGeometry {
+  const parts = new Parts();
+  const r = rng(seed ^ 0x3ab7);
+  soilMound(parts, seed + 1, FOOT.w, FOOT.h, 2);
+  const y0 = 0.01, y1 = 0.55;
+  const path = stemPath(seed, y0, y1, 0.035, 8);
+  stem(parts, path, 0.03, 0.013);
+  const along = (y: number) => {
+    const f = ((y - y0) / (y1 - y0)) * (path.length - 1), i = Math.min(path.length - 2, Math.floor(f));
+    return path[i].clone().lerp(path[i + 1], f - i);
+  };
+  const pairs = [
+    { y: 0.13, len: 0.27, wid: 0.15, elev: 0.28 }, { y: 0.25, len: 0.25, wid: 0.14, elev: 0.38 },
+    { y: 0.36, len: 0.21, wid: 0.12, elev: 0.5 }, { y: 0.46, len: 0.16, wid: 0.095, elev: 0.66 },
+  ];
+  const turn = r() * Math.PI;
+  pairs.forEach((p, k) => {
+    const az = turn + (k * Math.PI) / 2 + (r() - 0.5) * 0.3;
+    for (const side of [0, Math.PI]) {
+      addBlade(parts, { len: p.len, wid: p.wid, fold: 0.3, bend: -0.14, round: 0.2 }, bladeAt(along(p.y), az + side, p.elev + (r() - 0.5) * 0.12));
+    }
+  });
+  for (const side of [0, Math.PI]) {
+    addBlade(parts, { len: 0.1, wid: 0.065, fold: 0.4, bend: 0.1, round: 0.3 }, bladeAt(path[path.length - 1], turn + side + Math.PI / 4, 1.05));
+  }
+  return parts.build();
+}
+
+/** The flowering / fruiting bush (stages 4 and 5): its body and the crown it hangs flowers and berries on. */
+interface Bush { body: THREE.BufferGeometry; hit: ReturnType<typeof surfaceHit>; centre: THREE.Vector3 }
+
+/** The bush: its crown's width and depth, underside and top (≈0.9 tall, ≤ 1 wide with its leaves); the leaves
+ *  covering it: how many, how long, how deep their stalk ends sit in the crown. */
+const BUSH = { width: 0.64, depth: 0.62, base: 0.3, top: 0.86, leaves: 40, leaf: 0.19, sink: 0.05 };
+
+const bushes = new Map<number, Bush>();
+/**
+ * A small berry bush: a blobCrown (the kit's bushy trees' foliage, tint A shaded as they are: its dark heart
+ * shows between the leaves) on three stems splaying from a mound, covered in leaves standing out of it (spread
+ * evenly over all but its underside, pointing out and up, drooping at their tips), so it reads as a leafy plant.
+ */
+function bushOf(seed: number): Bush {
+  let b = bushes.get(seed);
+  if (b) return b;
+  const parts = new Parts();
+  const r = rng(seed ^ 0x6c8e);
+  soilMound(parts, seed + 2, FOOT.w + 0.04, FOOT.h, 2);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + r() * 0.8;
+    stem(parts, [new THREE.Vector3(0, 0.01, 0), new THREE.Vector3(Math.cos(a) * 0.04, 0.2, Math.sin(a) * 0.04),
+      new THREE.Vector3(Math.cos(a) * 0.12, BUSH.base + 0.12, Math.sin(a) * 0.1)], 0.032, 0.02);
+  }
+  const crown = blobCrown(seed, 7, 0.2, 0.15, 0.22, 0, 0.12, 2);
+  crown.computeBoundingBox();
+  const bb = crown.boundingBox!, size = bb.getSize(new THREE.Vector3());
+  crown.applyMatrix4(new THREE.Matrix4().makeTranslation(0, BUSH.base, 0)
+    .multiply(new THREE.Matrix4().makeScale(BUSH.width / size.x, (BUSH.top - BUSH.base) / size.y, BUSH.depth / size.z))
+    .multiply(new THREE.Matrix4().makeTranslation(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2)));
+  const flat = crown.toNonIndexed();
+  crown.dispose();
+  const col = flat.getAttribute('color');
+  const shade: RGB[] = Array.from({ length: col.count }, (_, i) => [col.getX(i), col.getY(i), col.getZ(i)]);
+  const surface = flat.clone();
+  parts.add(flat, TINT.a, (_p, _n, i) => shade[i]);
+  const centre = new THREE.Vector3(0, (BUSH.base + BUSH.top) / 2, 0);
+  const hit = surfaceHit(surface, centre);
+  // leaves over the crown: directions on a Fibonacci spiral down to 25° below its middle, each leaf's stalk end
+  // sunk into the crown, its blade pointing out (raised towards the vertical over the top) and rolled at random
+  const d = new THREE.Vector3(), GOLDEN = Math.PI * (3 - Math.sqrt(5)), low = -Math.sin(0.44);
+  for (let k = 0; k < BUSH.leaves; k++) {
+    const y = 1 - ((k + 0.5) / BUSH.leaves) * (1 - low), ring = Math.sqrt(1 - y * y), az = k * GOLDEN + r() * 0.3;
+    const h = hit(d.set(ring * Math.sin(az), y, ring * Math.cos(az)));
+    if (!h) continue;
+    const out = h.p.clone().sub(centre).normalize();
+    const len = BUSH.leaf * lerp(0.85, 1.1, r());
+    addBlade(parts, { len, wid: len * 0.62, fold: 0.35, bend: -0.16, round: 0.45 },
+      bladeAt(h.p.clone().addScaledVector(out, -BUSH.sink), Math.atan2(out.x, out.z), Math.asin(out.y) * 0.75 + 0.18, (r() - 0.5) * 0.8), 5, 2);
+  }
+  b = { body: parts.build(), hit, centre };
+  bushes.set(seed, b);
+  return b;
+}
+
+/** A plant's body and the anchor points (plant space) of its flowers or berries, with the surface normals there. */
+export interface BerryPlant { body: THREE.BufferGeometry; anchors: THREE.Vector3[]; normals: THREE.Vector3[] }
+
+/** Lifts of the anchors off the crown along its normal, to the leaves' outer layer: a flower lies on the leaves,
+ *  a berry (r 0.07) hangs among their tips. */
+const ANCHOR_LIFT = { flower: 0.07, berry: 0.075 };
+
+/**
+ * 5–7 anchors on the bush's crown, evenly round it (each plant turns by object, so some face the camera
+ * whatever its turn): flowers on its upper sides and top, berries round its sides; seeded per (seed, kind).
+ */
+function anchorsOn(bush: Bush, seed: number, kind: 'flower' | 'berry'): { anchors: THREE.Vector3[]; normals: THREE.Vector3[] } {
+  const r = rng(seed * 31 + (kind === 'flower' ? 4 : 5));
+  const n = 5 + Math.floor(r() * 3);
+  const anchors: THREE.Vector3[] = [], normals: THREE.Vector3[] = [];
+  const d = new THREE.Vector3();
+  const [e0, e1] = kind === 'flower' ? [0.3, 1.1] : [-0.25, 0.75];
+  for (let k = 0; anchors.length < n && k < n * 3; k++) {
+    const az = (((anchors.length + 0.2 + 0.6 * r()) / n) * Math.PI * 2), el = lerp(e0, e1, r());
+    const h = bush.hit(d.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)));
+    if (!h) continue;
+    const nrm = h.p.clone().sub(bush.centre).normalize().add(h.n).normalize();
+    anchors.push(h.p.clone().addScaledVector(nrm, ANCHOR_LIFT[kind]));
+    normals.push(nrm);
+  }
+  return { anchors, normals };
+}
+
+const plants = new Map<string, BerryPlant>();
+
+/**
+ * A berry tree at growth stage `stage`, standing on y = 0, ≤ 1.0 wide: 1 a soil mound (≈0.5 wide, 0.12 tall,
+ * a seed hole on top), 2 a sprout (≈0.35), 3 a young plant (≈0.65), 4 a small bush (≈0.9) with 5–7 flower anchors
+ * on its crown, 5 the same bush with 5–7 berry anchors. Body tint codes: leaves and stems A (the plant's green),
+ * soil fixed brown. Cached per (stage, seed) for the session (`userData.shared`).
+ */
+export function berryPlantGeo(stage: BerryStage, seed: number): BerryPlant {
+  const key = `${stage}:${seed}`;
+  let p = plants.get(key);
+  if (p) return p;
+  if (stage >= 4) {
+    const bush = bushOf(seed);
+    p = { body: bush.body, ...anchorsOn(bush, seed, stage === 4 ? 'flower' : 'berry') };
+  } else {
+    const body = stage === 1
+      ? cached(`berry1:${seed}`, () => { const parts = new Parts(); soilMound(parts, seed, 0.5, 0.13, 5, true); return parts.build(); })
+      : stage === 2 ? cached(`berry2:${seed}`, () => sproutGeo(seed)) : cached(`berry3:${seed}`, () => saplingGeo(seed));
+    p = { body, anchors: [], normals: [] };
+  }
+  plants.set(key, p);
+  return p;
+}
+
+/** A berry, r 0.07 round its centre (the origin; tint A, darker underneath), a green calyx and stalk on top. */
+export function berryFruitGeo(): THREE.BufferGeometry {
+  return cached('berryFruit', () => {
+    const parts = new Parts();
+    const R = 0.07;
+    const ball = new THREE.SphereGeometry(R, 18, 12);
+    ball.deleteAttribute('uv');
+    // (a little flattened, a dimple where the calyx sits)
+    const pos = ball.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i), dip = 0.012 * Math.exp(-((Math.hypot(pos.getX(i), pos.getZ(i)) / 0.025) ** 2)) * (y > 0 ? 1 : 0);
+      pos.setY(i, y * 0.93 - dip);
+    }
+    ball.computeVertexNormals();
+    addShaded(parts, ball, Array.from({ length: pos.count }, (_, i) => lerp(0.62, 1.08, smooth(pos.getY(i), -R, R * 0.8))), TINT.a);
+    // the calyx: a five-pointed star of sepals over the dimple, and the stalk
+    const calyx = polarGrid(2, 10, (rho, a, out) => {
+      const rad = rho * (Math.round((a / (Math.PI * 2)) * 10) % 2 === 0 ? 0.034 : 0.014);
+      out.set(Math.cos(a) * rad, R * 0.93 - 0.006 + 0.008 * (1 - rho), Math.sin(a) * rad);
+    });
+    addShaded(parts, calyx, new Array(calyx.getAttribute('position').count).fill(1), TINT.fixed, CALYX);
+    const stalk = tube([new THREE.Vector3(0, R * 0.85, 0), new THREE.Vector3(0.004, R + 0.02, 0.002), new THREE.Vector3(0.012, R + 0.038, 0.004)], 0.007, 0.005, 5);
+    addShaded(parts, stalk, new Array(stalk.getAttribute('position').count).fill(1.3), TINT.fixed, CALYX);
+    return parts.build();
+  });
+}
+
+/** A flower, r 0.09 round its centre (the origin) facing +Y: five rounded petals (tint A) cupped up, lighter to
+ *  their tips, round a yellow heart (fixed). */
+export function berryFlowerGeo(): THREE.BufferGeometry {
+  return cached('berryFlower', () => {
+    const parts = new Parts();
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2;
+      addBlade(parts, { len: 0.08, wid: 0.062, fold: 0.18, bend: 0.22, round: 1 },
+        bladeAt(new THREE.Vector3(Math.sin(a) * 0.01, 0, Math.cos(a) * 0.01), a, 0.18));
+    }
+    const heart = new THREE.SphereGeometry(0.024, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    heart.deleteAttribute('uv');
+    heart.scale(1, 0.6, 1);
+    heart.translate(0, 0.004, 0);
+    heart.computeVertexNormals();
+    const hp = heart.getAttribute('position');
+    addShaded(parts, heart, Array.from({ length: hp.count }, (_, i) => lerp(0.8, 1.1, smooth(hp.getY(i), 0.004, 0.018))), TINT.fixed, POLLEN);
     return parts.build();
   });
 }

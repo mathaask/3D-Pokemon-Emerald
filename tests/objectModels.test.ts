@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { ObjectModels, MAX_PER_KIND, MIN_LUMA } from '../src/render/actors/objectModels';
+import { ObjectModels, MAX_PER_KIND, MIN_LUMA, BERRY_DEFAULT, BERRY_MIN_LUMA, berryColors } from '../src/render/actors/objectModels';
 import { FRAG_SHOULDER, LIGHT_FLOOR, lampCeiling } from '../src/render/actors/inflatedActors';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { luma, lush, soften, toLinear, type RGB } from '../src/render/kit/palette';
 import type { ObjectModelKind } from '../src/render/actors/objectMap';
 import type { SpriteColors } from '../src/render/actors/spriteColors';
+import { berryPlantGeo } from '../src/render/actors/models';
 
 const colors = { main: null, accent: null, green: null };
 const count = (m: ObjectModels, k: string) => (m.group.getObjectByName(k) as THREE.InstancedMesh).count;
@@ -28,6 +29,18 @@ describe('ObjectModels', () => {
     m.set(Array.from({ length: 20 }, (_, i) => ({ kind: 'pokeball' as const, stage: 0, x: i, y: 0, z: 0, colors })));
     expect(count(m, 'pokeball')).toBe(MAX_PER_KIND);
   });
+  it('draws a body per berry tree and its berries at the anchors', () => {
+    const m = new ObjectModels(createKitUniforms());
+    m.set([{ kind: 'berry', stage: 5, x: 2, y: 0, z: 2, colors }, { kind: 'berry', stage: 5, x: 5, y: 0, z: 2, colors },
+           { kind: 'berry', stage: 1, x: 8, y: 0, z: 2, colors }]);
+    expect(count(m, 'berry5')).toBe(2);
+    expect(count(m, 'berry1')).toBe(1);
+    expect(count(m, 'berryFruit')).toBe(2 * berryPlantGeo(5, 0).anchors.length);
+    expect(count(m, 'berryFlower')).toBe(0);
+    m.set([]);
+    expect(count(m, 'berryFruit')).toBe(0);
+    expect(m.supports('berry')).toBe(true);
+  });
 });
 
 // ---- beyond the brief ----
@@ -38,10 +51,9 @@ describe('ObjectModels tints, uploads and precompile', () => {
   const lin = (c: RGB) => new THREE.Color(...toLinear(c));
   const at = (kind: ObjectModelKind, c: SpriteColors, x = 0) => ({ kind, stage: 0, x, y: 0, z: 0, colors: c });
 
-  it('has meshes for the five Task 8 kinds (berry plants come later)', () => {
+  it('has meshes for every model kind, the berry plants included', () => {
     const m = new ObjectModels(createKitUniforms());
-    for (const k of ['pokeball', 'boulder', 'crackedRock', 'cutTree', 'truck'] as const) expect(m.supports(k)).toBe(true);
-    expect(m.supports('berry')).toBe(false);
+    for (const k of ['pokeball', 'boulder', 'crackedRock', 'cutTree', 'truck', 'berry'] as const) expect(m.supports(k)).toBe(true);
   });
   it("tints a kind from its first instance's sprite colours, the defaults where one is missing", () => {
     const m = new ObjectModels(createKitUniforms());
@@ -163,7 +175,8 @@ describe('ObjectModels tints, uploads and precompile', () => {
       render: () => { seen.rendered = shown(); },
     } as unknown as THREE.WebGLRenderer;
     const done = m.precompile(renderer, new THREE.Scene(), new THREE.PerspectiveCamera());
-    const all = ['pokeball', 'boulder', 'boulder:mirror', 'crackedRock', 'cutTree', 'truck', 'truck:logo'];
+    const all = ['pokeball', 'boulder', 'boulder:mirror', 'crackedRock', 'cutTree', 'truck', 'truck:logo',
+      'berry1', 'berry2', 'berry3', 'berry4', 'berry5', 'berryFlower', 'berryFruit'];
     expect(seen.compiled.sort()).toEqual([...all].sort());
     expect(seen.rendered.sort()).toEqual([...all].sort());
     expect(target).toBe('screen');
@@ -176,5 +189,89 @@ describe('ObjectModels tints, uploads and precompile', () => {
   it('gives every model a shadow-depth material of its own (none uses three\'s shared one)', () => {
     const m = new ObjectModels(createKitUniforms());
     for (const o of m.group.children) expect((o as THREE.Mesh).customDepthMaterial).toBeDefined();
+  });
+});
+
+describe('ObjectModels berry plants', () => {
+  const mesh = (m: ObjectModels, k: string) => m.group.getObjectByName(k) as THREE.InstancedMesh;
+  const color = (m: ObjectModels, k: string, i = 0) => mesh(m, k).instanceColor!.array.slice(i * 3, i * 3 + 3);
+  const lin = (c: RGB) => Array.from(new Float32Array(toLinear(c)));
+  const plant = (stage: number, c: SpriteColors, x = 0, yaw?: number) => ({ kind: 'berry' as const, stage, x, y: 1, z: 3, colors: c, yaw });
+
+  it('carries its flowers at stage 4, its berries at stage 5, nothing at stages 1-3; an empty frame clears them all', () => {
+    const m = new ObjectModels(createKitUniforms());
+    m.set([1, 2, 3, 4, 5].map((s) => plant(s, colors, s)));
+    for (const s of [1, 2, 3, 4, 5]) expect(count(m, `berry${s}`)).toBe(1);
+    expect(count(m, 'berryFlower')).toBe(berryPlantGeo(4, 0).anchors.length);
+    expect(count(m, 'berryFruit')).toBe(berryPlantGeo(5, 0).anchors.length);
+    expect(m.count).toBe(5);                  // (objects: a plant counts once)
+    m.set([]);
+    for (const k of ['berry1', 'berry2', 'berry3', 'berry4', 'berry5', 'berryFlower', 'berryFruit']) {
+      expect(count(m, k)).toBe(0);
+      expect(mesh(m, k).visible).toBe(false);
+    }
+    expect(m.count).toBe(0);
+  });
+  it("places each flower or berry at its anchor on the plant (the plant's placement × the anchor)", () => {
+    const m = new ObjectModels(createKitUniforms());
+    const yaw = 1.3;                          // (0..2π → −0.5..0.5 rad: the plants turn a little, by object)
+    m.set([plant(5, colors, 4, yaw)]);
+    const turn = (yaw / Math.PI - 1) * 0.5;
+    const at = new THREE.Matrix4(), body = new THREE.Matrix4();
+    mesh(m, 'berry5').getMatrixAt(0, body);
+    expect(new THREE.Vector3().setFromMatrixPosition(body).toArray()).toEqual([4, 1, 3]);
+    berryPlantGeo(5, 0).anchors.forEach((a, i) => {
+      mesh(m, 'berryFruit').getMatrixAt(i, at);
+      const want = a.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn).add(new THREE.Vector3(4, 1, 3));
+      expect(new THREE.Vector3().setFromMatrixPosition(at).distanceTo(want)).toBeLessThan(1e-5);
+    });
+  });
+  it("colours each plant from its own sprite: leaves its green (lush, lifted), flowers and berries its accent", () => {
+    const m = new ObjectModels(createKitUniforms());
+    const green: RGB = [60 / 255, 115 / 255, 0], pink: RGB = [222 / 255, 148 / 255, 115 / 255], red: RGB = [206 / 255, 99 / 255, 74 / 255];
+    m.set([plant(4, { main: null, accent: pink, green }), plant(5, { main: null, accent: red, green: null }, 2),
+      plant(5, colors, 4)]);
+    const leaves = lush(green), k = BERRY_MIN_LUMA.leaves / luma(leaves);
+    expect(luma(leaves)).toBeLessThan(BERRY_MIN_LUMA.leaves);   // (the picker's mean takes in the outline green)
+    color(m, 'berry4').forEach((v, i) => expect(v).toBeCloseTo(lin(leaves.map((c) => c * k) as RGB)[i], 5));
+    expect(Array.from(color(m, 'berryFlower'))).toEqual(lin(pink));
+    expect(Array.from(color(m, 'berry5'))).toEqual(lin([0.3, 0.6, 0.3]));      // no green: the default leaves
+    expect(Array.from(color(m, 'berryFruit'))).toEqual(lin(red));
+    const n = berryPlantGeo(5, 0).anchors.length;
+    expect(Array.from(color(m, 'berryFruit', n))).toEqual(lin(BERRY_DEFAULT.fruit));   // the next plant's: no accent
+    expect(BERRY_DEFAULT.petals).toEqual([0.95, 0.55, 0.75]);
+    // a dark accent (an outline) is lifted to the floor, hue kept
+    const dark: RGB = [99 / 255, 0, 25 / 255];
+    expect(berryColors({ main: null, accent: dark, green: null }).fruit.map((v) => +v.toFixed(5)))
+      .toEqual(toLinear(dark.map((c) => c * (BERRY_MIN_LUMA.fruit / luma(dark))) as RGB).map((v) => +v.toFixed(5)));
+  });
+  it('uploads matrices and colours only when one changed', () => {
+    const m = new ObjectModels(createKitUniforms());
+    const v = () => [mesh(m, 'berry5').instanceMatrix.version, mesh(m, 'berry5').instanceColor!.version,
+      mesh(m, 'berryFruit').instanceMatrix.version, mesh(m, 'berryFruit').instanceColor!.version];
+    m.set([plant(5, colors, 1)]);
+    const first = v();
+    m.set([plant(5, colors, 1)]);
+    expect(v()).toEqual(first);                // a still frame uploads nothing
+    m.set([plant(5, colors, 2)]);
+    expect(v()[0]).toBeGreaterThan(first[0]);
+    expect(v()[2]).toBeGreaterThan(first[2]);  // (the berries move with their plant)
+    expect(v()[1]).toBe(first[1]);
+    m.set([plant(5, { main: null, accent: [0.2, 0.3, 0.9], green: null }, 2)]);
+    expect(v()[3]).toBeGreaterThan(first[3]);  // new colours
+  });
+  it('lets an instance colour tint only the tinted parts: fixed colours (soil, the flowers\' heart) keep their own', () => {
+    const m = new ObjectModels(createKitUniforms());
+    const shader = { uniforms: {} as Record<string, { value: unknown }>, defines: {}, vertexShader: THREE.ShaderLib.standard.vertexShader,
+      fragmentShader: THREE.ShaderLib.standard.fragmentShader } as unknown as THREE.WebGLProgramParametersWithUniforms;
+    (mesh(m, 'berryFlower').material as THREE.Material).onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+    expect(shader.vertexShader).toContain('if (color.a < 0.75) vColor.rgb *= instanceColor.rgb;');
+    // the berry materials keep the models' program: the same hooks, uniforms and cache key as the others
+    const key = (k: string) => (mesh(m, k).material as THREE.Material).customProgramCacheKey();
+    expect(key('berry1')).toBe(key('pokeball'));
+    expect(key('berryFruit')).toBe(key('pokeball'));
+    expect(mesh(m, 'berry1').customDepthMaterial).not.toBe(mesh(m, 'pokeball').customDepthMaterial);
+    expect(mesh(m, 'berryFlower').castShadow).toBe(false);
+    expect(mesh(m, 'berry3').castShadow).toBe(true);
   });
 });
