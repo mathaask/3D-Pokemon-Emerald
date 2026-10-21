@@ -575,7 +575,8 @@ function polarGrid(rings: number, segs: number, at: (rho: number, a: number, out
   return g;
 }
 
-/** A tube through `pts`, its radius tapering r0 → r1, `sides` round, closed to a point past the last; smooth normals. */
+/** A tube through `pts` (a stem: never running along X), its radius tapering r0 → r1, `sides` round, closed to a point
+ *  past the last; smooth normals. */
 function tube(pts: THREE.Vector3[], r0: number, r1: number, sides: number): THREE.BufferGeometry {
   const pos: number[] = [], idx: number[] = [];
   const t = new THREE.Vector3(), n = new THREE.Vector3(), b = new THREE.Vector3(), X = new THREE.Vector3(1, 0, 0);
@@ -684,7 +685,7 @@ function soilMound(parts: Parts, seed: number, w: number, h: number, clods: numb
   const shade = Array.from({ length: pos.count }, (_, i) => {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const hole = dimple ? lerp(0.55, 1, smooth(Math.hypot(x, z), 0.02, 0.07)) : 1;
-    return lerp(0.6, dimple ? 1.5 : 1.3, smooth(y / h, 0, 0.85)) * (1 + 0.16 * noise3(x * 16 + o[0], y * 16, z * 16 + o[1])) * hole;
+    return lerp(dimple ? 0.75 : 0.6, dimple ? 1.85 : 1.3, smooth(y / h, 0, 0.85)) * (1 + 0.16 * noise3(x * 16 + o[0], y * 16, z * 16 + o[1])) * hole;
   });
   addShaded(parts, g, shade, TINT.fixed, SOIL);
   for (let k = 0; k < clods; k++) {
