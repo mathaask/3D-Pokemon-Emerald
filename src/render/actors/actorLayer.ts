@@ -87,6 +87,8 @@ interface Seen { graphicsId: number; localId: number; map: number; images: numbe
 
 /** A model's turn about the vertical: stable per object (its map and local id), whatever cell it is pushed to. */
 const yawOf = (o: ObjectEventSnap) => (hashCell(o.localId, o.mapNum, o.mapGroup) / 4294967296) * Math.PI * 2;
+/** Whether a model is drawn as its mirror image (the kinds that vary so): stable per object, as its yaw. */
+const flipOf = (o: ObjectEventSnap) => (hashCell(o.localId, o.mapNum, o.mapGroup + 0x9e37) & 1) === 1;
 
 // An upright's foot point in grid units: half a cell above the sprite's bottom edge. The grid cell a
 // sprite stands on holds that point (for a flat decal: its rectangle's bottom half-cell).
@@ -324,6 +326,7 @@ export class ActorLayer {
     out.y = h;
     out.z = row + h;
     out.yaw = yawOf(o);
+    out.flip = flipOf(o);
     out.mirror = s.hflip;
     const sample = this.sampleOf(s, ref.kind, o, frame);
     out.colors = sample.colors;

@@ -46,4 +46,14 @@ describe('object model geometry', () => {
     expect(a.has(1)).toBe(true);
     expect([...a].some((w) => w < 0.5)).toBe(true);
   });
+  it("puts the far side's logo at the same place along the box as the near side's (mirrored, not turned)", () => {
+    const p = truckLogoGeo().getAttribute('position');
+    const near = [Infinity, -Infinity], far = [Infinity, -Infinity];
+    for (let i = 0; i < p.count; i++) {
+      const r = p.getZ(i) > 0 ? near : far;
+      r[0] = Math.min(r[0], p.getX(i)); r[1] = Math.max(r[1], p.getX(i));
+    }
+    expect(far[0]).toBeCloseTo(near[0], 4);
+    expect(far[1]).toBeCloseTo(near[1], 4);
+  });
 });

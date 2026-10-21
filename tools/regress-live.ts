@@ -97,6 +97,8 @@ const STATIC: StaticEntry[] = [
   { name: 'fiery_boulders', q: 'map=24.14&focusGfx=87' }, { name: 'r119_items', q: 'map=0.34&focusGfx=59' },
   { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
   // Granite Cave B2F (Flash): a breakable rock one cell north of the lantern, where Rock Smash puts the player (model lamp ceiling)
+  // (added in Phase 2 Task 8: its p2-base Retro reference was captured then, in fix round 3, with --label p2-base --only
+  // granite_rocks --styles retro; Retro renders unchanged through Phase 2, 0.00 % on every older entry)
   { name: 'granite_rocks', q: 'map=24.9&flash=2&x=5.5&y=15.5' },
   { name: 'woods_shade', q: 'map=24.11&focusObj=3&hour=17.5' }, // Petalburg Woods: a Bug Catcher in tree shade (shadows on actors)
 ];

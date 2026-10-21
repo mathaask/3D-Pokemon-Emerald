@@ -73,9 +73,11 @@ describe('ObjectModels tints, uploads and precompile', () => {
   it("tints the Cut tree's crown (its material colour) in the sprite's highlight, not its outline-darkened green", () => {
     const m = new ObjectModels(createKitUniforms());
     const lime: RGB = [115 / 255, 189 / 255, 0];
-    m.set([{ ...at('cutTree', { main: null, accent: null, green: [0.18, 0.37, 0] }), tones: { body: null, highlight: lime, crevice: null, dark: null } }]);
+    const band: RGB = [16 / 255, 58 / 255, 0], crev: RGB = [123 / 255, 66 / 255, 66 / 255];
+    m.set([{ ...at('cutTree', { main: null, accent: null, green: [0.18, 0.37, 0] }), tones: { body: null, highlight: lime, crevice: crev, dark: band } }]);
     const tree = mesh(m, 'cutTree');
     expect(tints(m, 'cutTree').a.equals(lin(soften(lime)))).toBe(true);
+    expect(tints(m, 'cutTree').b.equals(lin(band))).toBe(true);   // uTrunk: the under-rim in the sprite's dark band
     expect((tree.material as THREE.MeshStandardMaterial).color.equals(tints(m, 'cutTree').a)).toBe(true);
     // (without tones: its green, lifted to the floor)
     const m2 = new ObjectModels(createKitUniforms());
@@ -87,12 +89,34 @@ describe('ObjectModels tints, uploads and precompile', () => {
   it("paints the truck's box in the sprite's navy (crevice), its roof and trim in the blue, its logo in the grey-blue", () => {
     const m = new ObjectModels(createKitUniforms());
     const navy: RGB = [66 / 255, 66 / 255, 123 / 255], grey: RGB = [107 / 255, 123 / 255, 156 / 255], blue: RGB = [90 / 255, 99 / 255, 1];
-    m.set([{ ...at('truck', { main: grey, accent: blue, green: null }), tones: { body: blue, highlight: grey, crevice: navy, dark: null } }]);
+    // (the highlight tone averages in the white cab: the logo takes main, the swoosh's grey-blue, not it)
+    const pale: RGB = [173 / 255, 184 / 255, 203 / 255];
+    m.set([{ ...at('truck', { main: grey, accent: blue, green: null }), tones: { body: blue, highlight: pale, crevice: navy, dark: null } }]);
     expect(tints(m, 'truck').a.equals(lin(navy))).toBe(true);
     expect(tints(m, 'truck').b.equals(lin(blue))).toBe(true);
     expect(tints(m, 'truck:logo').a.equals(lin(grey))).toBe(true);
     expect(count(m, 'truck:logo')).toBe(1);
     expect(mesh(m, 'truck:logo').castShadow).toBe(false);
+  });
+  it('draws a flipped boulder as its rewound mirror image (another mesh: a negative instance scale would turn it inside out)', () => {
+    const m = new ObjectModels(createKitUniforms());
+    m.set([{ ...at('boulder', colors), flip: true }, { ...at('boulder', colors, 2) }, { ...at('pokeball', colors), flip: true }]);
+    expect(count(m, 'boulder')).toBe(1);
+    expect(count(m, 'boulder:mirror')).toBe(1);
+    expect(count(m, 'pokeball')).toBe(1);
+    expect(m.count).toBe(3);
+    const g = mesh(m, 'boulder:mirror').geometry, src = mesh(m, 'boulder').geometry;
+    expect(g.getAttribute('position').getX(1)).toBeCloseTo(-src.getAttribute('position').getX(2), 6);
+    // every triangle still faces out: its winding agrees with its normals
+    const p = g.getAttribute('position'), n = g.getAttribute('normal');
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), nn = new THREE.Vector3();
+    let out = 0;
+    for (let t = 0; t < p.count; t += 3) {
+      a.fromBufferAttribute(p, t); b.fromBufferAttribute(p, t + 1); c.fromBufferAttribute(p, t + 2);
+      nn.fromBufferAttribute(n, t).add(c.clone().set(n.getX(t + 1), n.getY(t + 1), n.getZ(t + 1)));
+      if (b.clone().sub(a).cross(c.clone().sub(a)).dot(nn) > 0) out++;
+    }
+    expect(out / (p.count / 3)).toBeGreaterThan(0.98);
   });
   it('turns a mirrored truck half way round (cab to +X); other kinds ignore the flag', () => {
     const m = new ObjectModels(createKitUniforms());
@@ -139,7 +163,7 @@ describe('ObjectModels tints, uploads and precompile', () => {
       render: () => { seen.rendered = shown(); },
     } as unknown as THREE.WebGLRenderer;
     const done = m.precompile(renderer, new THREE.Scene(), new THREE.PerspectiveCamera());
-    const all = ['pokeball', 'boulder', 'crackedRock', 'cutTree', 'truck', 'truck:logo'];
+    const all = ['pokeball', 'boulder', 'boulder:mirror', 'crackedRock', 'cutTree', 'truck', 'truck:logo'];
     expect(seen.compiled.sort()).toEqual([...all].sort());
     expect(seen.rendered.sort()).toEqual([...all].sort());
     expect(target).toBe('screen');

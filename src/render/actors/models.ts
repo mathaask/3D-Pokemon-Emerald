@@ -130,13 +130,13 @@ interface RockShape {
   floor: number;
 }
 
-/** Shade of a rock vertex: occlusion from a dark underside up to the top and ±10 % mottling (noise3 over the
- *  surface). The lit tops are the material's: tint A (the sprite's body tone) blends towards its highlight tone
+/** Shade of a rock vertex: occlusion from dark flanks and underside up to the top (the lit top reads as the gold
+ *  plane by contrast) and ±10 % mottling (noise3 over the surface). The lit tops are the material's: tint A (the sprite's body tone) blends towards its highlight tone
  *  on up-facing normals (objectModels.ts). */
 function rockShade(p: THREE.Vector3, height: number, seed: number): RGB {
   const t = smooth(p.y / height, 0.0, 0.85);
   const mottle = 1 + 0.1 * noise3(p.x * 6 + (seed % 97), p.y * 6, p.z * 6);
-  return k3(lerp(0.55, 1.0, t) * mottle);
+  return k3(lerp(0.4, 1.0, t) * mottle);
 }
 
 /**
@@ -213,17 +213,16 @@ function surfaceHit(g: THREE.BufferGeometry, centre: THREE.Vector3): (dir: THREE
   };
 }
 
-/**
- * A crease (tint B × `shade`: the sprite's crevice tone) laid along the surface: a wavy path from (elev, azim)
- * (rad; azimuth 0 = +Z) sweeping `sweep` rad round and dropping `drop` rad, sampled by rays every few degrees,
- * just off each face, `w0` wide tapering to `w1`.
- */
-function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, elev: number, azim: number, sweep: number, drop: number,
-  wave: number, w0: number, w1: number, shade = 1): void {
+/** A ribbon along the surface: a path from (elev, azim) (rad from the hit centre; azimuth 0 = +Z) sweeping `sweep`
+ *  rad round, dropping `drop` rad, waving ±`wave`, `w0` wide tapering to `w1`, `offset` off each face. */
+interface Crease { elev: number; azim: number; sweep: number; drop: number; wave: number; w0: number; w1: number; offset: number }
+
+/** Lays a ribbon (tint `code` × `shade`) along the surface (rays from the hit centre every few degrees). */
+function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, c: Crease, code: Code, shade: number): void {
   const pts: { p: THREE.Vector3; n: THREE.Vector3 }[] = [];
   const N = 16, d = new THREE.Vector3();
   for (let i = 0; i <= N; i++) {
-    const t = i / N, e = elev - drop * t + wave * Math.sin(t * Math.PI * 3), az = azim + sweep * t;
+    const t = i / N, e = c.elev - c.drop * t + c.wave * Math.sin(t * Math.PI * 3), az = c.azim + c.sweep * t;
     const h = hit(d.set(Math.cos(e) * Math.sin(az), Math.sin(e), Math.cos(e) * Math.cos(az)));
     if (h) pts.push(h);
   }
@@ -234,7 +233,7 @@ function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, elev: number, 
     const { p, n } = pts[i];
     tan.subVectors(pts[Math.min(i + 1, pts.length - 1)].p, pts[Math.max(i - 1, 0)].p).normalize();
     const side = tan.clone().cross(n).normalize();
-    return { v: p.clone().addScaledVector(n, 0.006).addScaledVector(side, (s * lerp(w0, w1, i / (pts.length - 1))) / 2), n };
+    return { v: p.clone().addScaledVector(n, c.offset).addScaledVector(side, (s * lerp(c.w0, c.w1, i / (pts.length - 1))) / 2), n };
   };
   for (let i = 0; i + 1 < pts.length; i++) {
     const q = [edge(i, 1), edge(i, -1), edge(i + 1, -1), edge(i + 1, 1)];
@@ -246,30 +245,63 @@ function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, elev: number, 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  parts.add(g, TINT.b, k3(shade));
+  parts.add(g, code, k3(shade));
 }
 
 /**
- * ≈0.98 wide, 0.52 tall, 0.66 deep: the Strength boulder, a broad, low stone (the sprite's 16 × 13 px oval: its
- * long side faces the camera, objectModels.ts turns it at most ±0.4 rad) in tint A, softened by three
- * shallow planar cuts so it reads as stone, mottled ±10 %, with three bold creases in the sprite's crevice tone
- * (tint B) round its upper sides, as its dark lines read. Its tops blend to the sprite's gold highlight
- * (objectModels.ts).
+ * ≈0.95 wide, 0.48 tall, 0.84 deep: the Strength boulder, a broad, low stone (the sprite's oval; nearly round in
+ * plan, as each boulder turns freely) in tint
+ * A, softened by three shallow planar cuts so it reads as stone, mottled ±10 %, darker on its flanks so its lit
+ * top reads as the sprite's gold plane (objectModels.ts blends it to the highlight tone). Grooves run round
+ * its upper shoulder: a groove in the sprite's crevice tone (tint B, lit ×1.8: a shadowed groove, not ink) over a
+ * wider mid-tone bevel (tint A × 0.72), as the sprite's light/dark bevelled lines read. Each boulder turns and
+ * mirrors by object (objectModels.ts: one geometry, varied per instance).
  */
 export function boulderGeo(seed: number): THREE.BufferGeometry {
   return cached(`boulder:${seed}`, () => {
-    const H = 0.52;
-    const body = rockBody(seed, { size: [0.98, H, 0.66], noise: [0.08, 0.04], cuts: 3, cutDepth: [0.8, 0.9], facets: 0.45, floor: -0.5 }, 2);
+    const H = 0.48;
+    const body = rockBody(seed, { size: [0.95, H, 0.84], noise: [0.08, 0.04], cuts: 3, cutDepth: [0.8, 0.9], facets: 0.45, floor: -0.5 }, 2);
     const parts = new Parts().add(body, TINT.a, (p) => rockShade(p, H, seed));
     const hit = surfaceHit(body, new THREE.Vector3(0, H * 0.45, 0));
     const r = rng(seed ^ 0x2545f491);
-    // (on the top and the side the camera sees: the boulder turns at most ±0.4 rad)
-    for (let k = 0; k < 3; k++) {
-      crease(parts, hit, 0.85 + r() * 0.3, (k - 1) * 0.9 + (r() - 0.5) * 0.3 - 0.25, 0.5 + r() * 0.2, 0.2 + r() * 0.1, 0.07, 0.08, 0.03);
+    // grooves round the upper shoulder, three on one side, two on the other (each boulder turns freely), within
+    // 1.0 rad of the ±Z axis (the width margin: the x extremes stay clear)
+    for (let k = 0; k < 5; k++) {
+      const sweep = 0.8 + r() * 0.15, back = k >= 3 ? Math.PI : 0, row = k % 3;
+      const azim = back - 1.0 + row * 0.06 + r() * (2.0 - sweep - 0.12);
+      const g = { elev: 0.45 + row * 0.07 + r() * 0.03, azim, sweep, drop: r() * 0.1, wave: 0.02, offset: 0.004 };
+      crease(parts, hit, { ...g, w0: 0.1, w1: 0.03 }, TINT.a, 0.72);
+      crease(parts, hit, { ...g, w0: 0.045, w1: 0.012, offset: 0.008 }, TINT.b, 1.8);
     }
     return parts.build();
   });
 }
+
+/** A mirror image (x → −x) of a non-indexed geometry, its triangles rewound so they still face out (an instance
+ *  matrix with a negative scale would turn them inside out: three only checks the object's determinant).
+ *  Cached per geometry for the session (`userData.shared`). */
+export function mirroredGeo(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  let m = mirrors.get(g);
+  if (!m) {
+    m = g.clone();
+    m.scale(-1, 1, 1);
+    for (const name of Object.keys(m.attributes)) {
+      const a = m.getAttribute(name) as THREE.BufferAttribute, k = a.itemSize, arr = a.array;
+      for (let t = 0; t + 2 < a.count; t += 3) {
+        for (let c = 0; c < k; c++) {
+          const i1 = (t + 1) * k + c, i2 = (t + 2) * k + c, v = arr[i1];
+          arr[i1] = arr[i2];
+          arr[i2] = v;
+        }
+      }
+    }
+    m.computeBoundingSphere();
+    m.userData.shared = true;
+    mirrors.set(g, m);
+  }
+  return m;
+}
+const mirrors = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
 
 /** Chunks of the cracked rock: centre x, base y, centre z and size (x, y, z). Three at the base round the core,
  *  one on top; the gaps between them show the dark core. */
@@ -320,6 +352,7 @@ export function cutTreeGeo(seed: number): THREE.BufferGeometry {
   return cached(`cutTree:${seed}`, () => {
     const r = rng(seed);
     const o = [r() * 40, r() * 40, r() * 40];
+    const SHOULDER = 0.55; // the crown's shade where it meets the band
     const dome = new THREE.SphereGeometry(1, 36, 16, 0, Math.PI * 2, 0, CUT_TREE.rim);
     const under = new THREE.CircleGeometry(Math.sin(CUT_TREE.rim), 36);
     under.rotateX(Math.PI / 2); // facing −Y
@@ -332,10 +365,12 @@ export function cutTreeGeo(seed: number): THREE.BufferGeometry {
       const col = new Float32Array(p.count * 4);
       for (let i = 0; i < p.count; i++) {
         const y = p.getY(i);
-        if (underside) col.set([1, 1, 1, 0.12], i * 4);
-        else if (y < Math.cos(CUT_TREE.band) + 1e-4) col.set([1, 1, 1, 0.3], i * 4);
+        // (the band's RGB is the crown's shoulder shade: TRUNK_FRAG ignores it, but the triangles straddling the
+        // band's edge interpolate it into the crown side; white there left a light seam above the band)
+        if (underside) col.set([SHOULDER, SHOULDER, SHOULDER, 0.12], i * 4);
+        else if (y < Math.cos(CUT_TREE.band) + 1e-4) col.set([SHOULDER, SHOULDER, SHOULDER, 0.3], i * 4);
         else {
-          const t = smooth(y, Math.cos(CUT_TREE.band), 1), k = lerp(0.55, 1.12, t);
+          const t = smooth(y, Math.cos(CUT_TREE.band), 1), k = lerp(SHOULDER, 1.12, t);
           col.set([k * lerp(0.9, 1.03, t), k, k * lerp(1.1, 0.95, t), 1], i * 4);
         }
       }

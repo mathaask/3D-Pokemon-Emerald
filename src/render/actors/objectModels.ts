@@ -1,9 +1,12 @@
 // Object models (Modern): instanced meshes per kind (Poké Ball, boulder, cracked rock, Cut tree, truck) drawn
 // where the objects' sprites stand, rebuilt every frame from the list ActorLayer hands over (a model never
 // outlives its sprite). Each kind is tinted from the sprite of its first instance (uTintA / uTintB, linear) by
-// the geometry's tint codes (models.ts): the rocks from the sprite's tones (body, a highlight tone their up-facing
-// surfaces blend to, the crevice tone of their cracks), the others from its colours; the Cut tree keeps the kit
-// trees' convention (crown × the material colour, trunk = uTrunk). Every model is lit like the world but never
+// the geometry's tint codes (models.ts), from the sprite's tones and colours: the rocks' body, the highlight tone
+// their up-facing surfaces blend to and the crevice tone of their cracks; the Cut tree's lime highlight and dark
+// base band; the truck's navy (crevice), blue (accent) and grey-blue (main); the ball's red (accent). The Cut tree
+// keeps the kit trees' convention (crown × the material colour, band and stump = uTrunk). The boulder varies by
+// object: a full turn and a mirror image (a second, rewound mesh: an instance's negative scale would turn it
+// inside out). Every model is lit like the world but never
 // below the floor the inflated actors get (LIGHT_FLOOR × the cards' light). Materials are kit materials made once
 // and never released (not part of a world build). Instance matrices upload only when they change.
 
@@ -15,7 +18,7 @@ import { put, markRange } from '../instanceUpload';
 import type { ObjectModelKind } from './objectMap';
 import type { SpriteColors, SpriteTones } from './spriteColors';
 import { FRAG_SHOULDER, LIGHT_FLOOR, MASK_GLSL, lampCeiling } from './inflatedActors';
-import { boulderGeo, crackedRockGeo, cutTreeGeo, pokeBallGeo, truckGeo, truckLogoGeo } from './models';
+import { boulderGeo, crackedRockGeo, cutTreeGeo, mirroredGeo, pokeBallGeo, truckGeo, truckLogoGeo } from './models';
 
 /** Instances per kind: gObjectEvents has 16 slots. */
 export const MAX_PER_KIND = 16;
@@ -32,6 +35,8 @@ export interface ModelInstance {
   yaw?: number;
   /** The sprite is drawn mirrored (hflip): a kind that `mirrors` turns half way round (the truck's cab to +X). */
   mirror?: boolean;
+  /** Drawn as its mirror image, for the kinds that vary so (`flips`); stable per object. */
+  flip?: boolean;
 }
 
 /** Tints (sRGB): A, B, and the highlight tone up-facing tint-A surfaces blend to (none: no blend). */
@@ -54,6 +59,8 @@ interface KindSpec {
   spin: number;
   /** Turns half way round when the sprite is mirrored. */
   mirror?: boolean;
+  /** Varies by a mirror image per object (ModelInstance.flip): a second group of meshes, its geometry rewound. */
+  flips?: boolean;
   /** The kit trees' material convention (crown × material colour = tint A, trunk = uTrunk). */
   tree?: boolean;
   parts: PartSpec[];
@@ -93,7 +100,7 @@ function rockTints(c: SpriteColors, t: SpriteTones, fallback: RGB): Tints {
 
 const SPECS: Partial<Record<ObjectModelKind, KindSpec>> = {
   pokeball: { roughness: 0.35, spin: 0, parts: [{ geometry: pokeBallGeo, tints: (c) => { const a = c.accent ?? DEFAULT.ball; return { a, b: a }; } }] },
-  boulder: { roughness: 0.65, spin: 0.4, parts: [{ geometry: () => boulderGeo(87), tints: (c, t) => rockTints(c, t, DEFAULT.boulder) }] },
+  boulder: { roughness: 0.65, spin: Math.PI, flips: true, parts: [{ geometry: () => boulderGeo(87), tints: (c, t) => rockTints(c, t, DEFAULT.boulder) }] },
   crackedRock: { roughness: 0.8, spin: 0.5, parts: [{ geometry: () => crackedRockGeo(86), tints: (c, t) => rockTints(c, t, DEFAULT.rock) }] },
   // the crown in the sprite's lime highlight (its outline green left out): the cuttable tree reads apart from the
   // kit's trees and bushes, as the GBA's bright cap does
@@ -177,15 +184,23 @@ interface Part {
   tintH: THREE.Color;
 }
 
-interface Kind {
-  spec: KindSpec;
+/** Meshes drawn together (a kind's parts), or the same mirrored. */
+interface Group {
   parts: Part[];
-  /** The colours the tints were last derived from (SpriteColorCache hands out one object per key). */
-  colors: SpriteColors | null;
   /** This frame's instances; the most ever set (the uploaded part of instanceMatrix); matrices changed. */
   n: number;
   used: number;
   dirty: boolean;
+}
+
+interface Kind {
+  spec: KindSpec;
+  /** [0]: the kind's meshes; [1]: their mirror images (`flips`). */
+  groups: Group[];
+  /** The colours the tints were last derived from (SpriteColorCache hands out one object per key). */
+  colors: SpriteColors | null;
+  /** This frame's instances, all groups. */
+  n: number;
 }
 
 /**
@@ -230,7 +245,9 @@ export class ObjectModels {
     this.group.name = 'objectModels';
     for (const [name, spec] of Object.entries(SPECS) as [ObjectModelKind, KindSpec][]) {
       const parts = spec.parts.map((p) => this.part(kit, name, spec, p));
-      const k: Kind = { spec, parts, colors: null, n: 0, used: 0, dirty: false };
+      const groups: Group[] = [{ parts, n: 0, used: 0, dirty: false }];
+      if (spec.flips) groups.push({ parts: parts.map((p) => this.mirrorPart(p)), n: 0, used: 0, dirty: false });
+      const k: Kind = { spec, groups, colors: null, n: 0 };
       this.tint(k, NO_COLORS, NO_TONES);
       this.kinds.set(name, k);
     }
@@ -276,6 +293,23 @@ export class ObjectModels {
     return { spec: p, mesh, material, tintA, tintB, tintH };
   }
 
+  /** The mirror image of a part: its geometry rewound (models.ts mirroredGeo), the same material and tints. */
+  private mirrorPart(p: Part): Part {
+    const src = p.mesh;
+    const mesh = new THREE.InstancedMesh(mirroredGeo(src.geometry), p.material, MAX_PER_KIND);
+    mesh.customDepthMaterial = src.customDepthMaterial;
+    mesh.name = `${src.name}:mirror`;
+    mesh.count = 0;
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.castShadow = src.castShadow;
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.tints = src.userData.tints;
+    this.group.add(mesh);
+    return { ...p, mesh };
+  }
+
   /** Whether a kind has meshes (berry plants: Task 9). */
   supports(kind: ObjectModelKind): boolean {
     return this.kinds.has(kind);
@@ -297,22 +331,29 @@ export class ObjectModels {
   /** Resets every mesh's count, then places the instances (≤ MAX_PER_KIND each); a kind's tints follow its
    *  first instance's colours and tones (the defaults where one is missing). */
   set(list: readonly ModelInstance[]): void {
-    for (const k of this.kinds.values()) k.n = 0;
+    for (const k of this.kinds.values()) {
+      k.n = 0;
+      for (const g of k.groups) g.n = 0;
+    }
     for (const inst of list) {
       const k = this.kinds.get(inst.kind);
       if (!k || k.n >= MAX_PER_KIND) continue;
       if (k.n === 0) this.tint(k, inst.colors, inst.tones ?? NO_TONES);
       // (yaw in 0..2π → −spin..spin; a mirrored sprite turns a mirroring kind half way round)
       const yaw = ((inst.yaw ?? Math.PI) / Math.PI - 1) * k.spec.spin + (k.spec.mirror && inst.mirror ? Math.PI : 0);
-      this.place(k, k.n++, inst.x, inst.y, inst.z, yaw);
+      const g = k.groups[inst.flip && k.groups.length > 1 ? 1 : 0];
+      this.place(g, g.n++, inst.x, inst.y, inst.z, yaw);
+      k.n++;
     }
     for (const k of this.kinds.values()) {
-      for (const p of k.parts) {
-        p.mesh.count = k.n;
-        p.mesh.visible = k.n > 0;
-        if (k.dirty) markRange(p.mesh.instanceMatrix, k.used);
+      for (const g of k.groups) {
+        for (const p of g.parts) {
+          p.mesh.count = g.n;
+          p.mesh.visible = g.n > 0;
+          if (g.dirty) markRange(p.mesh.instanceMatrix, g.used);
+        }
+        g.dirty = false;
       }
-      k.dirty = false;
     }
   }
 
@@ -328,7 +369,7 @@ export class ObjectModels {
    */
   precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, root: THREE.Object3D = this.group,
     frame?: () => void): Promise<void> {
-    const meshes = [...this.kinds.values()].flatMap((k) => k.parts.map((p) => p.mesh));
+    const meshes = [...this.kinds.values()].flatMap((k) => k.groups.flatMap((g) => g.parts.map((p) => p.mesh)));
     const saved = meshes.map((m) => [m.visible, m.count] as const);
     const groupVisible = this.group.visible;
     this.group.visible = true;
@@ -344,8 +385,8 @@ export class ObjectModels {
     }
   }
 
-  /** Instance i of kind k at (x, y, z), turned by `yaw` about the vertical; flags a changed matrix. */
-  private place(k: Kind, i: number, x: number, y: number, z: number, yaw: number): void {
+  /** Instance i of group g at (x, y, z), turned by `yaw` about the vertical; flags a changed matrix. */
+  private place(k: Group, i: number, x: number, y: number, z: number, yaw: number): void {
     const c = Math.cos(yaw), s = Math.sin(yaw);
     // (column-major; the other elements keep the identity the meshes were made with; the parts move together)
     for (const p of k.parts) {
@@ -362,7 +403,7 @@ export class ObjectModels {
   private tint(k: Kind, colors: SpriteColors, tones: SpriteTones): void {
     if (colors === k.colors) return;
     k.colors = colors;
-    for (const p of k.parts) {
+    for (const p of k.groups[0].parts) {
       const t = p.spec.tints(colors, tones);
       p.tintA.setRGB(...toLinear(t.a));
       p.tintB.setRGB(...toLinear(t.b));
