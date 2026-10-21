@@ -33,7 +33,8 @@ export function scale4x(src: Uint32Array, w: number, h: number): Uint32Array {
 
 // Scale-free xBR (lv2): the CPU reference of actors/xbr.glsl.ts (XBR_GLSL), the same steps in the same
 // order. A sample at any continuous texel position: the texel E containing it, rounded at each of its four
-// corners where an edge runs diagonally through that corner — a 45° cut, or the 30° / 60° lines of a 2:1
+// corners where an edge runs diagonally through that corner and on past it (Hyllian's lv1 restriction:
+// small blocks and single pixels keep their corners) — a 45° cut, or the 30° / 60° lines of a 2:1
 // staircase — towards the more similar of the corner's two neighbours. Edges are smoothed at any
 // magnification; texel centres keep their colour (one-pixel details stay).
 //
@@ -67,6 +68,12 @@ function xbrCorner(E: Float64Array, F: Float64Array, H: Float64Array, I: Float64
   if (dEF <= XBR.eq || dEH <= XBR.eq) return [0, 0];
   // (none of the three lines reaches this sample: no coverage, whatever the edge)
   if (fx + fy <= 1.5 - d && fy + 0.5 * fx <= 1.0 - d && 2.0 * fx + fy <= 2.0 - d) return [0, 0];
+  // lv1: only where the edge runs on (past F or H, or E continues diagonally): small blocks, single pixels and
+  // their highlights keep their corners (rounding them all thins light details inside dark outlines)
+  const eq = (a: Float64Array, b: Float64Array) => xbrDf(a, b) <= XBR.eq;
+  const runsOn = (!eq(F, B) && !eq(F, C)) || (!eq(H, D) && !eq(H, G))
+    || (eq(E, I) && ((!eq(F, F4) && !eq(F, I4)) || (!eq(H, H5) && !eq(H, I5)))) || eq(E, G) || eq(E, C);
+  if (!runsOn) return [0, 0];
   const edge = xbrDf(E, C) + xbrDf(E, G) + xbrDf(I, H5) + xbrDf(I, F4) + 4.0 * xbrDf(H, F) + XBR_TIE
     < xbrDf(H, D) + xbrDf(H, I5) + xbrDf(F, I4) + xbrDf(F, B) + 4.0 * xbrDf(E, I);
   if (!edge) return [0, 0];

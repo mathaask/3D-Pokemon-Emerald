@@ -47,6 +47,16 @@ describe('xbrSample', () => {
       expect(a(st, W, H, 2 * y + 1.6, y + 0.9)).toBeGreaterThan(0.5); // the next one fills under the line (f' = (0.4, 0.9): lv2 only)
     }
   });
+  it('rounds corners only where an edge runs on (xBR-lv2 restriction): small blocks and single pixels keep their shape', () => {
+    // a 2x2 block and a single pixel on transparency: features, not lines — no corner is cut
+    const img = new Uint32Array(64);
+    img[2 * 8 + 2] = img[2 * 8 + 3] = img[3 * 8 + 2] = img[3 * 8 + 3] = X;
+    img[5 * 8 + 6] = X;
+    for (const [x, y] of [[2.05, 2.05], [3.95, 2.05], [2.05, 3.95], [3.95, 3.95], [6.05, 5.05], [6.95, 5.95]]) expect(a(img, 8, 8, x, y)).toBe(1);
+    // … while the same corner on a longer staircase is cut
+    const st = new Uint32Array(64).map((_, i) => ((i % 8) <= Math.floor(i / 8) ? X : O));
+    expect(a(st, 8, 8, 3.95, 3.05)).toBe(0);
+  });
   it('blends opaque colours towards the more similar neighbour, without changing alpha', () => {
     const SKIN = 0xffa8d0ff, RED = 0xff3030e0;
     // a 45° staircase between skin (x <= y) and red

@@ -46,6 +46,11 @@ vec2 xbrCorner(vec4 kE, vec4 kF, vec4 kH, vec4 kI, vec4 kB, vec4 kD, vec4 kC, ve
   if (dEF <= XBR_EQ || dEH <= XBR_EQ) return vec2(0.0);
   // (none of the three lines reaches this sample: no coverage, whatever the edge)
   if (f.x + f.y <= 1.5 - d && f.y + 0.5 * f.x <= 1.0 - d && 2.0 * f.x + f.y <= 2.0 - d) return vec2(0.0);
+  // lv1: only where the edge runs on (past F or H, or E continues diagonally)
+  bool runsOn = (xbrDf(kF, kB) > XBR_EQ && xbrDf(kF, kC) > XBR_EQ) || (xbrDf(kH, kD) > XBR_EQ && xbrDf(kH, kG) > XBR_EQ)
+    || (xbrDf(kE, kI) <= XBR_EQ && ((xbrDf(kF, kF4) > XBR_EQ && xbrDf(kF, kI4) > XBR_EQ) || (xbrDf(kH, kH5) > XBR_EQ && xbrDf(kH, kI5) > XBR_EQ)))
+    || xbrDf(kE, kG) <= XBR_EQ || xbrDf(kE, kC) <= XBR_EQ;
+  if (!runsOn) return vec2(0.0);
   bool edge = xbrDf(kE, kC) + xbrDf(kE, kG) + xbrDf(kI, kH5) + xbrDf(kI, kF4) + 4.0 * xbrDf(kH, kF) + XBR_TIE
             < xbrDf(kH, kD) + xbrDf(kH, kI5) + xbrDf(kF, kI4) + xbrDf(kF, kB) + 4.0 * xbrDf(kE, kI);
   if (!edge) return vec2(0.0);
