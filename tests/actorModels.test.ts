@@ -69,7 +69,7 @@ describe('object model geometry', () => {
       expect(box(g).min.y).toBeGreaterThan(-0.02);
       expect(box(g).max.x - box(g).min.x).toBeLessThanOrEqual(1.0);
       expect(box(g).max.z - box(g).min.z).toBeLessThanOrEqual(1.0);
-      expect(tris(g)).toBeLessThanOrEqual(4000);
+      expect(tris(g)).toBeLessThanOrEqual(2500);
     }
     expect(box(plants[0]).max.y).toBeCloseTo(0.12, 1);     // the soil mound
     const fruit = box(berryFruitGeo()), flower = box(berryFlowerGeo());
@@ -77,7 +77,8 @@ describe('object model geometry', () => {
     expect(fruit.min.y).toBeLessThan(-0.06);
     expect(Math.max(flower.max.x, flower.max.z)).toBeCloseTo(0.09, 1);
     expect(flower.max.y - flower.min.y).toBeLessThan(0.05);   // a disc facing up
-    expect(tris(berryFruitGeo()) + tris(berryFlowerGeo())).toBeLessThanOrEqual(1500);
+    // (a few px on screen, up to 7 a plant: sub-pixel triangles cost the GPU more than they show)
+    expect(tris(berryFruitGeo()) + tris(berryFlowerGeo())).toBeLessThanOrEqual(500);
   });
   it('hangs the flowers and berries on the bush\'s crown, its normals pointing out, the same anchors for a seed', () => {
     for (const s of [4, 5] as const) {

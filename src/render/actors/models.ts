@@ -672,7 +672,8 @@ function addBlade(parts: Parts, s: BladeShape, m: THREE.Matrix4, nu = 8, nv = 4)
 function soilMound(parts: Parts, seed: number, w: number, h: number, clods: number, dimple = false): void {
   const r = rng(seed);
   const o = [r() * 50, r() * 50, r() * 50];
-  const g = polarGrid(7, 28, (rho, a, out) => {
+  // (a plant's small foot mound: a coarser grid)
+  const g = polarGrid(w >= 0.45 ? 7 : 4, w >= 0.45 ? 28 : 16, (rho, a, out) => {
     const ca = Math.cos(a), sa = Math.sin(a);
     const rr = (rho * w) / 2 * (1 + 0.1 * noise3(ca * 1.3 + o[0], sa * 1.3 + o[1], o[2]));
     let y = h * Math.pow(1 - rho * rho, 1.6) * (1 + 0.22 * noise3(ca * rho * 3.5 + o[1], sa * rho * 3.5 + o[2], o[0]));
@@ -753,7 +754,7 @@ function saplingGeo(seed: number): THREE.BufferGeometry {
   pairs.forEach((p, k) => {
     const az = turn + (k * Math.PI) / 2 + (r() - 0.5) * 0.3;
     for (const side of [0, Math.PI]) {
-      addBlade(parts, { len: p.len, wid: p.wid, fold: 0.3, bend: -0.14, round: 0.2 }, bladeAt(along(p.y), az + side, p.elev + (r() - 0.5) * 0.12));
+      addBlade(parts, { len: p.len, wid: p.wid, fold: 0.3, bend: -0.14, round: 0.2 }, bladeAt(along(p.y), az + side, p.elev + (r() - 0.5) * 0.12), 6, 2);
     }
   });
   for (const side of [0, Math.PI]) {
@@ -786,7 +787,7 @@ function bushOf(seed: number): Bush {
     stem(parts, [new THREE.Vector3(0, 0.01, 0), new THREE.Vector3(Math.cos(a) * 0.04, 0.2, Math.sin(a) * 0.04),
       new THREE.Vector3(Math.cos(a) * 0.12, BUSH.base + 0.12, Math.sin(a) * 0.1)], 0.032, 0.02);
   }
-  const crown = blobCrown(seed, 7, 0.2, 0.15, 0.22, 0, 0.12, 2);
+  const crown = blobCrown(seed, 7, 0.2, 0.15, 0.22, 0, 0.12, 1);
   crown.computeBoundingBox();
   const bb = crown.boundingBox!, size = bb.getSize(new THREE.Vector3());
   crown.applyMatrix4(new THREE.Matrix4().makeTranslation(0, BUSH.base, 0)
@@ -810,7 +811,7 @@ function bushOf(seed: number): Bush {
     const out = h.p.clone().sub(centre).normalize();
     const len = BUSH.leaf * lerp(0.85, 1.1, r());
     addBlade(parts, { len, wid: len * 0.62, fold: 0.35, bend: -0.16, round: 0.45 },
-      bladeAt(h.p.clone().addScaledVector(out, -BUSH.sink), Math.atan2(out.x, out.z), Math.asin(out.y) * 0.75 + 0.18, (r() - 0.5) * 0.8), 5, 2);
+      bladeAt(h.p.clone().addScaledVector(out, -BUSH.sink), Math.atan2(out.x, out.z), Math.asin(out.y) * 0.75 + 0.18, (r() - 0.5) * 0.8), 4, 2);
   }
   b = { body: parts.build(), hit, centre };
   bushes.set(seed, b);
@@ -875,7 +876,7 @@ export function berryFruitGeo(): THREE.BufferGeometry {
   return cached('berryFruit', () => {
     const parts = new Parts();
     const R = 0.07;
-    const ball = new THREE.SphereGeometry(R, 18, 12);
+    const ball = new THREE.SphereGeometry(R, 12, 8);
     ball.deleteAttribute('uv');
     // (a little flattened, a dimple where the calyx sits)
     const pos = ball.getAttribute('position') as THREE.BufferAttribute;
@@ -905,9 +906,9 @@ export function berryFlowerGeo(): THREE.BufferGeometry {
     for (let k = 0; k < 5; k++) {
       const a = (k / 5) * Math.PI * 2;
       addBlade(parts, { len: 0.08, wid: 0.062, fold: 0.18, bend: 0.22, round: 1 },
-        bladeAt(new THREE.Vector3(Math.sin(a) * 0.01, 0, Math.cos(a) * 0.01), a, 0.18));
+        bladeAt(new THREE.Vector3(Math.sin(a) * 0.01, 0, Math.cos(a) * 0.01), a, 0.18), 4, 2);
     }
-    const heart = new THREE.SphereGeometry(0.024, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    const heart = new THREE.SphereGeometry(0.024, 8, 3, 0, Math.PI * 2, 0, Math.PI / 2);
     heart.deleteAttribute('uv');
     heart.scale(1, 0.6, 1);
     heart.translate(0, 0.004, 0);

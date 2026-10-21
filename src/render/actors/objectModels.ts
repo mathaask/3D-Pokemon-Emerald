@@ -245,6 +245,8 @@ interface BerryMeshes {
   fruit: Batch;
   /** The flowers' (stage 4) and berries' (stage 5) placements on a plant (plant space). */
   anchors: Record<4 | 5, THREE.Matrix4[]>;
+  /** Every berry mesh (bodies, flowers, berries). */
+  all: Batch[];
   /** Plants this frame. */
   plants: number;
 }
@@ -357,13 +359,10 @@ export class ObjectModels {
         return new THREE.Matrix4().compose(a, q, one);
       });
     };
-    return {
-      bodies: stages.map((s) => batch(`berry${s}`, berryPlantGeo(s, BERRY.seed).body, matte, MAX_PER_KIND, true)),
-      flower: batch('berryFlower', berryFlowerGeo(), matte, MAX_PER_KIND * BERRY.anchors, false),
-      fruit: batch('berryFruit', berryFruitGeo(), glossy, MAX_PER_KIND * BERRY.anchors, false),
-      anchors: { 4: anchors(4), 5: anchors(5) },
-      plants: 0,
-    };
+    const bodies = stages.map((s) => batch(`berry${s}`, berryPlantGeo(s, BERRY.seed).body, matte, MAX_PER_KIND, true));
+    const flower = batch('berryFlower', berryFlowerGeo(), matte, MAX_PER_KIND * BERRY.anchors, false);
+    const fruit = batch('berryFruit', berryFruitGeo(), glossy, MAX_PER_KIND * BERRY.anchors, false);
+    return { bodies, flower, fruit, all: [...bodies, flower, fruit], anchors: { 4: anchors(4), 5: anchors(5) }, plants: 0 };
   }
 
   /**
@@ -462,7 +461,7 @@ export class ObjectModels {
     }
     const b = this.berry;
     b.plants = 0;
-    for (const m of this.berryBatches()) m.n = 0;
+    for (const m of this.berry.all) m.n = 0;
     for (const inst of list) {
       if (inst.kind === 'berry') {
         this.placeBerry(inst);
@@ -487,7 +486,7 @@ export class ObjectModels {
         g.dirty = false;
       }
     }
-    for (const m of this.berryBatches()) {
+    for (const m of this.berry.all) {
       m.mesh.count = m.n;
       m.mesh.visible = m.n > 0;
       if (m.dirty) markRange(m.mesh.instanceMatrix, m.used);
@@ -496,12 +495,8 @@ export class ObjectModels {
     }
   }
 
-  private berryBatches(): Batch[] {
-    return [...this.berry.bodies, this.berry.flower, this.berry.fruit];
-  }
-
   /**
-   * A berry plant: its stage's body at (x, y, z) turned by its yaw (a full turn, stable per object), in its leaves'
+   * A berry plant: its stage's body at (x, y, z) turned by its yaw (−BERRY.spin..spin, stable per object), in its leaves'
    * colour; at stage 4 its flowers, at stage 5 its berries, at its anchors (the plant's placement × the anchor's),
    * in its accent.
    */
@@ -554,7 +549,7 @@ export class ObjectModels {
   precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, root: THREE.Object3D = this.group,
     frame?: () => void): Promise<void> {
     const meshes = [...this.kinds.values()].flatMap((k) => k.groups.flatMap((g) => g.parts.map((p) => p.mesh)))
-      .concat(this.berryBatches().map((m) => m.mesh));
+      .concat(this.berry.all.map((m) => m.mesh));
     const saved = meshes.map((m) => [m.visible, m.count] as const);
     const groupVisible = this.group.visible;
     this.group.visible = true;
