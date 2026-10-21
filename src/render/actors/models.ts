@@ -2,15 +2,16 @@
 // moving truck, drawn by ObjectModels where their sprites stand. Every geometry stands on y = 0, centred on
 // x = z = 0, with position, normal and a 4-component colour: RGB = a shade (× a tint) or a fixed linear colour,
 // alpha = a tint code read by the models' material (TINT): 1 fixed colour, 0.5 tint A × shade, 0 tint B × shade.
-// The tints are the object's own sprite colours (objectModels.ts). Shapes follow the kit's look: rounded,
-// soft-faceted noise-displaced icospheres for rocks (props.ts), the trees' blob crowns for the Cut tree, light
-// tops and darker, occluded undersides baked into the shade. Cached for the session (`userData.shared`).
+// The tints are the object's own sprite colours and tones (objectModels.ts). Shapes follow the kit's look:
+// noise-displaced icospheres for rocks (props.ts; the boulder smooth, the cracked rock a pile of chiselled
+// chunks), the trees' blob crowns for the Cut tree's mushroom cap, darker occluded undersides baked into the
+// shade. Cached for the session (`userData.shared`).
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { hashCell, noise3, rng } from '../kit/geom';
-import { smallTreeGeo } from '../kit/trees';
+import { noise3, rng } from '../kit/geom';
+
 import type { RGB } from '../kit/palette';
 
 /** Tint codes (the colour attribute's alpha). */
@@ -121,7 +122,7 @@ interface RockShape {
   size: [number, number, number];
   /** Large and fine noise amplitudes (share of the radius). */
   noise: [number, number];
-  /** Plane cuts (the chiselled faces): how many, and their distances from the centre (unit sphere: lower = deeper). */
+  /** Plane cuts (chiselled faces): how many, and their distances from the centre (unit sphere: lower = deeper). */
   cuts: number;
   cutDepth: [number, number];
   /** Facet look: share of the face normal in the shading normal (0 smooth, 1 flat). */
@@ -130,34 +131,27 @@ interface RockShape {
   floor: number;
 }
 
-/** Shade of a rock vertex: a dark, occluded underside to a light top, upward faces lit like the sprites' highlight,
- *  a little variation per facet. */
-function rockShade(y: number, height: number, ny: number, face: number, seed: number): RGB {
-  const t = smooth(y / height, 0.0, 0.9), up = smooth(ny, 0.3, 0.95);
-  const jitter = 0.92 + 0.16 * (hashCell(face, seed, 31) / 4294967296);
-  const k = lerp(0.45, 1.0, t) * lerp(0.85, 1.75, up) * jitter;
-  // (the kit's warm lights and cool shadows, as the trees' crowns)
-  const w = t * up;
-  return [k * lerp(0.94, 1.05, w), k * lerp(0.98, 1.0, w), k * lerp(1.08, 0.86, w)];
+/** Shade of a rock vertex: occlusion from a dark underside up to the top and ±10 % mottling (noise3 over the
+ *  surface). The lit tops are the material's: tint A (the sprite's body tone) blends towards its highlight tone
+ *  on up-facing normals (objectModels.ts). */
+function rockShade(p: THREE.Vector3, height: number, seed: number): RGB {
+  const t = smooth(p.y / height, 0.0, 0.85);
+  const mottle = 1 + 0.1 * noise3(p.x * 6 + (seed % 97), p.y * 6, p.z * 6);
+  return k3(lerp(0.55, 1.0, t) * mottle);
 }
 
-interface SurfaceHit { p: THREE.Vector3; n: THREE.Vector3 }
-
 /**
- * A rock body (non-indexed): a unit icosphere displaced by two noise octaves, chiselled by plane cuts (big flat
- * faces), its underside pressed flat, scaled to `shape.size`, standing on y = 0 and centred on x = z = 0, with
- * soft facets (the face normal blended with the smooth one). `hit(dir)` casts a ray from the body's centre:
- * where it leaves the surface, and that facet's normal (the cracks are laid on it).
+ * A rock body (non-indexed): a unit icosphere displaced by two noise octaves, optionally chiselled by plane cuts
+ * (flat faces on the top and sides), its underside pressed flat, scaled to `shape.size`, standing on y = 0 and
+ * centred on x = z = 0, its shading normals the smooth ones blended with each face's (`facets`).
  */
-function rockBody(seed: number, shape: RockShape, detail: number) {
+function rockBody(seed: number, shape: RockShape, detail: number): THREE.BufferGeometry {
   const r = rng(seed);
   const o1 = [r() * 50, r() * 50, r() * 50], o2 = [r() * 50, r() * 50, r() * 50];
   const planes: { n: THREE.Vector3; d: number }[] = [];
   for (let j = 0; j < shape.cuts; j++) {
-    // cuts on the top and the sides (the camera's view), none underneath
     const a = (j / shape.cuts) * Math.PI * 2 + r() * 0.9, y = -0.15 + r() * 1.0;
-    const n = new THREE.Vector3(Math.cos(a), y, Math.sin(a)).normalize();
-    planes.push({ n, d: lerp(shape.cutDepth[0], shape.cutDepth[1], r()) });
+    planes.push({ n: new THREE.Vector3(Math.cos(a), y, Math.sin(a)).normalize(), d: lerp(shape.cutDepth[0], shape.cutDepth[1], r()) });
   }
   const ico = new THREE.IcosahedronGeometry(1, detail);
   ico.deleteAttribute('normal');
@@ -189,132 +183,188 @@ function rockBody(seed: number, shape: RockShape, detail: number) {
   g.computeVertexNormals();
   const flat = g.toNonIndexed();
   g.dispose();
-  // soft facets: each triangle's own normal blended with the smooth vertex normals
   const fp = flat.getAttribute('position'), fn = flat.getAttribute('normal') as THREE.BufferAttribute;
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), face = new THREE.Vector3(), n = new THREE.Vector3();
-  const faces: THREE.Vector3[] = [];
   for (let t = 0; t < fp.count; t += 3) {
     a.fromBufferAttribute(fp, t); b.fromBufferAttribute(fp, t + 1); c.fromBufferAttribute(fp, t + 2);
     face.subVectors(c, b).cross(a.sub(b)).normalize();
-    faces.push(face.clone());
     for (let w = t; w < t + 3; w++) {
       n.fromBufferAttribute(fn, w).multiplyScalar(1 - shape.facets).addScaledVector(face, shape.facets).normalize();
       fn.setXYZ(w, n.x, n.y, n.z);
     }
   }
-  const centre = new THREE.Vector3(0, shape.size[1] * 0.42, 0);
-  const ray = new THREE.Ray();
-  const hitAt = new THREE.Vector3();
-  /** Where a ray from the centre along `dir` leaves the surface, with that facet's normal (null: none). */
-  const hit = (dir: THREE.Vector3): SurfaceHit | null => {
+  return flat;
+}
+
+/** Where a ray from `centre` along `dir` leaves a (star-shaped) non-indexed geometry, with that face's normal. */
+function surfaceHit(g: THREE.BufferGeometry, centre: THREE.Vector3): (dir: THREE.Vector3) => { p: THREE.Vector3; n: THREE.Vector3 } | null {
+  const pos = g.getAttribute('position');
+  const ray = new THREE.Ray(), at = new THREE.Vector3();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  return (dir) => {
     ray.set(centre, dir);
-    let best: SurfaceHit | null = null, bestT = -1;
-    for (let t = 0; t < fp.count; t += 3) {
-      a.fromBufferAttribute(fp, t); b.fromBufferAttribute(fp, t + 1); c.fromBufferAttribute(fp, t + 2);
-      if (!ray.intersectTriangle(a, b, c, false, hitAt)) continue;
-      const along = hitAt.distanceTo(centre);
-      if (along > bestT) { bestT = along; best = { p: hitAt.clone(), n: faces[t / 3].clone() }; }
+    let best: { p: THREE.Vector3; n: THREE.Vector3 } | null = null, far = -1;
+    for (let t = 0; t < pos.count; t += 3) {
+      a.fromBufferAttribute(pos, t); b.fromBufferAttribute(pos, t + 1); c.fromBufferAttribute(pos, t + 2);
+      if (!ray.intersectTriangle(a, b, c, false, at)) continue;
+      const d = at.distanceTo(centre);
+      if (d > far) { far = d; best = { p: at.clone(), n: new THREE.Vector3().subVectors(c, b).cross(a.sub(b)).normalize() }; }
     }
     return best;
   };
-  return { geometry: flat, hit, height: shape.size[1] };
 }
 
-/** ≈0.9 wide, 0.8 tall: a round, softly faceted boulder in tint A with a few shallow creases (tint A × 0.62) round
- *  its sides, like the wavy lines of the sprite. */
+/**
+ * A crease (tint B × `shade`: the sprite's crevice tone) laid along the surface: a wavy path from (elev, azim)
+ * (rad; azimuth 0 = +Z) sweeping `sweep` rad round and dropping `drop` rad, sampled by rays every few degrees,
+ * just off each face, `w0` wide tapering to `w1`.
+ */
+function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, elev: number, azim: number, sweep: number, drop: number,
+  wave: number, w0: number, w1: number, shade = 1): void {
+  const pts: { p: THREE.Vector3; n: THREE.Vector3 }[] = [];
+  const N = 16, d = new THREE.Vector3();
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, e = elev - drop * t + wave * Math.sin(t * Math.PI * 3), az = azim + sweep * t;
+    const h = hit(d.set(Math.cos(e) * Math.sin(az), Math.sin(e), Math.cos(e) * Math.cos(az)));
+    if (h) pts.push(h);
+  }
+  if (pts.length < 2) return;
+  const pos: number[] = [], nor: number[] = [];
+  const tan = new THREE.Vector3();
+  const edge = (i: number, s: number) => {
+    const { p, n } = pts[i];
+    tan.subVectors(pts[Math.min(i + 1, pts.length - 1)].p, pts[Math.max(i - 1, 0)].p).normalize();
+    const side = tan.clone().cross(n).normalize();
+    return { v: p.clone().addScaledVector(n, 0.006).addScaledVector(side, (s * lerp(w0, w1, i / (pts.length - 1))) / 2), n };
+  };
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const q = [edge(i, 1), edge(i, -1), edge(i + 1, -1), edge(i + 1, 1)];
+    for (const [x, y, z] of [[0, 1, 2], [0, 2, 3]]) {
+      const f = q[y].v.clone().sub(q[x].v).cross(q[z].v.clone().sub(q[x].v));
+      for (const e of f.dot(q[x].n) >= 0 ? [q[x], q[y], q[z]] : [q[x], q[z], q[y]]) { pos.push(e.v.x, e.v.y, e.v.z); nor.push(e.n.x, e.n.y, e.n.z); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  parts.add(g, TINT.b, k3(shade));
+}
+
+/**
+ * ≈0.94 wide, 0.74 tall: the Strength boulder, a smooth round stone (soft facets) in tint A, mottled ±10 %, with a
+ * few wavy creases round its upper sides in the sprite's crevice tone (tint B), as its dark lines read.
+ */
 export function boulderGeo(seed: number): THREE.BufferGeometry {
   return cached(`boulder:${seed}`, () => {
-    const body = rockBody(seed, { size: [0.94, 0.74, 0.86], noise: [0.16, 0.05], cuts: 3, cutDepth: [0.78, 0.88], facets: 0.95, floor: -0.55 }, 1);
-    const parts = new Parts().add(body.geometry, TINT.a, (p, n, i) => rockShade(p.y, body.height, n.y, Math.floor(i / 3), seed));
+    const H = 0.74;
+    const body = rockBody(seed, { size: [0.94, H, 0.86], noise: [0.09, 0.04], cuts: 0, cutDepth: [1, 1], facets: 0.4, floor: -0.55 }, 2);
+    const parts = new Parts().add(body, TINT.a, (p) => rockShade(p, H, seed));
+    const hit = surfaceHit(body, new THREE.Vector3(0, H * 0.45, 0));
     const r = rng(seed ^ 0x2545f491);
     for (let k = 0; k < 4; k++) {
-      const pts = crackPoints(body.hit, r, 0.75 + r() * 0.35, (k / 4) * Math.PI * 2 + r() * 0.8, 2, 0.3, 0.3);
-      crackRibbon(parts, pts, 0.04, 0.012, 0.5);
+      crease(parts, hit, 0.55 + r() * 0.35, (k / 4) * Math.PI * 2 + r() * 0.6, 0.7 + r() * 0.4, 0.25 + r() * 0.2, 0.08, 0.05, 0.016);
     }
     return parts.build();
   });
 }
 
+/** Chunks of the cracked rock: centre x, base y, centre z and size (x, y, z). Three at the base round the core,
+ *  one on top; the gaps between them show the dark core. */
+const ROCK_CHUNKS: [number, number, number, [number, number, number]][] = [
+  [-0.2, 0, 0.14, [0.5, 0.44, 0.52]],
+  [0.22, 0, 0.12, [0.46, 0.4, 0.52]],
+  [0.0, 0, -0.16, [0.68, 0.44, 0.5]],
+  [0.02, 0.18, 0.0, [0.46, 0.42, 0.46]],
+];
+
 /**
- * Surface points along a crack: a jagged path through `steps` + 1 control directions from (elev, azim) (rad;
- * azimuth 0 = +Z, the camera's side), dropping by about `drop` and swinging ±`swing` per step, each segment
- * sampled by SUB rays (the points follow the facets closely).
+ * ≈0.9 wide, 0.6 tall: the breakable rock, a pile of four chiselled chunks (softer facets, tint A) split by wide
+ * cracks: the gaps between them open onto a dark core in the sprite's crevice tone (tint B), as the sprite's
+ * chunks and dark cracks read.
  */
-function crackPoints(hit: (d: THREE.Vector3) => SurfaceHit | null, r: () => number,
-  elev: number, azim: number, steps: number, drop: number, swing: number): SurfaceHit[] {
-  const SUB = 5;
-  const dirs: THREE.Vector3[] = [];
-  let side = r() < 0.5 ? -1 : 1;
-  for (let i = 0; i <= steps; i++) {
-    dirs.push(new THREE.Vector3(Math.cos(elev) * Math.sin(azim), Math.sin(elev), Math.cos(elev) * Math.cos(azim)));
-    elev -= drop * (0.7 + 0.6 * r());
-    azim += side * swing * (0.5 + r());
-    side = -side;
-  }
-  const out: SurfaceHit[] = [];
-  const d = new THREE.Vector3();
-  for (let i = 0; i + 1 < dirs.length; i++) {
-    for (let s = 0; s < SUB || (i + 2 === dirs.length && s === SUB); s++) {
-      const h = hit(d.lerpVectors(dirs[i], dirs[i + 1], s / SUB).normalize());
-      if (h) out.push(h);
-    }
-  }
-  return out;
-}
-
-/** A dark ribbon (tint A × `shade`) laid along the surface points `pts`, just off each facet, `w0` wide tapering
- *  to `w1`. */
-function crackRibbon(parts: Parts, pts: SurfaceHit[], w0: number, w1: number, shade = 0.45): void {
-  if (pts.length < 2) return;
-  const pos: number[] = [], nor: number[] = [];
-  const t = new THREE.Vector3();
-  const edge = (i: number, s: number) => {
-    const { p, n } = pts[i];
-    t.subVectors(pts[Math.min(i + 1, pts.length - 1)].p, pts[Math.max(i - 1, 0)].p).normalize();
-    const side = t.clone().cross(n).normalize();
-    const w = lerp(w0, w1, i / (pts.length - 1)) / 2;
-    return { v: p.clone().addScaledVector(n, 0.006).addScaledVector(side, s * w), n };
-  };
-  for (let i = 0; i + 1 < pts.length; i++) {
-    const a = edge(i, 1), b = edge(i, -1), c = edge(i + 1, -1), d = edge(i + 1, 1);
-    // two triangles, wound to face outwards
-    const tri = (p: typeof a, q: typeof a, s: typeof a) => {
-      const f = q.v.clone().sub(p.v).cross(s.v.clone().sub(p.v));
-      const list = f.dot(p.n) >= 0 ? [p, q, s] : [p, s, q];
-      for (const e of list) { pos.push(e.v.x, e.v.y, e.v.z); nor.push(e.n.x, e.n.y, e.n.z); }
-    };
-    tri(a, b, c);
-    tri(a, c, d);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  parts.add(g, TINT.a, k3(shade));
-}
-
-/** ≈0.9 wide, 0.6 tall: a flatter, more angular rock in tint A, split by three dark crack grooves (tint A × 0.45)
- *  running down from its top over the side the camera sees. */
 export function crackedRockGeo(seed: number): THREE.BufferGeometry {
   return cached(`crackedRock:${seed}`, () => {
-    const body = rockBody(seed, { size: [0.9, 0.6, 0.82], noise: [0.14, 0.05], cuts: 8, cutDepth: [0.58, 0.76], facets: 0.95, floor: -0.4 }, 2);
-    const parts = new Parts().add(body.geometry, TINT.a, (p, n, i) => rockShade(p.y, body.height, n.y, Math.floor(i / 3), seed));
-    const r = rng(seed ^ 0x5bd1e995);
-    // a long crack from the crown down the south face, a second one towards the east, a branch off the first
-    const main = crackPoints(body.hit, r, 1.3, -0.2 + r() * 0.2, 5, 0.26, 0.2);
-    const second = crackPoints(body.hit, r, 1.15, 0.85 + r() * 0.3, 4, 0.26, 0.2);
-    crackRibbon(parts, main, 0.06, 0.016);
-    crackRibbon(parts, second, 0.05, 0.014);
-    const fork = main[Math.floor(main.length * 0.35)]?.p.clone().sub(new THREE.Vector3(0, body.height * 0.42, 0)).normalize();
-    if (fork) crackRibbon(parts, crackPoints(body.hit, r, Math.asin(fork.y) - 0.04, Math.atan2(fork.x, fork.z) - 0.1, 3, 0.18, 0.22), 0.035, 0.01);
+    const H = 0.6;
+    const parts = new Parts();
+    const core = rockBody(seed + 1, { size: [0.7, 0.48, 0.62], noise: [0.08, 0.03], cuts: 0, cutDepth: [1, 1], facets: 0.4, floor: -0.5 }, 1);
+    parts.add(core, TINT.b, (p) => k3(lerp(0.55, 0.85, smooth(p.y, 0, 0.48))));
+    ROCK_CHUNKS.forEach(([x, y, z, size], i) => {
+      const chunk = rockBody(seed * 7 + i, { size, noise: [0.1, 0.05], cuts: 5, cutDepth: [0.62, 0.8], facets: 0.75, floor: -0.45 }, 2);
+      chunk.translate(x, y, z);
+      parts.add(chunk, TINT.a, (p) => rockShade(p, H, seed + i));
+    });
     return parts.build();
   });
 }
 
 // ---------------------------------------------------------------- Cut tree
 
-/** ≈1.1 tall: the kit's small tree (trees.ts: crown alpha 1 × the material colour, trunk alpha 0.1–0.4 = bark). */
+/** The Cut tree: its cap's width and depth, height and underside (above the ground), its trunk's radius and the
+ *  scallops of the cap's rim. The trunk shows under the cap's front rim from the default camera. */
+const CUT_TREE = { width: 1.06, depth: 1.0, cap: 0.58, base: 0.42, trunk: 0.15, scallops: 7 };
+
+/**
+ * ≈1.06 wide, 1.0 tall: the cuttable tree as the GBA draws it, a squat mushroom cap on a short visible trunk, so it
+ * reads apart from the kit's trees and bushes. The cap is a lumpy dome with a scalloped, slightly overhanging rim
+ * and a dark underside (alpha 1 × the material colour, the trees' convention: light top, dark occluded under);
+ * the trunk is flagged in the vertex alpha 0.1–0.4 (the trees' TRUNK hook) with a root flare.
+ */
 export function cutTreeGeo(seed: number): THREE.BufferGeometry {
-  return smallTreeGeo(seed);
+  return cached(`cutTree:${seed}`, () => {
+    const r = rng(seed);
+    const o = [r() * 40, r() * 40, r() * 40];
+    // the dome down to 0.62π (a little past the equator: the rim overhangs), closed underneath by a disc facing down
+    const RIM = Math.PI * 0.62;
+    const dome = new THREE.SphereGeometry(1, 36, 12, 0, Math.PI * 2, 0, RIM);
+    const under = new THREE.CircleGeometry(Math.sin(RIM), 36);
+    under.rotateX(Math.PI / 2); // facing −Y
+    under.translate(0, Math.cos(RIM), 0);
+    const cap = mergeGeometries([dome.deleteAttribute('uv'), under.deleteAttribute('uv')])!;
+    dome.dispose();
+    under.dispose();
+    const p = cap.getAttribute('position') as THREE.BufferAttribute;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const az = Math.atan2(v.z, v.x);
+      // scalloped rim, lumpy dome
+      const k = 1 + 0.08 * Math.sin(az * CUT_TREE.scallops + o[0]) + 0.07 * noise3(v.x * 2 + o[0], v.y * 2 + o[1], v.z * 2 + o[2]);
+      p.setXYZ(i, v.x * k, v.y, v.z * k);
+    }
+    cap.computeBoundingBox();
+    const bb = cap.boundingBox!, size = bb.getSize(new THREE.Vector3());
+    cap.applyMatrix4(new THREE.Matrix4().makeTranslation(0, CUT_TREE.base, 0)
+      .multiply(new THREE.Matrix4().makeScale(CUT_TREE.width / size.x, CUT_TREE.cap / size.y, CUT_TREE.depth / size.z))
+      .multiply(new THREE.Matrix4().makeTranslation(0, -bb.min.y, 0)));
+    const capIndexed = mergeVertices(cap);
+    cap.dispose();
+    capIndexed.computeVertexNormals();
+    // colours: light top to a darker rim, a dark underside (the sprite's dark green band under the cap)
+    const cp = capIndexed.getAttribute('position'), cn = capIndexed.getAttribute('normal');
+    const col = new Float32Array(cp.count * 4);
+    const top = CUT_TREE.base + CUT_TREE.cap;
+    for (let i = 0; i < cp.count; i++) {
+      const t = smooth(cp.getY(i), CUT_TREE.base + 0.05, top), down = cn.getY(i) < -0.2;
+      const kk = down ? 0.3 : lerp(0.42, 1.12, t);
+      col.set([kk * lerp(0.9, 1.03, t), kk, kk * lerp(1.1, 0.95, t), 1], i * 4);
+    }
+    capIndexed.setAttribute('color', new THREE.BufferAttribute(col, 4));
+    const trunk = new THREE.CylinderGeometry(CUT_TREE.trunk * 0.8, CUT_TREE.trunk, CUT_TREE.base + 0.1, 10, 1, true);
+    trunk.translate(0, (CUT_TREE.base + 0.1) / 2, 0);
+    trunk.deleteAttribute('uv');
+    const tp = trunk.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < tp.count; i++) if (tp.getY(i) < 0.01) { tp.setX(i, tp.getX(i) * 1.5); tp.setZ(i, tp.getZ(i) * 1.5); } // root flare
+    trunk.computeVertexNormals();
+    const bark = new Float32Array(tp.count * 4);
+    for (let i = 0; i < tp.count; i++) bark.set([1, 1, 1, 0.1 + 0.3 * smooth(tp.getY(i), 0, CUT_TREE.base)], i * 4);
+    trunk.setAttribute('color', new THREE.BufferAttribute(bark, 4));
+    const g = mergeGeometries([capIndexed, trunk])!;
+    capIndexed.dispose();
+    trunk.dispose();
+    g.computeBoundingSphere();
+    g.userData.shared = true;
+    return g;
+  });
 }
 
 // ---------------------------------------------------------------- truck
@@ -327,19 +377,20 @@ const CHASSIS: RGB = [0.045, 0.045, 0.05];
 const LAMP: RGB = [0.95, 0.88, 0.62];
 const CAB: RGB = [0.76, 0.78, 0.8];
 
-/** Truck size: length (X, cab at −X as the GBA image shows it), cargo box height, depth (Z). */
-const TRUCK = { length: 3.0, height: 1.92, depth: 1.6 };
+/** Truck size: length (X, cab at −X as the GBA image shows it), cargo box height, depth (Z), cargo floor. */
+const TRUCK = { length: 3.0, height: 1.92, depth: 1.6, deck: 0.44 };
 
 /**
  * The moving truck, ≈3.0 (X) × 1.9 (Y) × 1.6 (Z), facing −X as the GBA image does (its cab on the left): a
- * rounded cargo box (tint A) with a ribbed roof and a side stripe (tint B), a white cab with dark glass and a
- * tint-B trim, black tyres with steel hubs, bumper, lamps and mirrors.
+ * rounded cargo box (tint A: the sprite's navy side) with a ribbed roof (tint B: its blue), a white cab with dark
+ * glass and a tint-B trim, black tyres with steel hubs, bumper, lamps and mirrors. The logo on its sides is a
+ * second mesh in the sprite's grey-blue (truckLogoGeo).
  */
 export function truckGeo(): THREE.BufferGeometry {
   return cached('truck', () => {
     const parts = new Parts();
     const half = TRUCK.length / 2, zd = TRUCK.depth / 2;
-    const deck = 0.44; // cargo floor
+    const deck = TRUCK.deck;
     const boxX0 = -0.52, boxX1 = half; // cargo box
     const bx = (boxX0 + boxX1) / 2, bw = boxX1 - boxX0, bh = TRUCK.height - deck;
     const at = (x: number, y: number, z: number) => new THREE.Matrix4().makeTranslation(x, y, z);
@@ -348,13 +399,10 @@ export function truckGeo(): THREE.BufferGeometry {
 
     // chassis rails under everything
     parts.box(0.02, 0.36, 0, 2.86, 0.16, 1.1, TINT.fixed, CHASSIS);
-    // cargo box (tint A), its roof panel and ribs (tint B), a stripe along both sides and the back (tint B)
+    // cargo box (tint A), its roof panel and ribs (tint B)
     parts.add(new RoundedBoxGeometry(bw, bh, TRUCK.depth, 2, 0.07), TINT.a, body(deck, TRUCK.height), at(bx, deck + bh / 2, 0));
     parts.box(bx, TRUCK.height + 0.008, 0, bw - 0.14, 0.02, TRUCK.depth - 0.14, TINT.b, k3(0.78));
     for (let k = -2; k <= 2; k++) parts.box(bx, TRUCK.height + 0.025, k * 0.27, bw - 0.18, 0.03, 0.09, TINT.b, k3(1.02));
-    const stripeY = deck + bh * 0.42, stripeH = 0.2;
-    for (const s of [-1, 1]) parts.box(bx, stripeY, s * (zd + 0.006), bw - 0.12, stripeH, 0.012, TINT.b, k3(1.0));
-    parts.box(boxX1 + 0.006, stripeY, 0, 0.012, stripeH, TRUCK.depth - 0.12, TINT.b, k3(1.0));
     // rear doors: a centre seam and two handles
     parts.box(boxX1 + 0.008, deck + bh / 2, 0, 0.016, bh - 0.16, 0.025, TINT.fixed, CHASSIS);
     for (const s of [-1, 1]) parts.box(boxX1 + 0.014, deck + bh * 0.45, s * 0.1, 0.02, 0.22, 0.035, TINT.fixed, STEEL);
@@ -400,6 +448,29 @@ export function truckGeo(): THREE.BufferGeometry {
         const hub = new THREE.CylinderGeometry(0.13, 0.13, 0.26, 12);
         hub.rotateX(Math.PI / 2);
         parts.add(hub, TINT.fixed, STEEL, at(x, R, s * (zd - 0.14)));
+      }
+    }
+    return parts.build();
+  });
+}
+
+/**
+ * The moving company's logo on both cargo sides, flat just off them (tint A of its own mesh: the sprite's
+ * grey-blue swoosh): a half ring round a half disc rising from near the deck, three speed lines running to the
+ * back, as the GBA image draws it; mirrored on the far side.
+ */
+export function truckLogoGeo(): THREE.BufferGeometry {
+  return cached('truckLogo', () => {
+    const parts = new Parts();
+    const base = TRUCK.deck + 0.12, centre = 0.12, off = TRUCK.depth / 2 + 0.005;
+    for (const side of [1, -1]) {
+      const at = (x: number, y: number) => new THREE.Matrix4().makeRotationY(side > 0 ? 0 : Math.PI)
+        .multiply(new THREE.Matrix4().makeTranslation(x, y, off));
+      parts.add(new THREE.RingGeometry(0.42, 0.6, 32, 1, 0, Math.PI), TINT.a, k3(1), at(centre, base));
+      parts.add(new THREE.CircleGeometry(0.28, 24, 0, Math.PI), TINT.a, k3(1), at(centre, base));
+      for (let k = 0; k < 3; k++) {
+        const len = 0.56 - k * 0.12;
+        parts.add(new THREE.PlaneGeometry(len, 0.075), TINT.a, k3(1), at(centre + 0.68 + len / 2, base + 0.5 - k * 0.16));
       }
     }
     return parts.build();

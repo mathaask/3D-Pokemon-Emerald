@@ -26,14 +26,23 @@ const KINDS = new Map<number, ObjectModelKind>([
   [GFX.TRUCK, 'truck'],
 ]);
 
-/** null: draw the sprite (unmapped id, a VAR id ≥ 240, or a Cut tree / rock playing its removal animation). */
+/** The refs handed out: one frozen object per (kind, stage), so a per-frame lookup allocates nothing. */
+const REFS = new Map<ObjectModelKind, ObjectModelRef[]>();
+function ref(kind: ObjectModelKind, stage: number): ObjectModelRef {
+  let byStage = REFS.get(kind);
+  if (!byStage) REFS.set(kind, (byStage = []));
+  return byStage[stage] ??= Object.freeze({ kind, stage });
+}
+
+/** null: draw the sprite (unmapped id, a VAR id ≥ 240, or a Cut tree / rock playing its removal animation).
+ *  The ref is shared and frozen (one per kind and stage). */
 export function objectModelFor(graphicsId: number, animNum: number): ObjectModelRef | null {
   if (graphicsId >= GFX_VARS) return null;
   const kind = KINDS.get(graphicsId);
   if (kind === undefined) return null;
-  if (kind === 'berry') return { kind, stage: berryStage(animNum) };
+  if (kind === 'berry') return ref(kind, berryStage(animNum));
   if ((kind === 'cutTree' || kind === 'crackedRock') && animNum === ANIM_REMOVE_OBSTACLE) return null;
-  return { kind, stage: 0 };
+  return ref(kind, 0);
 }
 
 /** Berry trees run anim (stage − 1) (event_object_movement.c SetBerryTreeGraphics): stage = clamp(animNum + 1, 1, 5). */

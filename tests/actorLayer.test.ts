@@ -294,6 +294,25 @@ describe('ActorLayer object models', () => {
     expect(mesh(layer, 'pokeball').count).toBe(0);
   });
 
+  it('turns the truck half way round when its sprite is mirrored', () => {
+    const layer = newLayer();
+    const truck = (hflip: boolean) => state({ graphicsId: 94 }, { width: 32, height: 32, c2cY: -24, worldY: 160, hflip });
+    const e00 = () => { const m = new THREE.Matrix4(); mesh(layer, 'truck').getMatrixAt(0, m); return m.elements[0]; };
+    layer.update(truck(false), modern);
+    expect(e00()).toBeCloseTo(1, 6);
+    layer.update(truck(true), modern);
+    expect(e00()).toBeCloseTo(-1, 6);
+  });
+  it('forgets which objects it has seen over a Retro (or Phase 2 off) period', () => {
+    const layer = newLayer();
+    const seen = () => (layer as unknown as { seen: Map<number, unknown> }).seen.size;
+    layer.setPixelSource({ vram: new Uint8Array(0x18000), palette: new Uint16Array(512) });
+    layer.update(state(), modern);
+    expect(seen()).toBe(1);
+    layer.update(state({}, {}, 2), { ...upright, style: 'retro' });
+    expect(seen()).toBe(0);
+  });
+
   describe('colours', () => {
     const bgr = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
     const RED = bgr(31, 4, 4), BLUE = bgr(4, 8, 31);

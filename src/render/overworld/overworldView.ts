@@ -242,11 +242,18 @@ export class OverworldView {
    * (main and shadow-depth). Live play starts it at the first sync, the map preview after its build.
    */
   precompile(renderer: THREE.WebGLRenderer): Promise<void> {
-    return this.precompiled ??= Promise.all([
-      this.field?.compile(renderer),
-      this.actors.precompile(renderer, this.scene, this.camera),
-    ]).then(() => undefined);
+    // (an async body: a synchronous throw becomes the rejection; a failure is logged once, never retried)
+    return this.precompiled ??= (async () => {
+      await Promise.all([
+        this.field?.compile(renderer),
+        this.actors.precompile(renderer, this.scene, this.camera, this.precompileFrame ?? undefined),
+      ]);
+    })().catch((e) => { console.warn('[overworld] precompile failed (programs compile on first use instead)', e); });
   }
+
+  /** Draws one frame as it is presented (the owner's PostFX: its passes, GTAO's override materials at High
+   *  quality): the precompile draws it with every Phase 2 mesh shown. null: the scene alone, into a 1×1 target. */
+  precompileFrame: (() => void) | null = null;
 
   /** Where the object models sample their sprites' colours (the map preview: its scratch VRAM and palette). */
   setActorPixelSource(src: SpritePixelSource | null): void {

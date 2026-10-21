@@ -143,7 +143,9 @@ export class PreviewApp {
     if (params.has('preset')) this.view.presetIndex = parseInt(params.get('preset')!, 10);
 
     this.post = new PostFX(this.webgl, this.view.scene, this.view.camera, quality);
-    // the Phase 2 programs compile now, as live play's first sync does (models, inflated actors, field)
+    // the Phase 2 programs compile now, as live play's first sync does (models, inflated actors, field), with one
+    // PostFX frame (GTAO's override materials at High quality)
+    this.view.precompileFrame = () => this.post.render(0);
     void this.view.precompile(this.webgl);
     const tilt = tiltShiftFor(this.view.worldStyle);
     this.post.setTiltShift(tilt.focus, tilt.band, tilt.strength);

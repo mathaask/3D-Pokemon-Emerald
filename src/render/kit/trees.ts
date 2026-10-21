@@ -357,26 +357,6 @@ function treeGeo(style: TreeStyle, variant: number, detail: number): THREE.Buffe
   return g;
 }
 
-/** A small tree (a Cut tree, the object models): the bushy style's crown and trunk at SMALL_TREE scale, crown
- *  at icosphere detail 2 (a close-up object); the trunk flagged in the vertex alpha like the tree styles
- *  (TRUNK_FRAG). Cached per seed for the session, never disposed (`userData.shared`). */
-export function smallTreeGeo(seed: number): THREE.BufferGeometry {
-  const id = `small:${seed}`;
-  let g = geoCache.get(id);
-  if (!g) {
-    const crown = blobCrown(seed, 5, 0.32, 0.3, 0.46, 0.78, 0.5, 2);
-    const trunk = trunkGeo(0.07, 0.1, 0.75);
-    g = mergeGeometries([crown, trunk])!;
-    crown.dispose();
-    trunk.dispose();
-    g.scale(SMALL_TREE, SMALL_TREE, SMALL_TREE);
-    g.computeBoundingSphere();
-    g.userData.shared = true;
-    geoCache.set(id, g);
-  }
-  return g;
-}
-
 /** Trunk vertices (alpha < 0.5) take the bark colour; everything is opaque again afterwards. */
 export const TRUNK_HEAD = /* glsl */ `
 uniform vec3 uTrunk;

@@ -16,7 +16,7 @@ import { InflatedActors, CONTACT } from './inflatedActors';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
-import { SpriteColorCache, type SpriteColors, type SpritePixelSource } from './spriteColors';
+import { SpriteColorCache, type SpritePixelSource, type SpriteSample } from './spriteColors';
 import { ObjectModels, precompileScene, type ModelInstance } from './objectModels';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
@@ -80,7 +80,7 @@ export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: K
 
 type Foot = { x: number; y: number; z: number };
 
-const NO_COLORS: SpriteColors = { main: null, accent: null, green: null };
+const NO_SAMPLE: SpriteSample = { colors: { main: null, accent: null, green: null }, tones: { body: null, highlight: null, crevice: null } };
 
 /** What an object slot showed the last time the layer saw it, and since which synced frame (GameState.frame). */
 interface Seen { graphicsId: number; localId: number; map: number; images: number; animNum: number; since: number; frame: number }
@@ -154,7 +154,7 @@ export class ActorLayer {
   private colorCache = new SpriteColorCache();
   /** This frame's objects by sprite index (spriteId). */
   private bySprite = new Map<number, ObjectEventSnap>();
-  /** Per object slot (ObjectEventSnap.index): what it showed and since when (spawn frames, see colorsOf). */
+  /** Per object slot (ObjectEventSnap.index): what it showed and since when (spawn frames, see sampleOf). */
   private seen = new Map<number, Seen>();
   /** The truck's sprite at its 48×48 image size (colour sampling; reused). */
   private truckImage: SpriteSnap | null = null;
@@ -198,16 +198,17 @@ export class ActorLayer {
   /**
    * Compiles the Phase 2 actor programs before they are first drawn (also in a Retro session, where they are
    * hidden): the object models' and the inflated actors' (with their contact shadows), main and shadow-depth
-   * ones — a render of `scene` compiles the latter (ObjectModels.precompile). Resolves when they are ready.
+   * ones — a frame of `scene` compiles the latter (ObjectModels.precompile; `frame`: the owner's PostFX frame,
+   * which also compiles GTAO's override materials at High quality). Resolves when they are ready.
    */
-  precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void> {
+  precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, frame?: () => void): Promise<void> {
     const shown = [this.inflated?.mesh, this.contact?.mesh].filter((m): m is THREE.Mesh => m !== undefined);
     const was = shown.map((m) => m.visible);
     for (const m of shown) m.visible = true;
     try {
       return this.models
-        ? this.models.precompile(renderer, scene, camera, this.group)
-        : precompileScene(renderer, this.group, scene, camera).then(() => undefined);
+        ? this.models.precompile(renderer, scene, camera, this.group, frame)
+        : precompileScene(renderer, this.group, scene, camera, frame).then(() => undefined);
     } finally {
       shown.forEach((m, i) => { m.visible = was[i]; });
     }
@@ -290,10 +291,12 @@ export class ActorLayer {
       // Retro (or Phase 2 off): no models (empty and hidden)
       this.models.set(this.modelList);
       this.models.group.visible = models !== null;
+      this.models.setLightFloor(f.charLight);
+      // objects gone since the last synced frame are new again when they reappear (all of them after a Retro or
+      // Phase-2-off period: no identity is kept across it)
       if (models) {
-        // objects gone since the last synced frame are new again when they reappear
         for (const [slot, t] of this.seen) if (t.frame < frame) this.seen.delete(slot);
-      }
+      } else this.seen.clear();
     }
     return this.feet;
   }
@@ -321,18 +324,21 @@ export class ActorLayer {
     out.y = h;
     out.z = row + h;
     out.yaw = yawOf(o);
-    out.colors = this.colorsOf(s, ref.kind, o, frame);
+    out.mirror = s.hflip;
+    const sample = this.sampleOf(s, ref.kind, o, frame);
+    out.colors = sample.colors;
+    out.tones = sample.tones;
     return out;
   }
 
   /**
-   * The colours of a model's sprite (SpriteColorCache; the truck at its 48×48 image size: the cache key ignores
+   * The colours and tones of a model's sprite (SpriteColorCache; the truck at its 48×48 image size: the cache key ignores
    * the size, so every lookup of it decodes the same image). Never stored on the first synced frame of an object,
    * or of a new image set / anim on it: the VBlank tile copy can lag a frame, so OBJ VRAM may still hold another
    * object's pixels then (they are used for that frame only).
    */
-  private colorsOf(s: SpriteSnap, kind: ObjectModelKind, o: ObjectEventSnap, frame: number): SpriteColors {
-    if (!this.pixels) return NO_COLORS;
+  private sampleOf(s: SpriteSnap, kind: ObjectModelKind, o: ObjectEventSnap, frame: number): SpriteSample {
+    if (!this.pixels) return NO_SAMPLE;
     const map = (o.mapGroup << 8) | o.mapNum;
     let t = this.seen.get(o.index);
     if (!t || t.graphicsId !== o.graphicsId || t.localId !== o.localId || t.map !== map || t.images !== s.images || t.animNum !== s.animNum) {
@@ -346,8 +352,8 @@ export class ActorLayer {
       snap.width = 48;
       snap.height = modelImageHeight('truck', s.height);
     }
-    return this.colorCache.get(snap, this.pixels, { store: frame > t.since });
+    return this.colorCache.sample(snap, this.pixels, { store: frame > t.since });
   }
 }
 
-const blankInstance = (): ModelInstance => ({ kind: 'pokeball', stage: 0, x: 0, y: 0, z: 0, colors: NO_COLORS });
+const blankInstance = (): ModelInstance => ({ kind: 'pokeball', stage: 0, x: 0, y: 0, z: 0, colors: NO_SAMPLE.colors });

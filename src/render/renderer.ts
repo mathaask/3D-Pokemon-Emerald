@@ -89,6 +89,11 @@ export class Renderer {
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
+    // the overworld's precompile (at its first sync) draws one frame through PostFX, as frames are presented
+    this.overworld.precompileFrame = () => {
+      this.post.setCamera(this.overworld.scene, this.overworld.camera);
+      this.post.render(0);
+    };
     this.applyTiltShift(this.overworld.worldStyle);
     this.fade.frustumCulled = false;
     this.fadeScene.add(this.fade);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decodeSpriteIndices, pickColors } from '../src/render/actors/spriteColors';
+import { decodeSpriteIndices, pickColors, pickTones } from '../src/render/actors/spriteColors';
 import { bgr555ToSrgb } from '../src/render/kit/palette';
 import { SpriteColorCache } from '../src/render/actors/spriteColors';
 import { blankSprite } from '../src/render/previewActors';
@@ -142,6 +142,38 @@ describe('pickColors edge cases', () => {
     expect(c.green![1]).toBeCloseTo((31 + 3 * 16) / 4 / 31);
     expect(c.green![2]).toBeCloseTo(0);
     expect(pickColors(new Uint8Array([3, 4]), pal).green).toBeNull();
+  });
+});
+
+describe('pickTones', () => {
+  // an 8×8 image: a bright edge ring (index 5: the outline position, excluded however bright), inside it 6×6 pixels:
+  // 6 darkish (4), 20 mid (2), 9 light (3) and one near-black outline colour (1, luma < 0.2, excluded)
+  const pal = new Uint16Array(16);
+  pal[1] = bgr(2, 2, 2); pal[2] = bgr(15, 14, 8); pal[3] = bgr(22, 20, 12); pal[4] = bgr(9, 9, 4); pal[5] = bgr(31, 31, 31);
+  const px = new Uint8Array(64);
+  let k = 0;
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+    if (x === 0 || y === 0 || x === 7 || y === 7) { px[y * 8 + x] = 5; continue; }
+    px[y * 8 + x] = k < 6 ? 4 : k < 26 ? 2 : k < 35 ? 3 : 1;
+    k++;
+  }
+  it('takes the median as the body, the upper quartile as the highlight, the darkest frequent colour as the crevice', () => {
+    const t = pickTones(px, 8, 8, pal);
+    expect(t.body).toEqual(bgr555ToSrgb(pal[2]));
+    expect(t.highlight).toEqual(bgr555ToSrgb(pal[3]));   // the top 9 of 35 pixels: all index 3
+    expect(t.crevice).toEqual(bgr555ToSrgb(pal[4]));     // 6 of 35 ≥ 10 %
+  });
+  it('leaves out the silhouette edge and dark outline colours, and a colour too rare to be the crevice', () => {
+    const rare = px.slice();
+    for (let i = 0, n = 0; i < 64 && n < 3; i++) if (rare[i] === 4) { rare[i] = 2; n++; } // 3 of 35 < 10 %
+    expect(pickTones(rare, 8, 8, pal).crevice).toEqual(bgr555ToSrgb(pal[2]));
+    expect(pickTones(px.map((v) => (v === 5 ? 5 : 0)), 8, 8, pal)).toEqual({ body: null, highlight: null, crevice: null }); // the ring alone: all edge
+  });
+  it('averages the upper quartile when it spans colours', () => {
+    const t = pickTones(px.map((v) => (v === 3 ? 2 : v)).map((v, i) => (i === 54 ? 3 : v)), 8, 8, pal);
+    // 35 pixels, top 9: one light (3) and eight mid (2)
+    const l = bgr555ToSrgb(pal[3]), m = bgr555ToSrgb(pal[2]);
+    t.highlight!.forEach((c, i) => expect(c).toBeCloseTo((l[i] + 8 * m[i]) / 9, 6));
   });
 });
 

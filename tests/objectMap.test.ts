@@ -45,4 +45,11 @@ describe('objectModelFor edge cases', () => {
     expect(modelImageHeight('berry', 32)).toBe(32);
     expect(modelImageHeight('boulder', 16)).toBe(16);
   });
+  it('hands out one frozen ref per kind and stage (no allocation per frame)', () => {
+    const a = objectModelFor(GFX.ITEM_BALL, 0)!;
+    expect(objectModelFor(GFX.ITEM_BALL, 3)).toBe(a);
+    expect(Object.isFrozen(a)).toBe(true);
+    expect(objectModelFor(GFX.BERRY_TREE_LATE, 4)).toBe(objectModelFor(GFX.BERRY_TREE, 4));
+    expect(objectModelFor(GFX.BERRY_TREE, 4)).not.toBe(objectModelFor(GFX.BERRY_TREE, 3));
+  });
 });

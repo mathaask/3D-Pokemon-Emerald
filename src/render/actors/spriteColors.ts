@@ -91,6 +91,56 @@ export function pickColors(indices: Uint8Array, palette16: Uint16Array): SpriteC
   return { main, accent, green };
 }
 
+/**
+ * A sprite's tones, for the object models' shading (pickColors' statistics land on a sprite's darkest shade or
+ * take in its outline). Over the non-outline pixels — opaque, luma ≥ 0.2, not on the silhouette's edge (a pixel
+ * with a transparent 4-neighbour: GBA sprites draw their outline there) — sorted by luma: `body` is the median
+ * pixel's colour, `highlight` the pixel-weighted mean of the upper quartile, `crevice` the darkest colour holding
+ * ≥ 10 % of those pixels. All null when there are none.
+ */
+export interface SpriteTones { body: RGB | null; highlight: RGB | null; crevice: RGB | null }
+
+/** Share of the non-outline pixels a colour needs to be the crevice (the darkest *frequent* colour). */
+const CREVICE_SHARE = 0.1;
+
+/** The tones (SpriteTones) of a `width` × `height` image of palette `indices` (index 0 transparent). */
+export function pickTones(indices: Uint8Array, width: number, height: number, palette16: Uint16Array): SpriteTones {
+  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= width || y >= height ? 0 : indices[y * width + x]);
+  // non-outline pixel counts per BGR555 colour
+  const counts = new Map<number, number>();
+  let n = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const ci = at(x, y);
+      if (!ci || !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)) continue;
+      const v = (palette16[ci] ?? 0) & 0x7fff;
+      if (luma(bgr555ToSrgb(v)) < 0.2) continue;
+      counts.set(v, (counts.get(v) ?? 0) + 1);
+      n++;
+    }
+  }
+  if (n === 0) return { body: null, highlight: null, crevice: null };
+  // colours by luma (ties: by value, so the order never depends on the map's)
+  const list = [...counts].map(([v, k]) => ({ c: bgr555ToSrgb(v), k, l: luma(bgr555ToSrgb(v)), v }))
+    .sort((a, b) => a.l - b.l || a.v - b.v);
+  let body: RGB | null = null, crevice: RGB | null = null;
+  const hi: RGB = [0, 0, 0];
+  const top = n - Math.ceil(n / 4); // pixels below the upper quartile
+  let seen = 0, hiN = 0;
+  for (const e of list) {
+    if (!crevice && e.k >= CREVICE_SHARE * n) crevice = e.c;
+    if (!body && seen + e.k > (n - 1) / 2) body = e.c;
+    const inTop = Math.min(e.k, Math.max(0, seen + e.k - top));
+    for (let i = 0; i < 3; i++) hi[i] += e.c[i] * inTop;
+    hiN += inTop;
+    seen += e.k;
+  }
+  return { body, highlight: [hi[0] / hiN, hi[1] / hiN, hi[2] / hiN], crevice };
+}
+
+/** A sprite's colours and tones (one decode, one cache entry). */
+export interface SpriteSample { colors: SpriteColors; tones: SpriteTones }
+
 const MAX_ENTRIES = 256;
 
 /**
@@ -101,7 +151,7 @@ const MAX_ENTRIES = 256;
  * a lookup with `store: false` (a spawn frame).
  */
 export class SpriteColorCache {
-  private entries = new Map<string, SpriteColors>();
+  private entries = new Map<string, SpriteSample>();
 
   /** Number of cached entries. */
   get size(): number {
@@ -114,6 +164,11 @@ export class SpriteColorCache {
    * yet and the sprite's OBJ VRAM may still hold another object's pixels (a stored entry is still returned).
    */
   get(s: SpriteSnap, src: SpritePixelSource, opts?: { store?: boolean }): SpriteColors {
+    return this.sample(s, src, opts).colors;
+  }
+
+  /** The colours and tones of `s`'s current image (as get; the same entry, one object per key). */
+  sample(s: SpriteSnap, src: SpritePixelSource, opts?: { store?: boolean }): SpriteSample {
     const base = s.bpp8 ? 256 : 256 + (s.palette & 15) * 16;
     const pal = src.palette.subarray(base, s.bpp8 ? 512 : base + 16);
     const key = `${s.images}:${s.animNum}:${String.fromCharCode(...pal)}`;
@@ -125,10 +180,10 @@ export class SpriteColorCache {
       return hit;
     }
     const indices = decodeSpriteIndices(src.vram, s, src.map2d ?? false);
-    const colors = pickColors(indices, pal);
-    if (opts?.store === false || !indices.some((ci) => ci !== 0)) return colors;
-    this.entries.set(key, colors);
+    const sample: SpriteSample = { colors: pickColors(indices, pal), tones: pickTones(indices, s.width, s.height, pal) };
+    if (opts?.store === false || !indices.some((ci) => ci !== 0)) return sample;
+    this.entries.set(key, sample);
     if (this.entries.size > MAX_ENTRIES) this.entries.delete(this.entries.keys().next().value!);
-    return colors;
+    return sample;
   }
 }
