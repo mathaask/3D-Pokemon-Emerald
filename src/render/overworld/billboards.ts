@@ -41,12 +41,14 @@ const FRAG = /* glsl */ `
   #include <fog_pars_fragment>
   uniform sampler2D tAtlas;
   uniform vec3 uLight;       // ambient + sun contribution for characters
+  uniform float uMask;       // 1: flat magenta (the harness's actor mask)
   varying vec2 vUv;
   varying vec4 vTint;
   varying vec3 vWorld;
   void main() {
     vec4 c = texture2D(tAtlas, vUv);
     if (c.a < 0.5) discard;
+    if (uMask > 0.5) { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
     gl_FragColor = vec4(c.rgb * uLight * vTint.rgb, vTint.a);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -113,6 +115,7 @@ export class Billboards {
         tAtlas: { value: null },
         uRight: { value: new THREE.Vector3(1, 0, 0) },
         uLight: { value: new THREE.Vector3(1, 1, 1) },
+        uMask: { value: 0 },
       },
     ]);
     uniforms.tAtlas.value = atlas.target.texture;
@@ -150,6 +153,11 @@ export class Billboards {
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
   /** The most cards ever set (the uploaded part of the instance buffers). */
   private used = 0;
+
+  /** Draws the cards flat magenta (the harness's visible-actor mask) or normally. */
+  setMask(on: boolean): void {
+    this.material.uniforms.uMask.value = on ? 1 : 0;
+  }
 
   /** Cards drawn (instances). */
   get count(): number {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH } from '../src/render/actors/inflatedActors';
+import { InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL } from '../src/render/actors/inflatedActors';
+import { heights, INFLATE } from '../src/render/actors/inflateMath';
 import { Billboards } from '../src/render/overworld/billboards';
 
 const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2, lift: 0, flat: false,
@@ -79,6 +80,42 @@ describe('InflatedActors', () => {
     // the shading slope (not the relief's) and the highlight shoulder before the output
     expect(s.fragmentShader).toContain('shadeSlope(vAtlasUv, vRect)');
     expect(s.fragmentShader.indexOf('outgoingLight *=')).toBeLessThan(s.fragmentShader.indexOf('#include <opaque_fragment>'));
+    // mean-preserving relief light (Lambert on facing + slope), the floor's hue blend, the actor mask last
+    expect(s.fragmentShader).toContain('reflectedLight.directDiffuse *= actorSec');
+    expect(s.fragmentShader).toContain('smoothstep(1.5, 4.0, k)');
+    expect(s.fragmentShader.indexOf(MASK_GLSL)).toBeGreaterThan(s.fragmentShader.indexOf('#include <dithering_fragment>'));
+  });
+  it('shades mean-preserving: the shading slope averages to ~0 over a sprite (Lambert on facing + slope keeps the card\'s mean light)', () => {
+    // a 16x32 character: head disc, body, two legs (rows bottom-up, as the atlas)
+    const w = 16, h = 32, alpha = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const head = (x - 7.5) ** 2 + (y - 24) ** 2 < 36, body = x >= 3 && x <= 12 && y >= 5 && y <= 19;
+      const legs = y < 5 && ((x >= 4 && x <= 6) || (x >= 9 && x <= 11));
+      alpha[y * w + x] = head || body || legs ? 1 : 0;
+    }
+    const hs = heights(alpha, w, h, INFLATE);
+    const at = (x: number, y: number) => hs[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
+    const k = SHADE_GAIN * 2 / INFLATE.amp ** 2, s = SHADE_STEP;
+    let sx = 0, sy = 0, mag = 0, n = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!alpha[y * w + x]) continue;
+      const gx = k * at(x, y) * (at(x + s, y) - at(x - s, y)) / (2 * s), gy = k * at(x, y) * (at(x, y + s) - at(x, y - s)) / (2 * s);
+      sx += gx; sy += gy; mag += Math.hypot(gx, gy); n++;
+    }
+    expect(mag / n).toBeGreaterThan(0.5); // a real tilt …
+    expect(Math.hypot(sx, sy) / n).toBeLessThan(0.1 * (mag / n)); // … that cancels over the sprite
+  });
+  it('draws flat magenta for the harness\'s actor mask (inflated actors and cards)', () => {
+    const a = make();
+    const u = () => (a as unknown as { uniforms: { uMask: { value: number } } }).uniforms.uMask.value;
+    a.setMask(true);
+    expect(u()).toBe(1);
+    a.setMask(false);
+    expect(u()).toBe(0);
+    const b = new Billboards({ target: { texture: new THREE.Texture() } });
+    b.setMask(true);
+    expect(b.material.uniforms.uMask.value).toBe(1);
+    expect(b.material.fragmentShader).toContain('uMask');
   });
 });
 

@@ -25,12 +25,16 @@
 // rounding grows with the field's height).
 // --ab (live entries, Modern) measures what the inflated actors cost over the same build with inflation off
 // (every character a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
-// --ab-rounds rounds (default 6) of on/off pairs in alternating order, each block restoring the snapshot
+// --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot
 // (both modes emulate the same frames), 5 settle frames and gpuFrames(60). Two variants: idle, and
-// walking (the entry's `walk` key held through the block; `moved` = the player's px displacement over the
-// timed frames, 0 where a cutscene holds the player). Reported per entry: medians of on, off and of the
-// per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging deltas over
+// walking (entries with a `walk` key held through the block; `moved` = the least px the player walked in
+// any timed block, so a block that did not walk shows). Reported per entry: medians of on, off and of the
+// per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging the cell over
 // +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated).
+// Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
+// once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
+// ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
+// Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -56,19 +60,19 @@ interface LiveEntry {
 // r101_grass's mid-walk self-test (after DOWN 18) lands on a frame whose sync changed the atlas's alpha
 // (the player is still walking), as does its final one: a field one sync behind the atlas fails there.
 // `walk` directions were probed (70 frames held from the steps' end); birch, lr_truck and vigoroth are
-// cutscenes that hold the player (their NPCs move), truck_inside has 2-3 free cells.
+// cutscenes that hold the player (no `walk`; their NPCs move), truck_inside has 2-3 free cells.
 const LIVE: LiveEntry[] = [
   { name: 'r101', state: 'out/r101.state', steps: [['LEFT', 48], ['', 30]], walk: 'LEFT' },  // Route 101: player, youngster, boy
   { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true, selftestAfter: 1, walk: 'UP' }, // standing in tall grass
   { name: 'r101_tree', state: 'out/r101.state', steps: [['LEFT', 66], ['DOWN', 42], ['', 30]], walk: 'LEFT' }, // against the treeline (fade)
   { name: 'r101_low', state: 'out/r101.state', query: 'camera=3', steps: [['', 30]], walk: 'LEFT' }, // Low preset: volume visible
   { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]], walk: 'LEFT' },
-  { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true, walk: 'LEFT' }, // Birch, bag, Zigzagoon (a Pokémon)
-  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true, walk: 'LEFT' }, // Littleroot: Mom, truck (gfx 94)
+  { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true },               // Birch, bag, Zigzagoon (a Pokémon)
+  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true },         // Littleroot: Mom, truck (gfx 94)
   { name: 'lr_walk', state: 'out/s22.state', steps: [['', 30]], walk: 'LEFT' },              // Littleroot free walk
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
-  { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]], walk: 'LEFT' },      // indoor, Vigoroths (Pokémon)
+  { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
   { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // gated 0.00 % in Retro only
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
 ];
@@ -115,13 +119,20 @@ const AB_CPU_MS = 0.5;
 
 interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
-/** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` px (walking). */
+/** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. */
+interface ActorLum { ratio: number; modern: number; retro: number; pixels: number }
+/** Fewer visible actor pixels than this: no luminance (battle, an actor hidden in one style). */
+const ACTOR_LUM_MIN_PX = 200;
+/** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` = the least px the
+ *  player walked in any timed block (walking). */
 interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
   diff?: Diff; selftest?: SelfTest; selftestMid?: SelfTest;
   ab?: { rounds: number; idle: AbVariant; walk?: AbVariant };
+  /** On the Modern key: Modern / Retro actor luminance (both styles in the run). */
+  actorLum?: ActorLum;
 }
 
 function arg(name: string, def: string): string {
@@ -181,6 +192,51 @@ const DIFF_FN = `(async function (a, b) {
   }
   return { pct: Math.round((n / (w * h)) * 10000) / 100, bbox: n ? { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 } : null, pixels: n };
 })`;
+
+// Actor luminance of an entry: the mean sRGB luma (Rec. 709) of its Modern and Retro shots over the pixels
+// where an actor is visible in both (each style's actor-mask shot: magenta, eroded by 1 px; occluders and
+// the occlusion dither excluded). A string for the page, as DIFF_FN.
+const LUM_FN = `(async function (shotM, shotR, maskM, maskR) {
+  function load(src) {
+    return new Promise(function (res, rej) {
+      var i = new Image();
+      i.onload = function () { res(i); };
+      i.onerror = function () { rej(new Error('cannot decode image')); };
+      i.src = src;
+    });
+  }
+  var imgs = await Promise.all([load(shotM), load(shotR), load(maskM), load(maskR)]);
+  var w = imgs[0].naturalWidth, h = imgs[0].naturalHeight;
+  function pixels(img) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    return g.getImageData(0, 0, w, h).data;
+  }
+  var pm = pixels(imgs[0]), pr = pixels(imgs[1]), mm = pixels(imgs[2]), mr = pixels(imgs[3]);
+  function magenta(d, x, y) { var k = (y * w + x) * 4; return d[k] > 200 && d[k + 1] < 90 && d[k + 2] > 200; }
+  function both(x, y) { return magenta(mm, x, y) && magenta(mr, x, y); }
+  var n = 0, sm = 0, sr = 0;
+  for (var y = 1; y < h - 1; y++) {
+    for (var x = 1; x < w - 1; x++) {
+      if (!(both(x, y) && both(x - 1, y) && both(x + 1, y) && both(x, y - 1) && both(x, y + 1))) continue;
+      var k = (y * w + x) * 4;
+      sm += 0.2126 * pm[k] + 0.7152 * pm[k + 1] + 0.0722 * pm[k + 2];
+      sr += 0.2126 * pr[k] + 0.7152 * pr[k + 1] + 0.0722 * pr[k + 2];
+      n++;
+    }
+  }
+  return { pixels: n, modern: n ? sm / n : 0, retro: n ? sr / n : 0 };
+})`;
+
+async function actorLum(page: Page, files: [string, string, string, string]): Promise<ActorLum | null> {
+  const url = (f: string) => JSON.stringify(`data:image/png;base64,${fs.readFileSync(f).toString('base64')}`);
+  await page.setContent('<html><body></body></html>');
+  const r = await page.evaluate(`${LUM_FN}(${files.map(url).join(', ')})`) as { pixels: number; modern: number; retro: number };
+  if (r.pixels < ACTOR_LUM_MIN_PX || r.retro <= 0) return null;
+  return { ratio: round(r.modern / r.retro, 3), modern: round(r.modern, 1), retro: round(r.retro, 1), pixels: r.pixels };
+}
 
 async function diffPng(page: Page, file: string, ref: string): Promise<Diff> {
   const url = (f: string) => JSON.stringify(`data:image/png;base64,${fs.readFileSync(f).toString('base64')}`);
@@ -274,7 +330,7 @@ const median = (xs: number[]) => {
 async function abVariant(page: Page, rounds: number, keys: string): Promise<AbVariant> {
   type T = { gpuMs: number; cpuMs: number };
   const on: T[] = [], off: T[] = [];
-  let moved = 0;
+  let moved = Infinity;
   const k = JSON.stringify(keys);
   for (let r = 0; r < rounds; r++) {
     for (const mode of r % 2 === 0 ? [true, false] : [false, true]) {
@@ -283,7 +339,7 @@ async function abVariant(page: Page, rounds: number, keys: string): Promise<AbVa
       const p0 = await page.evaluate(PLAYER_POS) as number[] | null;
       const g = await page.evaluate(`emu.gpuFrames(60, ${k})`) as T;
       const p1 = await page.evaluate(PLAYER_POS) as number[] | null;
-      if (p0 && p1) moved = Math.max(moved, Math.hypot(p1[0] - p0[0], p1[1] - p0[1]));
+      moved = Math.min(moved, p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0);
       (mode ? on : off).push(g);
     }
   }
@@ -326,9 +382,10 @@ async function main(): Promise<void> {
   const gpu = flag('gpu');
   const selftest = flag('selftest');
   const ab = flag('ab');
-  const abRounds = parseInt(arg('ab-rounds', '6'), 10);
+  const abRounds = parseInt(arg('ab-rounds', '8'), 10);
   if (ab && !(abRounds >= 1)) throw new Error('--ab-rounds must be a positive integer');
   const abRows: string[] = [];
+  const lumRows: { name: string; lum: ActorLum }[] = [];
   const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
@@ -422,6 +479,14 @@ async function main(): Promise<void> {
             { calls: number; triangles: number; programs: number; buildMs?: number };
           const entry: EntryStats = { ...s };
           if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
+          // the actor mask of this frame: drawn again without advancing time, actors flat magenta
+          const [maskOn, maskOff] = e.kind === 'live'
+            ? ['emu.renderer.overworld.setActorMask(true); emu.renderer.setFixedTimestep(0); emu.renderer.render(0)',
+              'emu.renderer.overworld.setActorMask(false); emu.renderer.render(0); emu.renderer.setFixedTimestep(1 / 60)']
+            : ['preview.setActorMask(true); preview.renderStill()', 'preview.setActorMask(false); preview.renderStill()'];
+          await page.evaluate(maskOn);
+          await page.screenshot({ path: path.join(outDir, `_mask_${key}.png`) as `${string}.png` });
+          await page.evaluate(maskOff);
           // (the self-test checks the screenshot's frame, after the steps; GPU timing then renders 60 more frames)
           let selfLine = '';
           if (mid) {
@@ -443,8 +508,8 @@ async function main(): Promise<void> {
           }
           if (ab && e.kind === 'live' && style === 'modern') {
             const r = entry.ab = await abMeasure(page, e, abRounds);
-            const over = (v?: AbVariant) => (v && (v.dGpu > AB_GPU_MS || v.dCpu > AB_CPU_MS) ? ' OVER' : '');
-            const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)} | ${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${over(v)}` : '- | -');
+            const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > AB_GPU_MS ? ' OVER' : ''} | `
+              + `${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${v.dCpu > AB_CPU_MS ? ' OVER' : ''}` : '- | -');
             abRows.push(`| ${e.name} | ${r.idle.gpuOn.toFixed(2)} / ${r.idle.gpuOff.toFixed(2)} | ${cell(r.idle)} | `
               + `${r.walk ? `${r.walk.gpuOn.toFixed(2)} / ${r.walk.gpuOff.toFixed(2)}` : '-'} | ${cell(r.walk)} | ${r.walk?.moved ?? '-'} |`);
           }
@@ -474,6 +539,7 @@ async function main(): Promise<void> {
           console.log(`[${key}] FAILED: ${(err as Error).message}`);
           // no stale shot or stats of an earlier run of this label may stand in for the failed entry
           fs.rmSync(path.join(outDir, `${key}.png`), { force: true });
+          fs.rmSync(path.join(outDir, `_mask_${key}.png`), { force: true });
           if (style === 'modern') {
             for (const d of [e.name, `${e.name}_mid`]) fs.rmSync(path.join(outDir, `_field_${d}.png`), { force: true });
           }
@@ -483,6 +549,20 @@ async function main(): Promise<void> {
         if (pageErrors > errorsBefore) errored.push(key);
       }
     }
+    if (styles.includes('modern') && styles.includes('retro')) {
+      current = 'luminance';
+      for (const e of entries) {
+        const st = stats[`${e.name}_modern`];
+        const files = [`${e.name}_modern.png`, `${e.name}_retro.png`, `_mask_${e.name}_modern.png`, `_mask_${e.name}_retro.png`]
+          .map((f) => path.join(outDir, f)) as [string, string, string, string];
+        if (!st || !stats[`${e.name}_retro`] || !files.every((f) => fs.existsSync(f))) continue;
+        const lum = await actorLum(page, files);
+        if (lum) st.actorLum = lum;
+        else delete st.actorLum;
+        if (lum) lumRows.push({ name: e.name, lum });
+      }
+      fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
+    }
     current = 'sheets';
     await buildSheets(page, outDir);
   } finally {
@@ -490,6 +570,15 @@ async function main(): Promise<void> {
     await server.close();
   }
   if (diffs.length) console.log(`\ncompare ${label} vs ${compare}:\n${diffs.join('\n')}`);
+  if (lumRows.length) {
+    console.log('\nactor luminance, Modern / Retro (mean sRGB luma over the actor pixels visible in both styles):');
+    console.log('| entry | ratio | modern | retro | px |');
+    console.log('|---|---|---|---|---|');
+    for (const { name, lum } of lumRows) console.log(`| ${name} | ${lum.ratio.toFixed(3)} | ${lum.modern} | ${lum.retro} | ${lum.pixels} |`);
+    const r = lumRows.map((x) => x.lum.ratio);
+    const min = lumRows.reduce((a, b) => (b.lum.ratio < a.lum.ratio ? b : a));
+    console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`);
+  }
   if (abRows.length) {
     console.log(`\n--ab: inflation on vs off, ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${AB_GPU_MS} or Δcpu > +${AB_CPU_MS}`);
     console.log('| entry | idle gpu on / off | idle Δgpu | idle Δcpu | walk gpu on / off | walk Δgpu | walk Δcpu | walk moved px |');

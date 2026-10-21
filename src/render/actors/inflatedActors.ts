@@ -26,6 +26,9 @@ export const MAX_ACTORS = 64;
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
  *  Independent of INFLATE.amp (the relief's depth). Baked into the shader (compile-time). */
 export const SHADE_GAIN = 2.75;
+/** The shading slope's central differences span ±SHADE_STEP texels (smooths creases between lobes).
+ *  Baked into the shader (compile-time). */
+export const SHADE_STEP = 2;
 /** Share of the sprite's height over which the depth relief fades in from the feet (tall-grass blades
  *  reach ~0.35 of a 2-unit character): the legs stay at the card's depth. Shading is not affected.
  *  Baked into the shader (compile-time). */
@@ -36,18 +39,14 @@ export const RELIEF_FADE = { from: 0.15, to: 0.55 };
  *  shader (compile-time). */
 export const SHADOW_PUSH = 0.3;
 /** Share of the cards' light (charLight, by luminance) the actors' diffuse light never drops below; the
- *  lit colour keeps its hue (a uniform, set per frame). */
-export const LIGHT_FLOOR = 0.5;
+ *  lit colour keeps its hue (a uniform, set per frame). It also sets how deep a received shadow gets. */
+export const LIGHT_FLOOR = 0.6;
 /** Soft ceiling of a point light's irradiance on an actor (the Flash lantern). Baked into the shader
  *  (compile-time). */
 export const LAMP_CEILING = 9;
 /** The actors' outgoing light eases from `knee` towards `max` (linear, per brightest channel, hue kept):
  *  under the bloom threshold, so sun-facing pale pixels never glow. Baked into the shader (compile-time). */
 export const SHOULDER = { knee: 0.8, max: 1.0 };
-/** Exposure of the actors' diffuse light: the tilted relief catches less of a light near the view direction
- *  than a card facing it (cards: ambient + 3/4 of the sun, charLight); this keeps them as bright as Retro's
- *  cards on average. Baked into the shader (compile-time). */
-export const EXPOSURE = 1.18;
 
 /** A GLSL float literal of `v` at full precision. */
 const glsl = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
@@ -66,14 +65,15 @@ varying vec3 vFacing;  // unit, from the actor towards the eye
 float fieldH(vec2 uv, vec4 rect) {
   return texture(tField, clamp(uv * uAtlasSize, rect.xy + 0.5, rect.zw - 0.5) / uAtlasSize).r;
 }
-vec2 fieldGrad(vec2 uv, vec4 rect) {
-  vec2 t = 1.0 / uAtlasSize;
-  return 0.5 * vec2(fieldH(uv + vec2(t.x, 0.0), rect) - fieldH(uv - vec2(t.x, 0.0), rect),
-                    fieldH(uv + vec2(0.0, t.y), rect) - fieldH(uv - vec2(0.0, t.y), rect));
+// central differences over ±s texels (px per px)
+vec2 fieldGrad(vec2 uv, vec4 rect, float s) {
+  vec2 t = s / uAtlasSize;
+  return (0.5 / s) * vec2(fieldH(uv + vec2(t.x, 0.0), rect) - fieldH(uv - vec2(t.x, 0.0), rect),
+                          fieldH(uv + vec2(0.0, t.y), rect) - fieldH(uv - vec2(0.0, t.y), rect));
 }
-// SHADE_GAIN x the slope of (h / amp)^2 = SHADE_GAIN x 2 h grad(h) / amp^2
+// SHADE_GAIN x the slope of (h / amp)^2 = SHADE_GAIN x 2 h grad(h) / amp^2, over ±SHADE_STEP texels
 vec2 shadeSlope(vec2 uv, vec4 rect) {
-  return ${glsl(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect);
+  return ${glsl(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect, ${glsl(SHADE_STEP)});
 }
 vec3 actorNormal(vec3 f, vec2 g) {
   vec3 r = normalize(uRight - dot(uRight, f) * f); // screen right, then screen up = f x r
@@ -118,6 +118,7 @@ uniform sampler2D tAtlas;
 uniform vec3 uRimColor;
 uniform float uRim;
 uniform vec3 uFloor;
+uniform float uMask;    // 1: flat magenta (the harness's actor mask)
 varying vec2 vAtlasUv;
 varying vec4 vRect;
 ${FIELD_GLSL}
@@ -131,7 +132,9 @@ diffuseColor.rgb *= actorTexel.rgb;
 
 // per-pixel normal (smooth across the grid's facets), in view space
 const FRAG_NORMAL = /* glsl */ `
-normal = normalize((viewMatrix * vec4(actorNormal(normalize(vFacing), shadeSlope(vAtlasUv, vRect)), 0.0)).xyz);
+vec2 actorSlope = shadeSlope(vAtlasUv, vRect);
+float actorSec = sqrt(1.0 + dot(actorSlope, actorSlope)); // 1 / cos(tilt)
+normal = normalize((viewMatrix * vec4(actorNormal(normalize(vFacing), actorSlope), 0.0)).xyz);
 `;
 
 // The rim: sky light reflected by the surface (× its colour), so dark outline pixels stay dark.
@@ -144,18 +147,29 @@ totalEmissiveRadiance += diffuseColor.rgb * uRimColor * uRim * pow(1.0 - saturat
 const POINT_ATTENUATION = 'light.color *= getDistanceAttenuation( lightDistance, pointLight.distance, pointLight.decay );';
 const LAMP_GLSL = `\nlight.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${glsl(LAMP_CEILING)};`;
 
-// The diffuse light's luminance never drops below that of uFloor (LIGHT_FLOOR × the cards' light): actors
-// stay readable in the dark (a cave beyond the lantern, deep shade) and never turn black. Below it the lit
-// colour is scaled up, keeping its hue (no light at all: the floor's own colour).
+// Mean-preserving relief shading: Lambert on the unnormalised normal facing + slope, i.e. the tilted unit
+// normal's direct light × 1 / cos(tilt), and the sky's tilted share likewise. The slope's mean over a
+// sprite's opaque texels is 0 (the distance estimate is 0 on the outline), so the sprite's mean light stays
+// the flat card's: the centre brightens as much as the edges darken. Then the floor: the
+// diffuse light's luminance never drops below that of uFloor (LIGHT_FLOOR × the cards' light), so actors
+// stay readable in the dark (a cave beyond the lantern, deep shade) and never turn black. The lift keeps the
+// lit colour's hue, blending to the floor's own colour where almost no light arrives (its hue is noise).
 const FRAG_FLOOR = /* glsl */ `
 {
   const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-  reflectedLight.directDiffuse *= ${glsl(EXPOSURE)};
-  reflectedLight.indirectDiffuse *= ${glsl(EXPOSURE)};
+  reflectedLight.directDiffuse *= actorSec;
+  #if NUM_HEMI_LIGHTS > 0
+    reflectedLight.indirectDiffuse += BRDF_Lambert(material.diffuseContribution) * (actorSec - 1.0)
+      * 0.5 * (hemisphereLights[0].skyColor - hemisphereLights[0].groundColor) * dot(normal, hemisphereLights[0].direction);
+  #endif
+  reflectedLight.indirectDiffuse = max(reflectedLight.indirectDiffuse, vec3(0.0));
   vec3 lit = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
-  vec3 floorLight = material.diffuseColor * uFloor;
+  vec3 floorLight = material.diffuseContribution * uFloor;
   float l = dot(lit, LUMA), lf = dot(floorLight, LUMA);
-  if (l < lf) reflectedLight.indirectDiffuse += (l > 1e-5 ? lit * (lf / l) : floorLight) - lit;
+  if (l < lf) {
+    float k = lf / max(l, 1e-5);
+    reflectedLight.indirectDiffuse += mix(lit * k, floorLight, smoothstep(1.5, 4.0, k)) - lit;
+  }
 }
 `;
 
@@ -168,6 +182,9 @@ const FRAG_SHOULDER = /* glsl */ `
   if (m > K) outgoingLight *= (K + R * (1.0 - exp(-(m - K) / R))) / m;
 }
 `;
+
+/** The harness's actor mask: every drawn actor pixel flat magenta (after the alpha test and depth test). */
+export const MASK_GLSL = 'if (uMask > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);';
 
 const DEPTH_VERT = /* glsl */ `
 #include <common>
@@ -209,7 +226,7 @@ export class InflatedActors {
   private uniforms: {
     tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
     uEye: { value: THREE.Vector3 }; uAtlasSize: { value: THREE.Vector2 }; uRimColor: { value: THREE.Color };
-    uRim: { value: number }; uFloor: { value: THREE.Color };
+    uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number };
   };
 
   /**
@@ -234,7 +251,7 @@ export class InflatedActors {
     const u = this.uniforms = {
       tAtlas: { value: atlas }, tField: { value: field }, uRight: { value: new THREE.Vector3(1, 0, 0) },
       uEye: { value: new THREE.Vector3(0, 0, 1e5) }, uAtlasSize: { value: atlasSize.clone() }, uRimColor: rimColor,
-      uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) },
+      uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) }, uMask: { value: 0 },
     };
     const material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
     // the sun may light the sheet from behind: its depth twin draws both faces
@@ -252,6 +269,7 @@ export class InflatedActors {
       f = patch(f, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
       f = patch(f, 'lights_fragment_end', '#include <lights_fragment_end>\n' + FRAG_FLOOR);
       f = patch(f, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
+      f = patch(f, 'dithering_fragment', '#include <dithering_fragment>\n' + MASK_GLSL);
       s.fragmentShader = f;
     };
     material.customProgramCacheKey = () => 'actor:inflated:1';
@@ -304,6 +322,11 @@ export class InflatedActors {
     this.uniforms.uRight.value.copy(cameraRight);
     if (eye) this.uniforms.uEye.value.copy(eye);
     else this.uniforms.uEye.value.set(-cameraRight.z, 0, cameraRight.x).multiplyScalar(1e5);
+  }
+
+  /** Draws the actors flat magenta (the harness's visible-actor mask) or normally. */
+  setMask(on: boolean): void {
+    this.uniforms.uMask.value = on ? 1 : 0;
   }
 
   /** The light flat sprite cards would get here (charLight): the actors' diffuse light stays ≥ LIGHT_FLOOR × it. */

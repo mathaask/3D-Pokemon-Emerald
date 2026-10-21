@@ -181,6 +181,16 @@ export class PreviewApp {
     for (let i = 0; i < n; i++) this.frame(1 / 60);
   }
 
+  /** Renders one frame without advancing time (the harness's actor-mask shot matches the last frame). */
+  renderStill(): void {
+    this.frame(0);
+  }
+
+  /** Draws the world sprites flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.view.setActorMask(on);
+  }
+
   /** Times n frames (as frames(1) each) on the GPU: timer queries, medians (as emu.gpuFrames). */
   gpuFrames(n: number): Promise<GpuTiming> {
     return timeGpuFrames(this.webgl.getContext() as WebGL2RenderingContext, n, () => this.frame(1 / 60));

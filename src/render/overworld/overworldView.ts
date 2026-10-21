@@ -314,6 +314,11 @@ export class OverworldView {
     this.actors.inflation = on;
   }
 
+  /** Draws the world sprites flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.actors.setMask(on);
+  }
+
   private updateLighting(state: GameState): void {
     const indoor = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE;
     const underground = this.mapType === MAP_TYPE_UNDERGROUND;

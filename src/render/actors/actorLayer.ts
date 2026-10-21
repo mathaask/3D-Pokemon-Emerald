@@ -156,6 +156,12 @@ export class ActorLayer {
     }
   }
 
+  /** Draws every actor (cards and inflated) flat magenta: the harness's visible-actor mask. */
+  setMask(on: boolean): void {
+    this.billboards.setMask(on);
+    this.inflated?.setMask(on);
+  }
+
   /** Instances drawn by each renderer the layer owns (last update). */
   counts(): { cards: number; inflated: number; models: number } {
     return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: 0 };
