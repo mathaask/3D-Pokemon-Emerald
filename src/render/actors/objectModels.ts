@@ -14,7 +14,7 @@ import { TRUNK_FRAG, TRUNK_HEAD } from '../kit/trees';
 import { put, markRange } from '../instanceUpload';
 import type { ObjectModelKind } from './objectMap';
 import type { SpriteColors, SpriteTones } from './spriteColors';
-import { LIGHT_FLOOR, MASK_GLSL } from './inflatedActors';
+import { FRAG_SHOULDER, LIGHT_FLOOR, MASK_GLSL, lampCeiling } from './inflatedActors';
 import { boulderGeo, crackedRockGeo, cutTreeGeo, pokeBallGeo, truckGeo, truckLogoGeo } from './models';
 
 /** Instances per kind: gObjectEvents has 16 slots. */
@@ -49,7 +49,8 @@ interface PartSpec {
 interface KindSpec {
   roughness: number;
   /** How far the instance's yaw turns it (rad either way): rocks and trees vary by object; the ball keeps its
-   *  button, the truck its cab and the cracked rock its cracks on the side the sprite shows them (0: never). */
+   *  button, the truck its cab, the cracked rock its cracks, the boulder and the Cut tree their long side
+   *  (wider than deep: squat on screen) on the side the sprite shows them (0: never). */
   spin: number;
   /** Turns half way round when the sprite is mirrored. */
   mirror?: boolean;
@@ -61,11 +62,9 @@ interface KindSpec {
 /** Fallback tints (sRGB). */
 const DEFAULT = {
   ball: [0.86, 0.16, 0.16] as RGB, boulder: [0.55, 0.5, 0.45] as RGB, rock: [0.6, 0.55, 0.5] as RGB,
-  leaves: [0.3, 0.6, 0.3] as RGB, truck: [0.92, 0.92, 0.9] as RGB, truckTrim: [0.2, 0.35, 0.8] as RGB,
+  leaves: [0.3, 0.6, 0.3] as RGB, truck: [0.26, 0.26, 0.48] as RGB, truckTrim: [0.2, 0.35, 0.8] as RGB,
   truckLogo: [0.62, 0.68, 0.8] as RGB,
 };
-/** Bark of the Cut tree (sRGB). */
-const TRUNK: RGB = [0.42, 0.3, 0.2];
 /** Safety floors (sRGB luma) of the rock body and Cut-tree crown tints, hue kept: the sprites' tones are well above
  *  them (rock body (123, 115, 66) 0.45; the Cut tree's lime (115, 189, 0) 0.58), an odd palette is not. */
 export const MIN_LUMA = { rock: 0.36, leaves: 0.4 };
@@ -94,23 +93,25 @@ function rockTints(c: SpriteColors, t: SpriteTones, fallback: RGB): Tints {
 
 const SPECS: Partial<Record<ObjectModelKind, KindSpec>> = {
   pokeball: { roughness: 0.35, spin: 0, parts: [{ geometry: pokeBallGeo, tints: (c) => { const a = c.accent ?? DEFAULT.ball; return { a, b: a }; } }] },
-  boulder: { roughness: 0.65, spin: Math.PI, parts: [{ geometry: () => boulderGeo(87), tints: (c, t) => rockTints(c, t, DEFAULT.boulder) }] },
+  boulder: { roughness: 0.65, spin: 0.4, parts: [{ geometry: () => boulderGeo(87), tints: (c, t) => rockTints(c, t, DEFAULT.boulder) }] },
   crackedRock: { roughness: 0.8, spin: 0.5, parts: [{ geometry: () => crackedRockGeo(86), tints: (c, t) => rockTints(c, t, DEFAULT.rock) }] },
   // the crown in the sprite's lime highlight (its outline green left out): the cuttable tree reads apart from the
   // kit's trees and bushes, as the GBA's bright cap does
-  cutTree: { roughness: 0.85, spin: Math.PI, tree: true, parts: [{ geometry: () => cutTreeGeo(82), tints: (c, t) => {
+  cutTree: { roughness: 0.85, spin: 0.3, tree: true, parts: [{ geometry: () => cutTreeGeo(82), tints: (c, t) => {
     const a = t.highlight ? lumaWithin(soften(t.highlight), MIN_LUMA.leaves) : c.green ? lumaWithin(lush(c.green), MIN_LUMA.leaves) : DEFAULT.leaves;
-    return { a, b: a };
+    // B (uTrunk): the cap's dark under-rim and stump, in the sprite's dark band tone (its dark green base)
+    return { a, b: t.dark ?? t.crevice ?? scaled(a, 0.3) };
   } }] },
-  // the cargo box in the sprite's navy side (its crevice tone), roof and trim in its blue, the logo in its grey-blue
+  // the cargo box in the sprite's navy side (its crevice tone), roof and trim in its blue (accent), the logo in its
+  // grey-blue (main: the swoosh's colour; the highlight tone also takes in the white cab)
   truck: { roughness: 0.6, spin: 0, mirror: true, parts: [
     { geometry: truckGeo, tints: (c, t) => ({ a: t.crevice ?? c.main ?? DEFAULT.truck, b: c.accent ?? DEFAULT.truckTrim }) },
-    { suffix: 'logo', geometry: truckLogoGeo, castShadow: false, tints: (c, t) => { const a = t.highlight ?? c.main ?? DEFAULT.truckLogo; return { a, b: a }; } },
+    { suffix: 'logo', geometry: truckLogoGeo, castShadow: false, tints: (c) => { const a = c.main ?? DEFAULT.truckLogo; return { a, b: a }; } },
   ] },
 };
 
 const NO_COLORS: SpriteColors = { main: null, accent: null, green: null };
-const NO_TONES: SpriteTones = { body: null, highlight: null, crevice: null };
+const NO_TONES: SpriteTones = { body: null, highlight: null, crevice: null, dark: null };
 
 // Tint codes (models.ts): colour alpha 1 = the vertex colour as it is, 0.5 = × tint A, 0 = × tint B. Tint A blends
 // towards uTintH on up-facing surfaces (uHighlight: 0 off, 1 on): the view-space normal against the view-space up.
@@ -129,7 +130,7 @@ const TINT_FRAG = /* glsl */ `
   #ifndef FLAT_SHADED
   if (uHighlight > 0.0) {
     float up = dot(normalize(vNormal), normalize(viewMatrix[1].xyz));
-    tintA = mix(uTintA, uTintH, uHighlight * smoothstep(0.25, 0.9, up));
+    tintA = mix(uTintA, uTintH, uHighlight * smoothstep(0.1, 0.7, up));
   }
   #endif
   diffuseColor.rgb *= vColor.a > 0.75 ? vec3(1.0) : (vColor.a > 0.25 ? tintA : uTintB);
@@ -158,12 +159,14 @@ const FLOOR_GLSL = /* glsl */ `
 }
 `;
 
-/** Replaces `#include <chunk>` with itself + `code`; throws if three renamed it. */
-function after(src: string, chunk: string, code: string): string {
-  const include = `#include <${chunk}>`;
-  if (!src.includes(include)) throw new Error(`objectModels: three shader chunk <${chunk}> not found`);
-  return src.replace(include, include + '\n' + code);
+/** Replaces `#include <chunk>` with `code`; throws if three renamed it. */
+function include(src: string, chunk: string, code: string): string {
+  const line = `#include <${chunk}>`;
+  if (!src.includes(line)) throw new Error(`objectModels: three shader chunk <${chunk}> not found`);
+  return src.replace(line, code);
 }
+/** Replaces `#include <chunk>` with itself + `code`. */
+const after = (src: string, chunk: string, code: string) => include(src, chunk, `#include <${chunk}>\n${code}`);
 
 interface Part {
   spec: PartSpec;
@@ -238,7 +241,7 @@ export class ObjectModels {
     const km = spec.tree
       ? kitMaterial(kit, {
         vertexColors: true, roughness: spec.roughness, wind: TREE_WIND.amp, windHeight: TREE_WIND.height, fade: true,
-        uniforms: { uTrunk: { value: new THREE.Color(...toLinear(TRUNK)) } }, fragHead: TREE_HEAD, fragColor: TRUNK_FRAG, hookKey: 'cutTree',
+        uniforms: { uTrunk: { value: tintB } }, fragHead: TREE_HEAD, fragColor: TRUNK_FRAG, hookKey: 'cutTree',
       })
       : kitMaterial(kit, {
         vertexColors: true, roughness: spec.roughness,
@@ -246,13 +249,17 @@ export class ObjectModels {
           uHighlight: { value: p.tints(NO_COLORS, NO_TONES).h ? 1 : 0 } },
         fragHead: TINT_HEAD, fragColor: TINT_FRAG, hookKey: 'objectModel',
       });
-    // the light floor after the lights, the harness's actor mask (flat magenta) after everything else
+    // the inflated actors' lamp ceiling (a model next to the Flash lantern is not blown out) and soft shoulder (no
+    // glow), the light floor after the lights, the harness's actor mask (flat magenta) after everything else; no
+    // uniform or define of their own: no extra program
     const material = km.material, base = material.onBeforeCompile;
     material.onBeforeCompile = (s, r) => {
       base.call(material, s, r);
       s.uniforms.uMask = this.mask;
       s.uniforms.uFloor = this.floor;
-      s.fragmentShader = after(after(s.fragmentShader, 'lights_fragment_end', FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
+      let fs = include(s.fragmentShader, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
+      fs = include(fs, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
+      s.fragmentShader = after(after(fs, 'lights_fragment_end', FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
     };
     const mesh = new THREE.InstancedMesh(p.geometry(), material, MAX_PER_KIND);
     applyKitMaterial(mesh, km);
@@ -350,6 +357,8 @@ export class ObjectModels {
     if (i + 1 > k.used) { k.used = i + 1; k.dirty = true; }
   }
 
+  /** A kind's tints from its first instance's sprite. Keyed by the colours object alone: SpriteColorCache hands out
+   *  colours and tones from one entry (one object pair per key), so the same colours mean the same tones. */
   private tint(k: Kind, colors: SpriteColors, tones: SpriteTones): void {
     if (colors === k.colors) return;
     k.colors = colors;

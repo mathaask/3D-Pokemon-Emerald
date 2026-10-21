@@ -197,8 +197,9 @@ const FRAG_FLOOR = /* glsl */ `
 `;
 
 // A soft shoulder on the actor's outgoing light (hue kept): above SHOULDER.knee it eases towards
-// SHOULDER.max, below the bloom threshold (post.ts: 1.05) — a sun-facing white crown would glow.
-const FRAG_SHOULDER = /* glsl */ `
+// SHOULDER.max, below the bloom threshold (post.ts: 1.05) — a sun-facing white crown would glow. (Also the object
+// models': objectModels.ts.)
+export const FRAG_SHOULDER = /* glsl */ `
 {
   float m = max(outgoingLight.r, max(outgoingLight.g, outgoingLight.b));
   const float K = ${glsl(SHOULDER.knee)}, R = ${glsl(SHOULDER.max - SHOULDER.knee)};
@@ -245,8 +246,9 @@ function patch(src: string, chunk: string, by: string): string {
   return src.replace(include, by);
 }
 
-/** three's lights_pars_begin with the point lights' soft ceiling; throws if the attenuation line changed. */
-function lampCeiling(parsBegin: string): string {
+/** three's lights_pars_begin with the point lights' soft ceiling (LAMP_CEILING; also the object models'); throws if the
+ *  attenuation line changed. */
+export function lampCeiling(parsBegin: string): string {
   if (!parsBegin.includes(POINT_ATTENUATION)) throw new Error('inflatedActors: point-light attenuation not found in lights_pars_begin');
   return parsBegin.replace(POINT_ATTENUATION, POINT_ATTENUATION + LAMP_GLSL);
 }

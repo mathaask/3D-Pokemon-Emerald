@@ -167,7 +167,14 @@ describe('pickTones', () => {
     const rare = px.slice();
     for (let i = 0, n = 0; i < 64 && n < 3; i++) if (rare[i] === 4) { rare[i] = 2; n++; } // 3 of 35 < 10 %
     expect(pickTones(rare, 8, 8, pal).crevice).toEqual(bgr555ToSrgb(pal[2]));
-    expect(pickTones(px.map((v) => (v === 5 ? 5 : 0)), 8, 8, pal)).toEqual({ body: null, highlight: null, crevice: null }); // the ring alone: all edge
+    expect(pickTones(px.map((v) => (v === 5 ? 5 : 0)), 8, 8, pal)).toEqual({ body: null, highlight: null, crevice: null, dark: null }); // the ring alone: all edge
+  });
+  it('takes the most frequent colour darker than the body as the dark tone, outline and edge included, near-black left out', () => {
+    expect(pickTones(px, 8, 8, pal).dark).toEqual(bgr555ToSrgb(pal[4]));   // 6 px; index 1 (luma 0.065) has 1
+    const band = pal.slice(); band[5] = bgr(3, 9, 0);                       // the edge ring a dark green band (28 px)
+    expect(pickTones(px, 8, 8, band).dark).toEqual(bgr555ToSrgb(band[5]));
+    const black = pal.slice(); black[5] = bgr(0, 0, 0);                      // a black outline is never the dark tone
+    expect(pickTones(px, 8, 8, black).dark).toEqual(bgr555ToSrgb(pal[4]));
   });
   it('averages the upper quartile when it spans colours', () => {
     const t = pickTones(px.map((v) => (v === 3 ? 2 : v)).map((v, i) => (i === 54 ? 3 : v)), 8, 8, pal);

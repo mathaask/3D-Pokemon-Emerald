@@ -3,15 +3,14 @@
 // x = z = 0, with position, normal and a 4-component colour: RGB = a shade (× a tint) or a fixed linear colour,
 // alpha = a tint code read by the models' material (TINT): 1 fixed colour, 0.5 tint A × shade, 0 tint B × shade.
 // The tints are the object's own sprite colours and tones (objectModels.ts). Shapes follow the kit's look:
-// noise-displaced icospheres for rocks (props.ts; the boulder smooth, the cracked rock a pile of chiselled
-// chunks), the trees' blob crowns for the Cut tree's mushroom cap, darker occluded undersides baked into the
-// shade. Cached for the session (`userData.shared`).
+// noise-displaced icospheres for rocks (props.ts; the boulder a low, softly cut stone, the cracked rock a pile of
+// chiselled chunks), a scalloped mushroom cap with a dark under-rim for the Cut tree (the trees' TRUNK convention),
+// darker occluded undersides baked into the shade. Cached for the session (`userData.shared`).
 
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { noise3, rng } from '../kit/geom';
-
 import type { RGB } from '../kit/palette';
 
 /** Tint codes (the colour attribute's alpha). */
@@ -251,18 +250,22 @@ function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, elev: number, 
 }
 
 /**
- * ≈0.94 wide, 0.74 tall: the Strength boulder, a smooth round stone (soft facets) in tint A, mottled ±10 %, with a
- * few wavy creases round its upper sides in the sprite's crevice tone (tint B), as its dark lines read.
+ * ≈0.98 wide, 0.52 tall, 0.66 deep: the Strength boulder, a broad, low stone (the sprite's 16 × 13 px oval: its
+ * long side faces the camera, objectModels.ts turns it at most ±0.4 rad) in tint A, softened by three
+ * shallow planar cuts so it reads as stone, mottled ±10 %, with three bold creases in the sprite's crevice tone
+ * (tint B) round its upper sides, as its dark lines read. Its tops blend to the sprite's gold highlight
+ * (objectModels.ts).
  */
 export function boulderGeo(seed: number): THREE.BufferGeometry {
   return cached(`boulder:${seed}`, () => {
-    const H = 0.74;
-    const body = rockBody(seed, { size: [0.94, H, 0.86], noise: [0.09, 0.04], cuts: 0, cutDepth: [1, 1], facets: 0.4, floor: -0.55 }, 2);
+    const H = 0.52;
+    const body = rockBody(seed, { size: [0.98, H, 0.66], noise: [0.08, 0.04], cuts: 3, cutDepth: [0.8, 0.9], facets: 0.45, floor: -0.5 }, 2);
     const parts = new Parts().add(body, TINT.a, (p) => rockShade(p, H, seed));
     const hit = surfaceHit(body, new THREE.Vector3(0, H * 0.45, 0));
     const r = rng(seed ^ 0x2545f491);
-    for (let k = 0; k < 4; k++) {
-      crease(parts, hit, 0.55 + r() * 0.35, (k / 4) * Math.PI * 2 + r() * 0.6, 0.7 + r() * 0.4, 0.25 + r() * 0.2, 0.08, 0.05, 0.016);
+    // (on the top and the side the camera sees: the boulder turns at most ±0.4 rad)
+    for (let k = 0; k < 3; k++) {
+      crease(parts, hit, 0.85 + r() * 0.3, (k - 1) * 0.9 + (r() - 0.5) * 0.3 - 0.25, 0.5 + r() * 0.2, 0.2 + r() * 0.1, 0.07, 0.08, 0.03);
     }
     return parts.build();
   });
@@ -290,7 +293,9 @@ export function crackedRockGeo(seed: number): THREE.BufferGeometry {
     parts.add(core, TINT.b, (p) => k3(lerp(0.55, 0.85, smooth(p.y, 0, 0.48))));
     ROCK_CHUNKS.forEach(([x, y, z, size], i) => {
       const chunk = rockBody(seed * 7 + i, { size, noise: [0.1, 0.05], cuts: 5, cutDepth: [0.62, 0.8], facets: 0.75, floor: -0.45 }, 2);
-      chunk.translate(x, y, z);
+      // (pushed 0.03 apart, out from the centre: the core shows as cracks between them)
+      const out = Math.hypot(x, z) > 0.05 ? 0.03 / Math.hypot(x, z) : 0;
+      chunk.translate(x * (1 + out), y, z * (1 + out));
       parts.add(chunk, TINT.a, (p) => rockShade(p, H, seed + i));
     });
     return parts.build();
@@ -299,27 +304,45 @@ export function crackedRockGeo(seed: number): THREE.BufferGeometry {
 
 // ---------------------------------------------------------------- Cut tree
 
-/** The Cut tree: its cap's width and depth, height and underside (above the ground), its trunk's radius and the
- *  scallops of the cap's rim. The trunk shows under the cap's front rim from the default camera. */
-const CUT_TREE = { width: 1.06, depth: 1.0, cap: 0.58, base: 0.42, trunk: 0.15, scallops: 7 };
+/** The Cut tree: its cap's width and depth (wider than deep, so it reads squat from above), its height above the
+ *  underside, the underside's height above the ground, the stump's radius, the rim's scallops; where the dark
+ *  under-rim starts (polar angle, past the equator) and where the overhanging rim ends. */
+const CUT_TREE = { width: 1.2, depth: 0.76, cap: 0.46, base: 0.46, stump: 0.12, scallops: 7, band: 0.36 * Math.PI, rim: 0.68 * Math.PI };
 
 /**
- * ≈1.06 wide, 1.0 tall: the cuttable tree as the GBA draws it, a squat mushroom cap on a short visible trunk, so it
- * reads apart from the kit's trees and bushes. The cap is a lumpy dome with a scalloped, slightly overhanging rim
- * and a dark underside (alpha 1 × the material colour, the trees' convention: light top, dark occluded under);
- * the trunk is flagged in the vertex alpha 0.1–0.4 (the trees' TRUNK hook) with a root flare.
+ * ≈1.2 wide, 0.92 tall, 0.76 deep: the cuttable tree as the GBA draws it, a squat mushroom cap with a dark under-rim (the
+ * sprite's dark base band), so it reads apart from the kit's trees and bushes. The cap is a lumpy dome with a
+ * scalloped rim overhanging past its equator, light top to a darker shoulder (alpha 1 × the material colour); the
+ * under-rim, the underside and a short stump are flagged in the vertex alpha (0.12–0.3: the trees' TRUNK hook,
+ * whose colour objectModels.ts sets to the sprite's dark tone).
  */
 export function cutTreeGeo(seed: number): THREE.BufferGeometry {
   return cached(`cutTree:${seed}`, () => {
     const r = rng(seed);
     const o = [r() * 40, r() * 40, r() * 40];
-    // the dome down to 0.62π (a little past the equator: the rim overhangs), closed underneath by a disc facing down
-    const RIM = Math.PI * 0.62;
-    const dome = new THREE.SphereGeometry(1, 36, 12, 0, Math.PI * 2, 0, RIM);
-    const under = new THREE.CircleGeometry(Math.sin(RIM), 36);
+    const dome = new THREE.SphereGeometry(1, 36, 16, 0, Math.PI * 2, 0, CUT_TREE.rim);
+    const under = new THREE.CircleGeometry(Math.sin(CUT_TREE.rim), 36);
     under.rotateX(Math.PI / 2); // facing −Y
-    under.translate(0, Math.cos(RIM), 0);
-    const cap = mergeGeometries([dome.deleteAttribute('uv'), under.deleteAttribute('uv')])!;
+    under.translate(0, Math.cos(CUT_TREE.rim), 0);
+    // colours on the unit cap: the crown's gradient, the dark band (alpha < 0.5) past `band` and underneath
+    const paint = (g: THREE.BufferGeometry, underside: boolean) => {
+      g.deleteAttribute('uv');
+      g.deleteAttribute('normal');
+      const p = g.getAttribute('position');
+      const col = new Float32Array(p.count * 4);
+      for (let i = 0; i < p.count; i++) {
+        const y = p.getY(i);
+        if (underside) col.set([1, 1, 1, 0.12], i * 4);
+        else if (y < Math.cos(CUT_TREE.band) + 1e-4) col.set([1, 1, 1, 0.3], i * 4);
+        else {
+          const t = smooth(y, Math.cos(CUT_TREE.band), 1), k = lerp(0.55, 1.12, t);
+          col.set([k * lerp(0.9, 1.03, t), k, k * lerp(1.1, 0.95, t), 1], i * 4);
+        }
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+      return g;
+    };
+    const cap = mergeGeometries([paint(dome, false), paint(under, true)])!;
     dome.dispose();
     under.dispose();
     const p = cap.getAttribute('position') as THREE.BufferAttribute;
@@ -328,7 +351,7 @@ export function cutTreeGeo(seed: number): THREE.BufferGeometry {
       v.fromBufferAttribute(p, i);
       const az = Math.atan2(v.z, v.x);
       // scalloped rim, lumpy dome
-      const k = 1 + 0.08 * Math.sin(az * CUT_TREE.scallops + o[0]) + 0.07 * noise3(v.x * 2 + o[0], v.y * 2 + o[1], v.z * 2 + o[2]);
+      const k = 1 + 0.05 * Math.sin(az * CUT_TREE.scallops + o[0]) + 0.05 * noise3(v.x * 2 + o[0], v.y * 2 + o[1], v.z * 2 + o[2]);
       p.setXYZ(i, v.x * k, v.y, v.z * k);
     }
     cap.computeBoundingBox();
@@ -339,28 +362,18 @@ export function cutTreeGeo(seed: number): THREE.BufferGeometry {
     const capIndexed = mergeVertices(cap);
     cap.dispose();
     capIndexed.computeVertexNormals();
-    // colours: light top to a darker rim, a dark underside (the sprite's dark green band under the cap)
-    const cp = capIndexed.getAttribute('position'), cn = capIndexed.getAttribute('normal');
-    const col = new Float32Array(cp.count * 4);
-    const top = CUT_TREE.base + CUT_TREE.cap;
-    for (let i = 0; i < cp.count; i++) {
-      const t = smooth(cp.getY(i), CUT_TREE.base + 0.05, top), down = cn.getY(i) < -0.2;
-      const kk = down ? 0.3 : lerp(0.42, 1.12, t);
-      col.set([kk * lerp(0.9, 1.03, t), kk, kk * lerp(1.1, 0.95, t), 1], i * 4);
-    }
-    capIndexed.setAttribute('color', new THREE.BufferAttribute(col, 4));
-    const trunk = new THREE.CylinderGeometry(CUT_TREE.trunk * 0.8, CUT_TREE.trunk, CUT_TREE.base + 0.1, 10, 1, true);
-    trunk.translate(0, (CUT_TREE.base + 0.1) / 2, 0);
-    trunk.deleteAttribute('uv');
-    const tp = trunk.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < tp.count; i++) if (tp.getY(i) < 0.01) { tp.setX(i, tp.getX(i) * 1.5); tp.setZ(i, tp.getZ(i) * 1.5); } // root flare
-    trunk.computeVertexNormals();
-    const bark = new Float32Array(tp.count * 4);
-    for (let i = 0; i < tp.count; i++) bark.set([1, 1, 1, 0.1 + 0.3 * smooth(tp.getY(i), 0, CUT_TREE.base)], i * 4);
-    trunk.setAttribute('color', new THREE.BufferAttribute(bark, 4));
-    const g = mergeGeometries([capIndexed, trunk])!;
+    const stump = new THREE.CylinderGeometry(CUT_TREE.stump * 0.85, CUT_TREE.stump, CUT_TREE.base + 0.08, 10, 1, true);
+    stump.translate(0, (CUT_TREE.base + 0.08) / 2, 0);
+    stump.deleteAttribute('uv');
+    const sp = stump.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < sp.count; i++) if (sp.getY(i) < 0.01) { sp.setX(i, sp.getX(i) * 1.5); sp.setZ(i, sp.getZ(i) * 1.5); } // root flare
+    stump.computeVertexNormals();
+    const bark = new Float32Array(sp.count * 4);
+    for (let i = 0; i < sp.count; i++) bark.set([1, 1, 1, 0.12 + 0.12 * smooth(sp.getY(i), 0, CUT_TREE.base)], i * 4);
+    stump.setAttribute('color', new THREE.BufferAttribute(bark, 4));
+    const g = mergeGeometries([capIndexed, stump])!;
     capIndexed.dispose();
-    trunk.dispose();
+    stump.dispose();
     g.computeBoundingSphere();
     g.userData.shared = true;
     return g;
@@ -464,8 +477,9 @@ export function truckLogoGeo(): THREE.BufferGeometry {
     const parts = new Parts();
     const base = TRUCK.deck + 0.12, centre = 0.12, off = TRUCK.depth / 2 + 0.005;
     for (const side of [1, -1]) {
+      // (the far side's frame is turned half way round: x mirrored, so its logo sits at the same place on the box)
       const at = (x: number, y: number) => new THREE.Matrix4().makeRotationY(side > 0 ? 0 : Math.PI)
-        .multiply(new THREE.Matrix4().makeTranslation(x, y, off));
+        .multiply(new THREE.Matrix4().makeTranslation(side > 0 ? x : -x, y, off));
       parts.add(new THREE.RingGeometry(0.42, 0.6, 32, 1, 0, Math.PI), TINT.a, k3(1), at(centre, base));
       parts.add(new THREE.CircleGeometry(0.28, 24, 0, Math.PI), TINT.a, k3(1), at(centre, base));
       for (let k = 0; k < 3; k++) {

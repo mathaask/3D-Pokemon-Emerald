@@ -96,9 +96,11 @@ export function pickColors(indices: Uint8Array, palette16: Uint16Array): SpriteC
  * take in its outline). Over the non-outline pixels — opaque, luma ≥ 0.2, not on the silhouette's edge (a pixel
  * with a transparent 4-neighbour: GBA sprites draw their outline there) — sorted by luma: `body` is the median
  * pixel's colour, `highlight` the pixel-weighted mean of the upper quartile, `crevice` the darkest colour holding
- * ≥ 10 % of those pixels. All null when there are none.
+ * ≥ 10 % of those pixels. `dark` is the most frequent colour of all the opaque pixels (outline and edge included)
+ * darker than the body, near-black (luma < 0.06) left out: a sprite's dark band (the Cut tree's dark green base).
+ * All null when there are no non-outline pixels.
  */
-export interface SpriteTones { body: RGB | null; highlight: RGB | null; crevice: RGB | null }
+export interface SpriteTones { body: RGB | null; highlight: RGB | null; crevice: RGB | null; dark: RGB | null }
 
 /** Share of the non-outline pixels a colour needs to be the crevice (the darkest *frequent* colour). */
 const CREVICE_SHARE = 0.1;
@@ -106,20 +108,22 @@ const CREVICE_SHARE = 0.1;
 /** The tones (SpriteTones) of a `width` × `height` image of palette `indices` (index 0 transparent). */
 export function pickTones(indices: Uint8Array, width: number, height: number, palette16: Uint16Array): SpriteTones {
   const at = (x: number, y: number) => (x < 0 || y < 0 || x >= width || y >= height ? 0 : indices[y * width + x]);
-  // non-outline pixel counts per BGR555 colour
-  const counts = new Map<number, number>();
+  // non-outline pixel counts per BGR555 colour; every opaque pixel's (the dark tone)
+  const counts = new Map<number, number>(), all = new Map<number, number>();
   let n = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const ci = at(x, y);
-      if (!ci || !at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)) continue;
+      if (!ci) continue;
       const v = (palette16[ci] ?? 0) & 0x7fff;
+      all.set(v, (all.get(v) ?? 0) + 1);
+      if (!at(x - 1, y) || !at(x + 1, y) || !at(x, y - 1) || !at(x, y + 1)) continue;
       if (luma(bgr555ToSrgb(v)) < 0.2) continue;
       counts.set(v, (counts.get(v) ?? 0) + 1);
       n++;
     }
   }
-  if (n === 0) return { body: null, highlight: null, crevice: null };
+  if (n === 0) return { body: null, highlight: null, crevice: null, dark: null };
   // colours by luma (ties: by value, so the order never depends on the map's)
   const list = [...counts].map(([v, k]) => ({ c: bgr555ToSrgb(v), k, l: luma(bgr555ToSrgb(v)), v }))
     .sort((a, b) => a.l - b.l || a.v - b.v);
@@ -135,7 +139,13 @@ export function pickTones(indices: Uint8Array, width: number, height: number, pa
     hiN += inTop;
     seen += e.k;
   }
-  return { body, highlight: [hi[0] / hiN, hi[1] / hiN, hi[2] / hiN], crevice };
+  let dark: RGB | null = null, darkN = 0, darkV = 0;
+  const bodyL = luma(body!);
+  for (const [v, k] of all) {
+    const c = bgr555ToSrgb(v), l = luma(c);
+    if (l >= 0.06 && l < bodyL && (k > darkN || (k === darkN && dark !== null && v < darkV))) { dark = c; darkN = k; darkV = v; }
+  }
+  return { body, highlight: [hi[0] / hiN, hi[1] / hiN, hi[2] / hiN], crevice, dark };
 }
 
 /** A sprite's colours and tones (one decode, one cache entry). */

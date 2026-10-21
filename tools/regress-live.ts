@@ -96,6 +96,8 @@ const STATIC: StaticEntry[] = [
   { name: 'r116_cut', q: 'map=0.31&focusGfx=82' }, { name: 'r114_rocks', q: 'map=0.29&focusGfx=86' },
   { name: 'fiery_boulders', q: 'map=24.14&focusGfx=87' }, { name: 'r119_items', q: 'map=0.34&focusGfx=59' },
   { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
+  // Granite Cave B2F (Flash): a breakable rock one cell north of the lantern, where Rock Smash puts the player (model lamp ceiling)
+  { name: 'granite_rocks', q: 'map=24.9&flash=2&x=5.5&y=15.5' },
   { name: 'woods_shade', q: 'map=24.11&focusObj=3&hour=17.5' }, // Petalburg Woods: a Bug Catcher in tree shade (shadows on actors)
 ];
 

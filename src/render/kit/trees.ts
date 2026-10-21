@@ -157,8 +157,6 @@ const CHUNK = 8;
 const SMALL_ROUND = 0.6;
 /** Size of the trees kept in a thinned forest interior (every other one, so the canopy closes). */
 const INTERIOR = 1.45;
-/** Size of a small tree (smallTreeGeo) relative to the bushy style. */
-const SMALL_TREE = 0.6;
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
 

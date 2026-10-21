@@ -80,7 +80,7 @@ export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: K
 
 type Foot = { x: number; y: number; z: number };
 
-const NO_SAMPLE: SpriteSample = { colors: { main: null, accent: null, green: null }, tones: { body: null, highlight: null, crevice: null } };
+const NO_SAMPLE: SpriteSample = { colors: { main: null, accent: null, green: null }, tones: { body: null, highlight: null, crevice: null, dark: null } };
 
 /** What an object slot showed the last time the layer saw it, and since which synced frame (GameState.frame). */
 interface Seen { graphicsId: number; localId: number; map: number; images: number; animNum: number; since: number; frame: number }

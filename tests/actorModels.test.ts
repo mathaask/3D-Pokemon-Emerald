@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { pokeBallGeo, boulderGeo, crackedRockGeo, cutTreeGeo, truckGeo } from '../src/render/actors/models';
+import { pokeBallGeo, boulderGeo, crackedRockGeo, cutTreeGeo, truckGeo, truckLogoGeo } from '../src/render/actors/models';
 
 const box = (g: THREE.BufferGeometry) => { g.computeBoundingBox(); return g.boundingBox!; };
 const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute('position').count) / 3;
@@ -35,5 +35,15 @@ describe('object model geometry', () => {
     for (let i = 0; i < p.count; i++)
       if ((p.getX(i) - c.x) * n.getX(i) + (p.getY(i) - c.y) * n.getY(i) + (p.getZ(i) - c.z) * n.getZ(i) > 0) out++;
     expect(out / p.count).toBeGreaterThan(0.95);
+  });
+
+  // ---- beyond the brief ----
+  it("uses only the tint codes in the truck logo too, and keeps the Cut tree's crown (1) and dark band (< 0.5) apart", () => {
+    const col = truckLogoGeo().getAttribute('color');
+    for (let i = 0; i < col.count; i++) expect([0, 0.5, 1].some((c) => Math.abs(col.getW(i) - c) < 0.01)).toBe(true);
+    const tree = cutTreeGeo(1).getAttribute('color'), a = new Set<number>();
+    for (let i = 0; i < tree.count; i++) a.add(Math.round(tree.getW(i) * 100) / 100);
+    expect(a.has(1)).toBe(true);
+    expect([...a].some((w) => w < 0.5)).toBe(true);
   });
 });

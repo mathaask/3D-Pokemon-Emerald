@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { ObjectModels, MAX_PER_KIND, MIN_LUMA } from '../src/render/actors/objectModels';
-import { LIGHT_FLOOR } from '../src/render/actors/inflatedActors';
+import { FRAG_SHOULDER, LIGHT_FLOOR, lampCeiling } from '../src/render/actors/inflatedActors';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { luma, lush, soften, toLinear, type RGB } from '../src/render/kit/palette';
 import type { ObjectModelKind } from '../src/render/actors/objectMap';
@@ -53,27 +53,27 @@ describe('ObjectModels tints, uploads and precompile', () => {
     expect(tints(m, 'truck').b.equals(lin(blue))).toBe(true);
     m.set([at('pokeball', colors), at('truck', colors)]);
     expect(tints(m, 'pokeball').a.equals(lin([0.86, 0.16, 0.16]))).toBe(true);
-    expect(tints(m, 'truck').a.equals(lin([0.92, 0.92, 0.9]))).toBe(true);
+    expect(tints(m, 'truck').a.equals(lin([0.26, 0.26, 0.48]))).toBe(true); // (navy, as the sprite's side)
     expect(tints(m, 'truck').b.equals(lin([0.2, 0.35, 0.8]))).toBe(true);
   });
   it("tints a rock from its sprite's tones: body, the highlight its tops blend to, the crevice of its cracks", () => {
     const m = new ObjectModels(createKitUniforms());
     const body: RGB = [123 / 255, 115 / 255, 66 / 255], high: RGB = [181 / 255, 165 / 255, 99 / 255], crev: RGB = [58 / 255, 58 / 255, 25 / 255];
     const main: RGB = [58 / 255, 58 / 255, 25 / 255];   // pickColors' main: the darkest body shade, not used
-    m.set([{ ...at('crackedRock', { main, accent: null, green: null }), tones: { body, highlight: high, crevice: crev } }]);
+    m.set([{ ...at('crackedRock', { main, accent: null, green: null }), tones: { body, highlight: high, crevice: crev, dark: crev } }]);
     expect(tints(m, 'crackedRock').a.equals(lin(body))).toBe(true);
     expect(tints(m, 'crackedRock').h.equals(lin(high))).toBe(true);
     expect(tints(m, 'crackedRock').b.equals(lin(crev))).toBe(true);
     // MIN_LUMA only as a safety floor: a body darker than it is lifted (hue kept)
     const m2 = new ObjectModels(createKitUniforms());
-    m2.set([{ ...at('boulder', colors), tones: { body: crev, highlight: high, crevice: crev } }]);
+    m2.set([{ ...at('boulder', colors), tones: { body: crev, highlight: high, crevice: crev, dark: null } }]);
     const k = MIN_LUMA.rock / luma(crev), got = tints(m2, 'boulder').a, want = lin([crev[0] * k, crev[1] * k, crev[2] * k]);
     for (const ch of ['r', 'g', 'b'] as const) expect(got[ch]).toBeCloseTo(want[ch], 6);
   });
   it("tints the Cut tree's crown (its material colour) in the sprite's highlight, not its outline-darkened green", () => {
     const m = new ObjectModels(createKitUniforms());
     const lime: RGB = [115 / 255, 189 / 255, 0];
-    m.set([{ ...at('cutTree', { main: null, accent: null, green: [0.18, 0.37, 0] }), tones: { body: null, highlight: lime, crevice: null } }]);
+    m.set([{ ...at('cutTree', { main: null, accent: null, green: [0.18, 0.37, 0] }), tones: { body: null, highlight: lime, crevice: null, dark: null } }]);
     const tree = mesh(m, 'cutTree');
     expect(tints(m, 'cutTree').a.equals(lin(soften(lime)))).toBe(true);
     expect((tree.material as THREE.MeshStandardMaterial).color.equals(tints(m, 'cutTree').a)).toBe(true);
@@ -87,7 +87,7 @@ describe('ObjectModels tints, uploads and precompile', () => {
   it("paints the truck's box in the sprite's navy (crevice), its roof and trim in the blue, its logo in the grey-blue", () => {
     const m = new ObjectModels(createKitUniforms());
     const navy: RGB = [66 / 255, 66 / 255, 123 / 255], grey: RGB = [107 / 255, 123 / 255, 156 / 255], blue: RGB = [90 / 255, 99 / 255, 1];
-    m.set([{ ...at('truck', { main: grey, accent: blue, green: null }), tones: { body: blue, highlight: grey, crevice: navy } }]);
+    m.set([{ ...at('truck', { main: grey, accent: blue, green: null }), tones: { body: blue, highlight: grey, crevice: navy, dark: null } }]);
     expect(tints(m, 'truck').a.equals(lin(navy))).toBe(true);
     expect(tints(m, 'truck').b.equals(lin(blue))).toBe(true);
     expect(tints(m, 'truck:logo').a.equals(lin(grey))).toBe(true);
@@ -109,6 +109,9 @@ describe('ObjectModels tints, uploads and precompile', () => {
         fragmentShader: THREE.ShaderLib.standard.fragmentShader } as unknown as THREE.WebGLProgramParametersWithUniforms;
       (mesh(m, k).material as THREE.Material).onBeforeCompile(shader, {} as THREE.WebGLRenderer);
       expect(shader.fragmentShader).toContain('floorLight');
+      // the inflated actors' lamp ceiling (point lights) and soft shoulder, patched in
+      expect(shader.fragmentShader).toContain(lampCeiling(THREE.ShaderChunk.lights_pars_begin));
+      expect(shader.fragmentShader).toContain(FRAG_SHOULDER + '#include <opaque_fragment>');
       m.setLightFloor(new THREE.Color(0.5, 0.25, 1));
       expect((shader.uniforms.uFloor.value as THREE.Color).toArray()).toEqual([0.5 * LIGHT_FLOOR, 0.25 * LIGHT_FLOOR, LIGHT_FLOOR]);
     }
