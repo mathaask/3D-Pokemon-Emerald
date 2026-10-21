@@ -24,6 +24,7 @@ import type { CliffPlacement } from '../../src/render/kit/cliffs';
 import type { WaterPlacement } from '../../src/render/kit/water';
 import { cellLook, decorationPixels, DECOR_MIN_PX, GroundMat, type CellLook, type TerrainPlacement } from '../../src/render/kit/terrain';
 import type { FlowerCell } from '../../src/render/kit/flowers';
+import { BED, type SoilCell } from '../../src/render/kit/soil';
 import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/tables/general';
 import { SECONDARY_FLOWERS, SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
 import { SYM } from '../../src/game/symbols';
@@ -128,6 +129,29 @@ describe('semantics on real maps', () => {
   it('Route 101 has tall grass, Petalburg Woods a forest', () => {
     expect(payload<unknown[]>(run(0, 16).ex, 'grass').length).toBeGreaterThanOrEqual(20);
     expect(payload<unknown[]>(run(24, 11).ex, 'trees').length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('berry soil lies flat: a bed on the ground the terrain draws, the plant standing on its top (Routes 104, 123)', () => {
+    // (Phase 2 Task 9: the legacy art stood it up as a card or a soil wall, hiding the berry plants)
+    for (const [n, beds] of [[19, 10], [38, 18]] as const) {
+      const r = run(0, n);
+      const soil = payload<SoilCell[]>(r.ex, 'berrySoil');
+      expect(soil.length, r.name).toBe(beds);
+      const terrain = new Map(payload<TerrainPlacement>(r.ex, 'terrain').cells.map((c) => [c.i, c]));
+      for (const c of soil) {
+        expect(r.a.beh[c.i]).toBe(MB.BERRY_TREE_SOIL);
+        expect(r.ex!.claims.has(c.i, CLAIM_OBJECT) && r.ex!.claims.has(c.i, CLAIM_SURFACE)).toBe(true);
+        expect(terrain.get(c.i)?.h, `${c.x},${c.y}`).toBe(r.a.groundH[c.i]);           // the ground around it, at its level
+        expect(r.ex!.claims.surfaceY[c.i]).toBeCloseTo(r.a.groundH[c.i] + BED.top, 5);  // its plant on the bed
+      }
+      // the legacy art draws nothing on it
+      const quads = emitLegacy(r.a, r.ex!.claims).quads;
+      for (const c of soil) {
+        const on = quads.filter((q) => [q.a, q.b, q.c, q.d].every(([x, , z]) => x >= c.x - 1e-6 && x <= c.x + 1 + 1e-6
+          && z >= c.y + c.h - 1e-6 && z <= c.y + 1 + c.h + 1e-6));
+        expect(on, `${c.x},${c.y}`).toEqual([]);
+      }
+    }
   });
 
   it("Fortree's treehouse corner tiles are not trees", () => {
