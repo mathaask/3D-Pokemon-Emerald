@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import { applyKitMaterial, kitMaterial, type KitMaterial, type KitUniforms } from '../kit/materials';
-import { luma, lush, soften, toLinear, type RGB } from '../kit/palette';
+import { luma, lush, NIGHT_SOIL_GLSL, soften, toLinear, type RGB } from '../kit/palette';
 import { TRUNK_FRAG, TRUNK_HEAD } from '../kit/trees';
 import { put, markRange } from '../instanceUpload';
 import type { ObjectModelKind } from './objectMap';
@@ -126,9 +126,9 @@ const NO_COLORS: SpriteColors = { main: null, accent: null, green: null };
 const NO_TONES: SpriteTones = { body: null, highlight: null, crevice: null, dark: null };
 
 /** Berry plants: the most flowers or berries one carries (berryPlantGeo: 5–7); the geometry seed of every plant
- *  (shared anchors: each plant's own turn keeps them from looking alike); how far that turn goes (rad either way:
- *  a sprout's seed leaves keep their V across the default view, open east and west). */
-const BERRY = { anchors: 7, seed: 0, spin: 0.5 };
+ *  (shared anchors: each plant's own turn keeps them from looking alike: a full turn, stable per object); how far a
+ *  sprout turns (rad either way: its two seed leaves keep their V across the default view, open east and west). */
+const BERRY = { anchors: 7, seed: 0, sproutSpin: 0.5 };
 /** Fallback colours (sRGB) of the berries and the petals (the leaves': DEFAULT.leaves). */
 export const BERRY_DEFAULT = { fruit: [0.85, 0.2, 0.25] as RGB, petals: [0.95, 0.55, 0.75] as RGB };
 /** Safety floors (sRGB luma), hue kept: the berries' and petals' colours (the sprites' fruit and flower colours sit
@@ -150,8 +150,9 @@ export function berryColors(c: SpriteColors): BerryColors {
   };
 }
 
-// Tint codes (models.ts): colour alpha 1 = the vertex colour as it is, 0.5 = × tint A, 0 = × tint B. Tint A blends
-// towards uTintH on up-facing surfaces (uHighlight: 0 off, 1 on): the view-space normal against the view-space up.
+// Tint codes (models.ts): colour alpha 1 = the vertex colour as it is (0.85 = soil: moonlit at night), 0.5 = × tint A,
+// 0 = × tint B. Tint A blends towards uTintH on up-facing surfaces (uHighlight: 0 off, 1 on): the view-space normal
+// against the view-space up.
 const TINT_HEAD = /* glsl */ `
 uniform vec3 uTintA;
 uniform vec3 uTintB;
@@ -172,6 +173,8 @@ const TINT_FRAG = /* glsl */ `
   #endif
   diffuseColor.rgb *= vColor.a > 0.75 ? vec3(1.0) : (vColor.a > 0.25 ? tintA : uTintB);
   diffuseColor.a = 1.0;
+  // soil (code 0.85: the berry plants' mounds) is moonlit at night, as the berry beds are
+  if (vColor.a > 0.75 && vColor.a < 0.95) ${NIGHT_SOIL_GLSL}
 }
 #endif
 `;
@@ -461,7 +464,7 @@ export class ObjectModels {
     }
     const b = this.berry;
     b.plants = 0;
-    for (const m of this.berry.all) m.n = 0;
+    for (const m of b.all) m.n = 0;
     for (const inst of list) {
       if (inst.kind === 'berry') {
         this.placeBerry(inst);
@@ -486,7 +489,7 @@ export class ObjectModels {
         g.dirty = false;
       }
     }
-    for (const m of this.berry.all) {
+    for (const m of b.all) {
       m.mesh.count = m.n;
       m.mesh.visible = m.n > 0;
       if (m.dirty) markRange(m.mesh.instanceMatrix, m.used);
@@ -496,7 +499,7 @@ export class ObjectModels {
   }
 
   /**
-   * A berry plant: its stage's body at (x, y, z) turned by its yaw (−BERRY.spin..spin, stable per object), in its leaves'
+   * A berry plant: its stage's body at (x, y, z) turned by its yaw (a full turn; a sprout ±BERRY.sproutSpin), in its leaves'
    * colour; at stage 4 its flowers, at stage 5 its berries, at its anchors (the plant's placement × the anchor's),
    * in its accent.
    */
@@ -508,7 +511,8 @@ export class ObjectModels {
     let col = this.berryColorCache.get(inst.colors);
     if (!col) this.berryColorCache.set(inst.colors, (col = berryColors(inst.colors)));
     // (yaw in 0..2π → −spin..spin)
-    const yaw = ((inst.yaw ?? Math.PI) / Math.PI - 1) * BERRY.spin, c = Math.cos(yaw), s = Math.sin(yaw);
+    const spin = stage === 2 ? BERRY.sproutSpin : Math.PI;
+    const yaw = ((inst.yaw ?? Math.PI) / Math.PI - 1) * spin, c = Math.cos(yaw), s = Math.sin(yaw);
     const e = body.mesh.instanceMatrix.array as Float32Array, o = body.n * 16;
     // (column-major; the other elements keep the identity the mesh was made with)
     if (put(e, o, c) | put(e, o + 2, -s) | put(e, o + 8, s) | put(e, o + 10, c) | put(e, o + 12, inst.x) | put(e, o + 13, inst.y)

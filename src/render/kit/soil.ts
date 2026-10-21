@@ -3,7 +3,8 @@
 // reconstruction draws as props: an upright cutout card on the cell's centre line, or a soil wall along its south
 // edge where the art fills the cell (Route 104) — either hid the lower half of a plant standing there. Here the
 // terrain draws the ground around them (the cell's ground, grass) and each cell gets a bed: a rounded square of
-// dark turned earth, domed, its top ridged by furrows. The plants stand on its top (the cell's surface height).
+// turned earth (the soil tile's own colour as earth: palette.ts earthTone; moonlit at night: NIGHT_SOIL), domed,
+// its top ridged by furrows. The plants stand on its top (the cell's surface height).
 // Retro keeps the legacy soil (the kit only runs in Modern).
 
 import * as THREE from 'three';
@@ -13,24 +14,23 @@ import { K } from '../overworld/analyze';
 import { CLAIM_OBJECT, type Claims } from '../overworld/claims';
 import { hashCell, noise3 } from './geom';
 import { kitMaterial } from './materials';
-import type { RGB } from './palette';
+import { earthTone, NIGHT_SOIL_GLSL, toLinear, type RGB } from './palette';
+import { cellLook, type CellLook } from './terrain';
 import type { Family, KitContext, SemanticContext } from './semantics';
-
-/** Turned soil (linear): the beds, and the berry plants' own mounds. */
-export const SOIL_LINEAR: RGB = [0.18, 0.125, 0.09];
 
 /** A bed: half its width (a rounded square; the cell is 1 wide), the height of its top, its furrows' count and
  *  depth, where its slope starts (share of the half width). */
 export const BED = { half: 0.44, top: 0.05, furrows: 4, furrow: 0.012, shoulder: 0.72 };
 
-export interface SoilCell { i: number; x: number; y: number; h: number }
+/** A soil cell: grid index, cell, ground height, the colour of its earth (linear). */
+export interface SoilCell { i: number; x: number; y: number; h: number; color: RGB }
 
 /**
  * One cell's bed, centred on (cx, h, cz): an indexed polar grid out to a rounded-square outline (superellipse),
  * flat-domed to BED.top and sloping to the ground past BED.shoulder, furrows running east-west over its top;
- * vertex colours (linear RGB): the soil, darker down its slope and in the furrows, mottled.
+ * vertex colours (linear RGB): `soil`, darker down its slope and in the furrows, mottled.
  */
-function bedGeo(cx: number, h: number, cz: number, seed: number): THREE.BufferGeometry {
+function bedGeo(cx: number, h: number, cz: number, seed: number, soil: RGB): THREE.BufferGeometry {
   const RINGS = 7, SEGS = 36;
   const pos: number[] = [], col: number[] = [], idx: number[] = [];
   const o = (seed % 997) * 0.37;
@@ -44,7 +44,7 @@ function bedGeo(cx: number, h: number, cz: number, seed: number): THREE.BufferGe
     const y = BED.top * (1 - slope) * (1 + 0.15 * noise3(x * 5 + o, z * 5, o)) + BED.furrow * ridge * (1 - slope);
     pos.push(cx + x, h + y, cz + z);
     const k = THREE.MathUtils.lerp(0.62, 1, 1 - slope) * (0.9 + 0.12 * ridge) * (1 + 0.14 * noise3(x * 13 + o, z * 13, 3.1));
-    col.push(SOIL_LINEAR[0] * k, SOIL_LINEAR[1] * k, SOIL_LINEAR[2] * k);
+    col.push(soil[0] * k, soil[1] * k, soil[2] * k);
   };
   vertex(0, 0);
   for (let r = 1; r <= RINGS; r++) for (let j = 0; j < SEGS; j++) vertex(r / RINGS, (j / SEGS) * Math.PI * 2);
@@ -67,6 +67,7 @@ export const soilFamily: Family<SoilCell[]> = {
   extract({ a }: SemanticContext, claims: Claims): SoilCell[] {
     if (a.opts.indoor || a.opts.underground || a.opts.underwater) return [];
     const cells: SoilCell[] = [];
+    const looks = new Map<number, CellLook>(), earth = new Map<number, RGB>();
     for (let i = 0; i < a.N; i++) {
       if (a.beh[i] !== MB.BERRY_TREE_SOIL || a.kind[i] !== K.Block || claims.has(i, CLAIM_OBJECT)) continue;
       // the object is ours (a blocked cell: the legacy art draws no top-layer card of its own); the terrain draws
@@ -76,18 +77,21 @@ export const soilFamily: Family<SoilCell[]> = {
       if (a.groundOf[i] >= 0) claims.groundMt[i] = a.groundOf[i];
       const h = a.groundH[i];
       claims.surfaceY[i] = h + BED.top;
-      cells.push({ i, x: a.cellX(i), y: a.cellY(i), h });
+      // (the soil tile's colour, as the terrain reads a tile's, turned to earth)
+      let color = earth.get(a.mt[i]);
+      if (!color) earth.set(a.mt[i], (color = toLinear(earthTone(cellLook(a, a.mt[i], looks).tint))));
+      cells.push({ i, x: a.cellX(i), y: a.cellY(i), h, color });
     }
     return cells;
   },
 
   build(cells: SoilCell[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!cells.length) return null;
-    const beds = cells.map((c) => bedGeo(c.x + 0.5, c.h, c.y + 0.5 + c.h, hashCell(c.x, c.y, 0x5011)));
+    const beds = cells.map((c) => bedGeo(c.x + 0.5, c.h, c.y + 0.5 + c.h, hashCell(c.x, c.y, 0x5011), c.color));
     const g = mergeGeometries(beds)!;
     for (const b of beds) b.dispose();
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95 }).material);
+    const mesh = new THREE.Mesh(g, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95, fragColor: NIGHT_SOIL_GLSL, hookKey: 'berrySoil' }).material);
     mesh.receiveShadow = true;
     return mesh;
   },

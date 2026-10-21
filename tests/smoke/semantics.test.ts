@@ -29,7 +29,7 @@ import { GENERAL_SEA_ROCK, GENERAL_SHOAL_TOPS } from '../../src/render/kit/table
 import { SECONDARY_FLOWERS, SECONDARY_ROCK } from '../../src/render/kit/tables/secondary';
 import { SYM } from '../../src/game/symbols';
 import { MB } from '../../src/game/behaviors';
-import { luma } from '../../src/render/kit/palette';
+import { luma, SOIL_LINEAR } from '../../src/render/kit/palette';
 
 const OUT = path.resolve(import.meta.dirname, '../../out');
 
@@ -143,6 +143,7 @@ describe('semantics on real maps', () => {
         expect(r.ex!.claims.has(c.i, CLAIM_OBJECT) && r.ex!.claims.has(c.i, CLAIM_SURFACE)).toBe(true);
         expect(terrain.get(c.i)?.h, `${c.x},${c.y}`).toBe(r.a.groundH[c.i]);           // the ground around it, at its level
         expect(r.ex!.claims.surfaceY[c.i]).toBeCloseTo(r.a.groundH[c.i] + BED.top, 5);  // its plant on the bed
+        expect(c.color).toEqual(SOIL_LINEAR);   // its tile's soil as earth, the plants' mounds' colour (one soil art)
       }
       // the legacy art draws nothing on it
       const quads = emitLegacy(r.a, r.ex!.claims).quads;

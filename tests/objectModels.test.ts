@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { ObjectModels, MAX_PER_KIND, MIN_LUMA, BERRY_DEFAULT, BERRY_MIN_LUMA, berryColors } from '../src/render/actors/objectModels';
 import { FRAG_SHOULDER, LIGHT_FLOOR, lampCeiling } from '../src/render/actors/inflatedActors';
 import { createKitUniforms } from '../src/render/kit/materials';
-import { luma, lush, soften, toLinear, type RGB } from '../src/render/kit/palette';
+import { luma, lush, NIGHT_SOIL_GLSL, soften, toLinear, type RGB } from '../src/render/kit/palette';
 import type { ObjectModelKind } from '../src/render/actors/objectMap';
 import type { SpriteColors } from '../src/render/actors/spriteColors';
 import { berryPlantGeo } from '../src/render/actors/models';
@@ -214,9 +214,9 @@ describe('ObjectModels berry plants', () => {
   });
   it("places each flower or berry at its anchor on the plant (the plant's placement × the anchor)", () => {
     const m = new ObjectModels(createKitUniforms());
-    const yaw = 1.3;                          // (0..2π → −0.5..0.5 rad: the plants turn a little, by object)
+    const yaw = 1.3;                          // (0..2π → a full turn, by object: yaw − π)
     m.set([plant(5, colors, 4, yaw)]);
-    const turn = (yaw / Math.PI - 1) * 0.5;
+    const turn = yaw - Math.PI;
     const at = new THREE.Matrix4(), body = new THREE.Matrix4();
     mesh(m, 'berry5').getMatrixAt(0, body);
     expect(new THREE.Vector3().setFromMatrixPosition(body).toArray()).toEqual([4, 1, 3]);
@@ -225,6 +225,13 @@ describe('ObjectModels berry plants', () => {
       const want = a.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn).add(new THREE.Vector3(4, 1, 3));
       expect(new THREE.Vector3().setFromMatrixPosition(at).distanceTo(want)).toBeLessThan(1e-5);
     });
+  });
+  it('turns every plant a full turn by object, but a sprout only ±0.5 rad (its V stays across the view)', () => {
+    const m = new ObjectModels(createKitUniforms());
+    const angle = (k: string) => { const e = new THREE.Matrix4(); mesh(m, k).getMatrixAt(0, e); return Math.atan2(e.elements[8], e.elements[0]); };
+    m.set([1, 2, 3, 4, 5].map((s) => plant(s, colors, s, 0.2)));
+    for (const s of [1, 3, 4, 5]) expect(angle(`berry${s}`)).toBeCloseTo(0.2 - Math.PI, 5);
+    expect(angle('berry2')).toBeCloseTo((0.2 / Math.PI - 1) * 0.5, 5);
   });
   it("colours each plant from its own sprite: leaves its green (lush, lifted), flowers and berries its accent", () => {
     const m = new ObjectModels(createKitUniforms());
@@ -266,6 +273,8 @@ describe('ObjectModels berry plants', () => {
       fragmentShader: THREE.ShaderLib.standard.fragmentShader } as unknown as THREE.WebGLProgramParametersWithUniforms;
     (mesh(m, 'berryFlower').material as THREE.Material).onBeforeCompile(shader, {} as THREE.WebGLRenderer);
     expect(shader.vertexShader).toContain('if (color.a < 0.75) vColor.rgb *= instanceColor.rgb;');
+    // the mounds' soil (code 0.85) is moonlit at night, as the berry beds are
+    expect(shader.fragmentShader).toContain('if (vColor.a > 0.75 && vColor.a < 0.95) ' + NIGHT_SOIL_GLSL);
     // the berry materials keep the models' program: the same hooks, uniforms and cache key as the others
     const key = (k: string) => (mesh(m, k).material as THREE.Material).customProgramCacheKey();
     expect(key('berry1')).toBe(key('pokeball'));

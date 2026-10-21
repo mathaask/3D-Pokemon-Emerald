@@ -63,8 +63,13 @@ describe('object model geometry', () => {
     const plants = ([1, 2, 3, 4, 5] as const).map((s) => berryPlantGeo(s, 0).body);
     for (const g of [...plants, berryFruitGeo(), berryFlowerGeo()]) {
       const col = g.getAttribute('color');
-      for (let i = 0; i < col.count; i++) expect([0, 0.5, 1].some((c) => Math.abs(col.getW(i) - c) < 0.01)).toBe(true);
+      for (let i = 0; i < col.count; i++) expect([0, 0.5, 0.85, 1].some((c) => Math.abs(col.getW(i) - c) < 0.01)).toBe(true);
     }
+    // (the soil of the mounds: 0.85, moonlit at night; stage 1 is all soil, the flowers and berries have none)
+    const codes = (g: THREE.BufferGeometry) => new Set(Array.from({ length: g.getAttribute('color').count }, (_, i) => +g.getAttribute('color').getW(i).toFixed(2)));
+    expect([...codes(plants[0])]).toEqual([0.85]);
+    for (const g of plants.slice(1)) expect(codes(g).has(0.85) && codes(g).has(0.5)).toBe(true);
+    for (const g of [berryFruitGeo(), berryFlowerGeo()]) expect(codes(g).has(0.85)).toBe(false);
     for (const g of plants) {
       expect(box(g).min.y).toBeGreaterThan(-0.02);
       expect(box(g).max.x - box(g).min.x).toBeLessThanOrEqual(1.0);

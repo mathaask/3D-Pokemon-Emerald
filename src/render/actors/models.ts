@@ -2,8 +2,9 @@
 // moving truck and the berry plants (a body per growth stage, flowers and berries), drawn by ObjectModels where
 // their sprites stand. Every geometry stands on y = 0, centred on x = z = 0 (a flower or berry: centred on its
 // anchor), with position, normal and a 4-component colour: RGB = a shade (× a tint) or a fixed linear colour,
-// alpha = a tint code read by the models' material (TINT): 1 fixed colour, 0.5 tint A × shade, 0 tint B × shade.
-// The tints are the object's own sprite colours and tones (objectModels.ts). Shapes follow the kit's look:
+// alpha = a tint code read by the models' material (TINT): 1 fixed colour (0.85: soil, moonlit at night), 0.5 tint
+// A × shade, 0 tint B × shade. The tints are the object's own sprite colours and tones (objectModels.ts). Shapes
+// follow the kit's look:
 // noise-displaced icospheres for rocks (props.ts; the boulder a low, softly cut stone, the cracked rock a pile of
 // chiselled chunks), a scalloped mushroom cap with a dark under-rim for the Cut tree (the trees' TRUNK convention),
 // the kit's bushy foliage under a coat of leaves for the berry bush, darker occluded undersides baked into the
@@ -14,11 +15,11 @@ import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferG
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { noise3, rng } from '../kit/geom';
 import { blobCrown } from '../kit/trees';
-import { SOIL_LINEAR } from '../kit/soil';
-import type { RGB } from '../kit/palette';
+import { SOIL_LINEAR, type RGB } from '../kit/palette';
 
-/** Tint codes (the colour attribute's alpha). */
-export const TINT = { fixed: 1, a: 0.5, b: 0 } as const;
+/** Tint codes (the colour attribute's alpha); `soil`: a fixed colour, moonlit at night as the berry beds are
+ *  (palette.ts NIGHT_SOIL). */
+export const TINT = { fixed: 1, soil: 0.85, a: 0.5, b: 0 } as const;
 type Code = (typeof TINT)[keyof typeof TINT];
 
 /** A vertex's colour RGB (a shade for the tint codes, a linear colour for TINT.fixed): constant or per vertex
@@ -685,16 +686,16 @@ function soilMound(parts: Parts, seed: number, w: number, h: number, clods: numb
   const shade = Array.from({ length: pos.count }, (_, i) => {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const hole = dimple ? lerp(0.55, 1, smooth(Math.hypot(x, z), 0.02, 0.07)) : 1;
-    return lerp(dimple ? 0.75 : 0.6, dimple ? 1.85 : 1.3, smooth(y / h, 0, 0.85)) * (1 + 0.16 * noise3(x * 16 + o[0], y * 16, z * 16 + o[1])) * hole;
+    return lerp(dimple ? 0.7 : 0.6, dimple ? 1.3 : 1.12, smooth(y / h, 0, 0.85)) * (1 + 0.16 * noise3(x * 16 + o[0], y * 16, z * 16 + o[1])) * hole;
   });
-  addShaded(parts, g, shade, TINT.fixed, SOIL);
+  addShaded(parts, g, shade, TINT.soil, SOIL);
   for (let k = 0; k < clods; k++) {
     const a = ((k + r() * 0.6) / clods) * Math.PI * 2, d = (w / 2) * lerp(0.82, 1.08, r()), s = lerp(0.018, 0.032, r());
     const c = new THREE.IcosahedronGeometry(1, 0);
     c.deleteAttribute('uv');
     c.applyMatrix4(new THREE.Matrix4().makeScale(s, s * 0.7, s));
     c.translate(Math.cos(a) * d, s * 0.35, Math.sin(a) * d);
-    addShaded(parts, c, new Array(c.getAttribute('position').count).fill(lerp(0.7, 1.0, r())), TINT.fixed, SOIL);
+    addShaded(parts, c, new Array(c.getAttribute('position').count).fill(lerp(0.7, 1.0, r())), TINT.soil, SOIL);
   }
 }
 
@@ -717,6 +718,13 @@ function stemPath(seed: number, y0: number, y1: number, sway: number, n = 7): TH
 
 /** The mound at a growing plant's foot (stages 2–5; the bed it stands in is the soil's: kit/soil.ts). */
 const FOOT = { w: 0.3, h: 0.045 };
+
+/** Stage 1: a freshly planted mound (≈0.5 wide, 0.12 tall), a seed hole on top. */
+function plantedGeo(seed: number): THREE.BufferGeometry {
+  const parts = new Parts();
+  soilMound(parts, seed, 0.5, 0.13, 5, true);
+  return parts.build();
+}
 
 /** Stage 2: a sprout, two round seed leaves opening in a V on a short stem (≈0.35 tall). */
 function sproutGeo(seed: number): THREE.BufferGeometry {
@@ -863,9 +871,7 @@ export function berryPlantGeo(stage: BerryStage, seed: number): BerryPlant {
     const bush = bushOf(seed);
     p = { body: bush.body, ...anchorsOn(bush, seed, stage === 4 ? 'flower' : 'berry') };
   } else {
-    const body = stage === 1
-      ? cached(`berry1:${seed}`, () => { const parts = new Parts(); soilMound(parts, seed, 0.5, 0.13, 5, true); return parts.build(); })
-      : stage === 2 ? cached(`berry2:${seed}`, () => sproutGeo(seed)) : cached(`berry3:${seed}`, () => saplingGeo(seed));
+    const body = stage === 1 ? plantedGeo(seed) : stage === 2 ? sproutGeo(seed) : saplingGeo(seed);
     p = { body, anchors: [], normals: [] };
   }
   plants.set(key, p);
