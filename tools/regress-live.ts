@@ -21,7 +21,16 @@
 // Modern (Retro computes no field), after their steps; it goes into stats and the field's slots into
 // _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
 // `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png).
-// Gated: slots > 0, maxErr and fixtureMaxErr ≤ 0.02 px (SELFTEST_TOL).
+// Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax()) px (SELFTEST_TOL: half-float
+// rounding grows with the field's height).
+// --ab (live entries, Modern) measures what the inflated actors cost over the same build with inflation off
+// (every character a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
+// --ab-rounds rounds (default 6) of on/off pairs in alternating order, each block restoring the snapshot
+// (both modes emulate the same frames), 5 settle frames and gpuFrames(60). Two variants: idle, and
+// walking (the entry's `walk` key held through the block; `moved` = the player's px displacement over the
+// timed frames, 0 where a cutscene holds the player). Reported per entry: medians of on, off and of the
+// per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging deltas over
+// +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated).
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -30,11 +39,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer, { type Page } from 'puppeteer-core';
+import { inflateMax } from '../src/render/actors/inflateMath';
 
 interface LiveEntry {
   name: string; state: string; steps: [string, number][]; query?: string; eval?: string;
   /** --selftest: self-test after the steps; `selftestAfter`: also right after step n (mid-walk). */
   selftest?: boolean; selftestAfter?: number;
+  /** --ab walking variant: the direction held (one that walks ≥ 3 cells from the steps' end); none: idle only. */
+  walk?: string;
 }
 
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
@@ -43,18 +55,20 @@ interface LiveEntry {
 // 15; at 40 the spiral wipe starts over the zoomed overworld, its actors still visible.
 // r101_grass's mid-walk self-test (after DOWN 18) lands on a frame whose sync changed the atlas's alpha
 // (the player is still walking), as does its final one: a field one sync behind the atlas fails there.
+// `walk` directions were probed (70 frames held from the steps' end); birch, lr_truck and vigoroth are
+// cutscenes that hold the player (their NPCs move), truck_inside has 2-3 free cells.
 const LIVE: LiveEntry[] = [
-  { name: 'r101', state: 'out/r101.state', steps: [['LEFT', 48], ['', 30]] },                // Route 101: player, youngster, boy
-  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true, selftestAfter: 1 }, // standing in tall grass
-  { name: 'r101_tree', state: 'out/r101.state', steps: [['LEFT', 66], ['DOWN', 42], ['', 30]] },   // against the treeline (fade)
-  { name: 'r101_low', state: 'out/r101.state', query: 'camera=3', steps: [['', 30]] },         // Low preset: volume visible
-  { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]] },
-  { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true },               // Birch, bag, Zigzagoon (a Pokémon)
-  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true },         // Littleroot: Mom, truck (gfx 94)
-  { name: 'lr_walk', state: 'out/s22.state', steps: [['', 30]] },                             // Littleroot free walk
-  { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]] },                         // indoor item ball (gfx 59)
-  { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]] },                      // moving boxes (gfx 113)
-  { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
+  { name: 'r101', state: 'out/r101.state', steps: [['LEFT', 48], ['', 30]], walk: 'LEFT' },  // Route 101: player, youngster, boy
+  { name: 'r101_grass', state: 'out/r101.state', steps: [['LEFT', 108], ['DOWN', 18], ['', 30]], selftest: true, selftestAfter: 1, walk: 'UP' }, // standing in tall grass
+  { name: 'r101_tree', state: 'out/r101.state', steps: [['LEFT', 66], ['DOWN', 42], ['', 30]], walk: 'LEFT' }, // against the treeline (fade)
+  { name: 'r101_low', state: 'out/r101.state', query: 'camera=3', steps: [['', 30]], walk: 'LEFT' }, // Low preset: volume visible
+  { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]], walk: 'LEFT' },
+  { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true, walk: 'LEFT' }, // Birch, bag, Zigzagoon (a Pokémon)
+  { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true, walk: 'LEFT' }, // Littleroot: Mom, truck (gfx 94)
+  { name: 'lr_walk', state: 'out/s22.state', steps: [['', 30]], walk: 'LEFT' },              // Littleroot free walk
+  { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
+  { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
+  { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]], walk: 'LEFT' },      // indoor, Vigoroths (Pokémon)
   { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // gated 0.00 % in Retro only
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
 ];
@@ -77,6 +91,7 @@ const STATIC: StaticEntry[] = [
   { name: 'r116_cut', q: 'map=0.31&focusGfx=82' }, { name: 'r114_rocks', q: 'map=0.29&focusGfx=86' },
   { name: 'fiery_boulders', q: 'map=24.14&focusGfx=87' }, { name: 'r119_items', q: 'map=0.34&focusGfx=59' },
   { name: 'granite_flash', q: 'map=24.7&flash=2&focusObj=0' },
+  { name: 'woods_shade', q: 'map=24.11&focusObj=3&hour=17.5' }, // Petalburg Woods: a Bug Catcher in tree shade (shadows on actors)
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
@@ -90,16 +105,23 @@ const VIEW_H = 800;
 const CROP_W = 320;
 const CROP_H = 400;
 
-/** Inflation-field self-test parity tolerance (sprite px) and the field update's GPU target (ms, reported). */
-const SELFTEST_TOL = 0.02;
+/** Inflation-field self-test parity tolerance (sprite px: half-float rounding grows with the height) and the
+ *  field update's GPU target (ms, reported). */
+const SELFTEST_TOL = Math.max(0.02, 0.003 * inflateMax());
 const FIELD_GPU_MS = 0.3;
+/** --ab budgets over inflation off (Phase 2: GPU frame +1.0 ms, renderer CPU +0.5 ms): flagged in the table. */
+const AB_GPU_MS = 1.0;
+const AB_CPU_MS = 0.5;
 
 interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
+/** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` px (walking). */
+interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
   diff?: Diff; selftest?: SelfTest; selftestMid?: SelfTest;
+  ab?: { rounds: number; idle: AbVariant; walk?: AbVariant };
 }
 
 function arg(name: string, def: string): string {
@@ -237,6 +259,59 @@ async function selfTestPoint(page: Page, api: string, outDir: string, dump: stri
   return { result, ok, text };
 }
 
+/** The player's world position (px), or null (no player: battle, cutscene without one). */
+const PLAYER_POS = `(() => { const st = emu.renderer.state; const p = st.player;
+  const s = p && st.sprites.find((q) => q.index === p.spriteId); return s ? [s.worldX, s.worldY] : null; })()`;
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b), h = s.length >> 1;
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+};
+
+/**
+ * One --ab variant: `rounds` on/off pairs (order alternating per round), each block restoring the
+ * snapshot `window.__abSnap`, settling 5 frames and timing gpuFrames(60) with `keys` held.
+ */
+async function abVariant(page: Page, rounds: number, keys: string): Promise<AbVariant> {
+  type T = { gpuMs: number; cpuMs: number };
+  const on: T[] = [], off: T[] = [];
+  let moved = 0;
+  const k = JSON.stringify(keys);
+  for (let r = 0; r < rounds; r++) {
+    for (const mode of r % 2 === 0 ? [true, false] : [false, true]) {
+      await page.evaluate(`emu.renderer.overworld.setActorInflation(${mode}); emu.gba.loadState(window.__abSnap)`);
+      await page.evaluate(`emu.gpuFrames(5, ${k})`);
+      const p0 = await page.evaluate(PLAYER_POS) as number[] | null;
+      const g = await page.evaluate(`emu.gpuFrames(60, ${k})`) as T;
+      const p1 = await page.evaluate(PLAYER_POS) as number[] | null;
+      if (p0 && p1) moved = Math.max(moved, Math.hypot(p1[0] - p0[0], p1[1] - p0[1]));
+      (mode ? on : off).push(g);
+    }
+  }
+  const v: AbVariant = {
+    gpuOn: round(median(on.map((x) => x.gpuMs)), 3), gpuOff: round(median(off.map((x) => x.gpuMs)), 3),
+    dGpu: round(median(on.map((x, i) => x.gpuMs - off[i].gpuMs)), 3),
+    cpuOn: round(median(on.map((x) => x.cpuMs)), 3), cpuOff: round(median(off.map((x) => x.cpuMs)), 3),
+    dCpu: round(median(on.map((x, i) => x.cpuMs - off[i].cpuMs)), 3),
+  };
+  if (keys) v.moved = round(moved, 1);
+  return v;
+}
+
+/** --ab on a live entry after its steps: idle and (with `walk`) walking variants; leaves the entry as found. */
+async function abMeasure(page: Page, e: LiveEntry, rounds: number): Promise<NonNullable<EntryStats['ab']>> {
+  await page.evaluate('window.__abSnap = emu.gba.saveState()');
+  try {
+    const idle = await abVariant(page, rounds, '');
+    const walk = e.walk ? await abVariant(page, rounds, e.walk) : undefined;
+    return { rounds, idle, walk };
+  } finally {
+    await page.evaluate('emu.renderer.overworld.setActorInflation(true); emu.gba.loadState(window.__abSnap)');
+  }
+}
+
+const abText = (v: AbVariant) => `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)} gpu ${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)} cpu`
+  + (v.moved !== undefined ? ` (moved ${v.moved} px)` : '');
+
 async function main(): Promise<void> {
   const root = path.resolve(import.meta.dirname, '..');
   const label = arg('label', '');
@@ -250,6 +325,10 @@ async function main(): Promise<void> {
   if (compare && compare === label) throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   const gpu = flag('gpu');
   const selftest = flag('selftest');
+  const ab = flag('ab');
+  const abRounds = parseInt(arg('ab-rounds', '6'), 10);
+  if (ab && !(abRounds >= 1)) throw new Error('--ab-rounds must be a positive integer');
+  const abRows: string[] = [];
   const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
@@ -362,9 +441,17 @@ async function main(): Promise<void> {
             entry.gpuP90 = round(g.gpuP90, 3);
             entry.cpuMs = round(g.cpuMs, 3);
           }
+          if (ab && e.kind === 'live' && style === 'modern') {
+            const r = entry.ab = await abMeasure(page, e, abRounds);
+            const over = (v?: AbVariant) => (v && (v.dGpu > AB_GPU_MS || v.dCpu > AB_CPU_MS) ? ' OVER' : '');
+            const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)} | ${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${over(v)}` : '- | -');
+            abRows.push(`| ${e.name} | ${r.idle.gpuOn.toFixed(2)} / ${r.idle.gpuOff.toFixed(2)} | ${cell(r.idle)} | `
+              + `${r.walk ? `${r.walk.gpuOn.toFixed(2)} / ${r.walk.gpuOff.toFixed(2)}` : '-'} | ${cell(r.walk)} | ${r.walk?.moved ?? '-'} |`);
+          }
           let line = `shot ${key.padEnd(24)} calls ${String(s.calls).padStart(4)} tris ${String(s.triangles).padStart(8)} programs ${s.programs}`;
           line += stepMsMax !== undefined ? ` stepMax ${entry.stepMsMax} ms` : ` build ${s.buildMs} ms`;
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
+          if (entry.ab) line += ` | ab idle ${abText(entry.ab.idle)}${entry.ab.walk ? `, walk ${abText(entry.ab.walk)}` : ''}`;
           line += selfLine;
           if (refDir) {
             const ref = path.join(refDir, `${key}.png`);
@@ -403,6 +490,12 @@ async function main(): Promise<void> {
     await server.close();
   }
   if (diffs.length) console.log(`\ncompare ${label} vs ${compare}:\n${diffs.join('\n')}`);
+  if (abRows.length) {
+    console.log(`\n--ab: inflation on vs off, ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${AB_GPU_MS} or Δcpu > +${AB_CPU_MS}`);
+    console.log('| entry | idle gpu on / off | idle Δgpu | idle Δcpu | walk gpu on / off | walk Δgpu | walk Δcpu | walk moved px |');
+    console.log('|---|---|---|---|---|---|---|---|');
+    console.log(abRows.join('\n'));
+  }
   // any of these makes the run unusable as a gate: exit non-zero
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);

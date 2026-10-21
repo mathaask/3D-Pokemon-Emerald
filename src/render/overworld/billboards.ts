@@ -2,8 +2,10 @@
 // One instanced draw call; images come from the SpriteAtlas.
 
 import * as THREE from 'three';
+import { put, markRange } from '../instanceUpload';
 
 const MAX = 128;
+const WHITE = [1, 1, 1, 1] as const;
 
 const VERT = /* glsl */ `
   #include <common>
@@ -146,25 +148,35 @@ export class Billboards {
   }
 
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
+  /** The most cards ever set (the uploaded part of the instance buffers). */
+  private used = 0;
 
   /** Cards drawn (instances). */
   get count(): number {
     return this.geometry.instanceCount;
   }
 
-  set(list: BillboardSpec[], cameraRight: THREE.Vector3, light: THREE.Color): void {
+  /** This frame's cards. Only the attributes whose values changed are uploaded (instanceUpload.ts). */
+  set(list: readonly BillboardSpec[], cameraRight: THREE.Vector3, light: THREE.Color): void {
     const n = Math.min(MAX, list.length);
+    const foot = this.foot.array as Float32Array, size = this.size.array as Float32Array;
+    const uv = this.uv.array as Float32Array, tint = this.tint.array as Float32Array;
+    let dFoot = 0, dSize = 0, dUv = 0, dTint = 0;
     for (let i = 0; i < n; i++) {
-      const s = list[i];
-      this.foot.setXYZ(i, s.footX, s.footY, s.footZ);
-      this.size.setXYZW(i, s.width, s.height, s.lift, s.flat ? 1 : 0);
-      this.uv.setXYZW(i, s.slot.u0, s.slot.v0, s.slot.u1, s.slot.v1);
-      const t = s.tint ?? [1, 1, 1, 1];
-      this.tint.setXYZW(i, t[0], t[1], t[2], t[3]);
+      const s = list[i], j = i * 4;
+      dFoot |= put(foot, i * 3, s.footX) | put(foot, i * 3 + 1, s.footY) | put(foot, i * 3 + 2, s.footZ);
+      dSize |= put(size, j, s.width) | put(size, j + 1, s.height) | put(size, j + 2, s.lift) | put(size, j + 3, s.flat ? 1 : 0);
+      dUv |= put(uv, j, s.slot.u0) | put(uv, j + 1, s.slot.v0) | put(uv, j + 2, s.slot.u1) | put(uv, j + 3, s.slot.v1);
+      const t = s.tint ?? WHITE;
+      dTint |= put(tint, j, t[0]) | put(tint, j + 1, t[1]) | put(tint, j + 2, t[2]) | put(tint, j + 3, t[3]);
     }
+    this.used = Math.max(this.used, n);
+    if (dFoot) markRange(this.foot, this.used);
+    if (dSize) markRange(this.size, this.used);
+    if (dUv) markRange(this.uv, this.used);
+    if (dTint) markRange(this.tint, this.used);
     this.geometry.instanceCount = n;
     for (const g of this.shadowGeometries) g.instanceCount = n;
-    for (const a of [this.foot, this.size, this.uv, this.tint]) a.needsUpdate = true;
     this.material.uniforms.uRight.value.copy(cameraRight);
     this.material.uniforms.uLight.value.set(light.r, light.g, light.b);
   }

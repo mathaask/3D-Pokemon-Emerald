@@ -41,8 +41,8 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
 
 /**
  * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
- * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n)` times n
- * idle frames on the GPU (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
+ * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n, keys?)` times n
+ * frames on the GPU, idle or with `keys` held (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
  * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames.
  */
 function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
@@ -65,7 +65,11 @@ function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>
     }
     return times;
   };
-  const gpuFrames = (n: number): Promise<GpuTiming> => timeGpuFrames(gl, n, render, () => emulate(0));
+  // (keys held during the timed frames: the harness's walking A/B)
+  const gpuFrames = (n: number, keys = ''): Promise<GpuTiming> => {
+    const mask = keyMask(keys);
+    return timeGpuFrames(gl, n, render, () => emulate(mask));
+  };
   (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
 }
 

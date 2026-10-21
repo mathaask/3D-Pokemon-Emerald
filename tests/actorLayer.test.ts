@@ -153,24 +153,44 @@ describe('ActorLayer with inflated actors', () => {
     expect(inflatedMeshes().every((m) => !m.visible)).toBe(true);
   });
 
-  it('keeps the feet of inflated actors and puts Modern grass overlays in front of the displaced legs', () => {
-    const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
+  const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
+  // the grass overlay's card foot (in Modern the only card here: the upright is inflated)
+  const overlayCard = (layer: ActorLayer, i = 0) => {
+    const cards = (layer.group.children as THREE.Mesh[]).find((m) => m.renderOrder === 2 && m.name !== 'inflatedActors')!;
+    const a = cards.geometry.getAttribute('aFoot');
+    return new THREE.Vector3(a.getX(i), a.getY(i), a.getZ(i));
+  };
+
+  it('bends the grass at every upright and overlay where the sprite stands (also in Modern)', () => {
     const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
     const modern = layer.update(state, { ...grass, style: 'modern' }).map((p) => p.z);
     expect(modern[0]).toBe(3.5);
-    expect(modern[1]).toBeCloseTo(3.5 + 0.06 + inflateMax() / 16);
+    expect(modern[1]).toBeCloseTo(3.56);
     const retro = layer.update(state, { ...grass, style: 'retro' }).map((p) => p.z);
     expect(retro[1]).toBeCloseTo(3.56);
   });
 
-  it('moves Modern grass overlays towards the eye along their view ray (they stay put on screen)', () => {
-    const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
+  it('draws Modern grass overlays in front of the inflated legs, moved towards the eye along their view ray', () => {
     const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    layer.update(state, { ...grass, style: 'modern' }); // no eye: far away horizontally
+    expect(overlayCard(layer).z).toBeCloseTo(3.5 + 0.06 + inflateMax() / 16);
     const eye = new THREE.Vector3(1, 9, 14);
-    const p = layer.update(state, { ...grass, style: 'modern', cameraPosition: eye })[1];
-    const card = new THREE.Vector3(3.5, 0, 3.56); // today's overlay placement
-    const moved = new THREE.Vector3(p.x, p.y, p.z).sub(card);
+    layer.update(state, { ...grass, style: 'modern', cameraPosition: eye });
+    const card = new THREE.Vector3(3.5, 0, 3.56); // today's overlay placement: it stays put on screen
+    const moved = overlayCard(layer).sub(card);
     expect(moved.length()).toBeCloseTo(inflateMax() / 16);
     expect(moved.normalize().dot(eye.clone().sub(card).normalize())).toBeCloseTo(1);
+    layer.update(state, { ...grass, style: 'retro', cameraPosition: eye });
+    expect(overlayCard(layer, 1).z).toBeCloseTo(3.56); // (Retro: card 0 = the upright, card 1 = the overlay)
+  });
+
+  it('draws characters as cards while inflation is off (the --ab baseline)', () => {
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    layer.inflation = false;
+    layer.update(state, { ...frame, style: 'modern' });
+    expect(layer.counts()).toEqual({ cards: 2, inflated: 0, models: 0 });
+    layer.inflation = true;
+    layer.update(state, { ...frame, style: 'modern' });
+    expect(layer.counts()).toEqual({ cards: 1, inflated: 1, models: 0 });
   });
 });

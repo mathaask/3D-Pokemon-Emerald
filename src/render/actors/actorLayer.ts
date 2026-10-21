@@ -12,6 +12,7 @@ import type { WorldStyle } from '../overworld/world';
 import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
 import type { KitUniforms } from '../kit/materials';
 import { InflatedActors, CONTACT } from './inflatedActors';
+import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
@@ -50,7 +51,8 @@ function towardEye(spec: BillboardSpec, eye: THREE.Vector3 | undefined, right: T
 
 export interface SlotUv { u0: number; v0: number; u1: number; v1: number }
 
-export interface ActorAtlas { slots: ReadonlyMap<number, SlotUv>; target: { texture: THREE.Texture } }
+/** The sprite atlas: slot rectangles and its render target (size in texels; default the SpriteAtlas's). */
+export interface ActorAtlas { slots: ReadonlyMap<number, SlotUv>; target: { texture: THREE.Texture; width?: number; height?: number } }
 
 /** What the layer reads from the view each frame. */
 export interface ActorFrame {
@@ -84,7 +86,8 @@ const groundOf = (s: SpriteSnap, heightAt: (x: number, y: number) => number) => 
  * target for the player): x = worldX / 16, on the ground of its cell, z = foot row + height (un-projection).
  * `heightAt(x, y)` takes grid coordinates (the cell centre).
  */
-export function uprightFoot(s: SpriteSnap, heightAt: (x: number, y: number) => number, out: Foot = { x: 0, y: 0, z: 0 }): Foot {
+export function uprightFoot<T extends Foot = Foot>(s: SpriteSnap, heightAt: (x: number, y: number) => number,
+  out: T = { x: 0, y: 0, z: 0 } as T): T {
   const h = groundOf(s, heightAt);
   out.x = s.worldX / 16;
   out.y = h;
@@ -126,6 +129,8 @@ export class ActorLayer {
   private blobs: BlobShadows;
   /** Modern's characters (null without an inflation field: they stay cards). */
   private inflated: InflatedActors | null = null;
+  /** Modern inflates its characters (false: they are cards as in Retro — the harness's `--ab` baseline). */
+  inflation = true;
   private contact: BlobShadows | null = null;
   // Reused every frame: the pools only grow; `cards` / `actors` / `feet` are this frame's lists.
   private specPool: BillboardSpec[] = [];
@@ -141,7 +146,8 @@ export class ActorLayer {
     if (opts.field) {
       // the rim takes the sky's colour (the kit's, updated by the view's lighting)
       const rim = opts.kit?.uSky ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
-      this.inflated = new InflatedActors(atlas.target.texture, opts.field.texture, rim);
+      const size = new THREE.Vector2(atlas.target.width ?? SLOT * SLOT_COLS, atlas.target.height ?? SLOT * SLOT_ROWS);
+      this.inflated = new InflatedActors(atlas.target.texture, opts.field.texture, rim, size);
       this.contact = new BlobShadows(this.inflated);
       this.contact.setStrength(CONTACT.strength);
       this.contact.setScale(CONTACT.scale);
@@ -159,7 +165,7 @@ export class ActorLayer {
    *  drawn — uprights (cards, inflated actors, models) and grass overlays, in sprite order. */
   update(state: GameState, f: ActorFrame): readonly { x: number; y: number; z: number }[] {
     const sprites = state.sprites;
-    const inflate = this.inflated !== null && f.style === 'modern';
+    const inflate = this.inflated !== null && f.style === 'modern' && this.inflation;
     let n = 0, c = 0, a = 0, m = 0;
     for (let i = 0; i < sprites.length; i++) {
       const s = sprites[i];
@@ -173,14 +179,15 @@ export class ActorLayer {
       const slot = this.atlas.slots.get(s.index);
       if (!slot) continue;
       const spec = placeCard(this.specPool[n++] ??= blankSpec(), s, kind, slot, f.heightAt(cx, cy), GRASS_OFFSET);
-      // (in front of the inflated legs it covers)
-      if (inflate && kind === SpriteKind.Grass) towardEye(spec, f.cameraPosition, f.cameraRight, INFLATED_GRASS_EXTRA);
       if (route === 'inflated' && inflate) this.actors[a++] = spec;
       else this.cards[c++] = spec;
       if (spec.flat) continue;
+      // (the grass bends around where the sprite stands, before an overlay moves nearer the eye)
       const foot = this.footPool[m] ??= { x: 0, y: 0, z: 0 };
       foot.x = spec.footX; foot.y = spec.footY; foot.z = spec.footZ;
       this.feet[m++] = foot;
+      // in front of the inflated legs it covers
+      if (inflate && kind === SpriteKind.Grass) towardEye(spec, f.cameraPosition, f.cameraRight, INFLATED_GRASS_EXTRA);
     }
     this.cards.length = c;
     this.actors.length = a;

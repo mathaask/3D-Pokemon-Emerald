@@ -94,6 +94,7 @@ export class OverworldView {
   private target = new THREE.Vector3();
   private targetValid = false;
   private lastPlayerWorld = new THREE.Vector3();
+  private playerFoot = new THREE.Vector3();
   private mapType = 0;
   private cave = 0;
   private charBase = 0;
@@ -298,14 +299,19 @@ export class OverworldView {
     }
   }
 
-  /** The player's foot point: where the actor layer stands its sprite (the camera's target). */
+  /** The player's foot point: where the actor layer stands its sprite (the camera's target). One reused
+   *  vector: valid until the next call. */
   private playerWorld(state: GameState): THREE.Vector3 | null {
     const p = state.player;
     if (!p) return null;
     const s = state.sprites.find((sp) => sp.index === p.spriteId);
     if (!s) return null;
-    const f = uprightFoot(s, this.actorFrame.heightAt);
-    return new THREE.Vector3(f.x, f.y, f.z);
+    return uprightFoot(s, this.actorFrame.heightAt, this.playerFoot);
+  }
+
+  /** Modern inflates its characters (false: cards, as in Retro — the harness's `--ab` baseline). */
+  setActorInflation(on: boolean): void {
+    this.actors.inflation = on;
   }
 
   private updateLighting(state: GameState): void {

@@ -1,39 +1,62 @@
 // Inflated actors (Modern): every upright sprite as a camera-facing grid mesh (ACTOR_GRID segments)
 // pushed towards the camera by the inflation field (SpriteField, sprite px), shaded by the scene's
-// lights with normals from the field's gradient, with a sky-tinted rim. It casts its silhouette as a
-// shadow (an alpha-tested depth twin with the same displacement) and receives shadows (trees).
+// lights with per-pixel normals from the field (SHADE_GAIN), a sky-tinted rim, a light floor and a
+// highlight shoulder. It casts its silhouette as a shadow (an alpha-tested depth twin with the same
+// displacement, pushed away from the light) and receives shadows (trees).
 // One instanced draw call; the instance layout is the cards' (Billboards): aFoot, aSize (width,
 // height, lift, 0), aUv. The front silhouette is the sprite's own (alpha test on the game's frame).
 // Not tied to the overworld: battles can reuse it with any atlas and field of the same layout.
 
 import * as THREE from 'three';
 import { DEPTH_FRAG, type BillboardSpec } from '../overworld/billboards';
+import { put, markRange } from '../instanceUpload';
+import { INFLATE } from './inflateMath';
+import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 
 /** Grid segments per actor (spec §6): one per sprite pixel of a 16×32 character. */
 export const ACTOR_GRID = { x: 16, y: 32 };
-/** Rim strength (× the sky colour). */
-export const RIM = 0.35;
+/** Rim strength (× the sky colour × the surface colour; a uniform). */
+export const RIM = 0.6;
 /** The contact shadow under each inflated actor (the sun shadow is its silhouette). */
 export const CONTACT = { strength: 0.25, scale: 0.75 };
 /** Instances (gSprites has 64 entries). */
 export const MAX_ACTORS = 64;
+/** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
+ *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
+ *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
+ *  Independent of INFLATE.amp (the relief's depth). Baked into the shader (compile-time). */
+export const SHADE_GAIN = 2.75;
 /** Share of the sprite's height over which the depth relief fades in from the feet (tall-grass blades
- *  reach ~0.35 of a 2-unit character): the legs stay at the card's depth. Shading is not affected. */
+ *  reach ~0.35 of a 2-unit character): the legs stay at the card's depth. Shading is not affected.
+ *  Baked into the shader (compile-time). */
 export const RELIEF_FADE = { from: 0.15, to: 0.55 };
 /** How far (world units) the shadow twin is pushed away from the light: the sheet stands steeply to a high
  *  sun, so its own depth varies more across the soft-shadow filter than the global bias covers (grainy
- *  self-shadow acne). The cast shadow does not move (the push follows the light's rays). */
+ *  self-shadow acne). The cast shadow does not move (the push follows the light's rays). Baked into the
+ *  shader (compile-time). */
 export const SHADOW_PUSH = 0.3;
-/** Share of the cards' light (charLight) the actors' diffuse light never drops below. */
-export const LIGHT_FLOOR = 0.6;
-/** Soft ceiling of a point light's irradiance on an actor (the Flash lantern). */
-export const LAMP_CEILING = 5;
+/** Share of the cards' light (charLight, by luminance) the actors' diffuse light never drops below; the
+ *  lit colour keeps its hue (a uniform, set per frame). */
+export const LIGHT_FLOOR = 0.5;
+/** Soft ceiling of a point light's irradiance on an actor (the Flash lantern). Baked into the shader
+ *  (compile-time). */
+export const LAMP_CEILING = 9;
+/** The actors' outgoing light eases from `knee` towards `max` (linear, per brightest channel, hue kept):
+ *  under the bloom threshold, so sun-facing pale pixels never glow. Baked into the shader (compile-time). */
+export const SHOULDER = { knee: 0.8, max: 1.0 };
+/** Exposure of the actors' diffuse light: the tilted relief catches less of a light near the view direction
+ *  than a card facing it (cards: ambient + 3/4 of the sun, charLight); this keeps them as bright as Retro's
+ *  cards on average. Baked into the shader (compile-time). */
+export const EXPOSURE = 1.18;
+
+/** A GLSL float literal of `v` at full precision. */
+const glsl = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
 // The field at an atlas uv, clamped to the sprite's own rectangle (texels, rows bottom-up): never
 // reads a neighbouring slot; its gradient in px per px (scale-free). The relief faces the viewer: each
 // point of the card rises along its own ray to the eye (uEye), so the camera sees exactly the sprite's
-// pixels; the shading normal (world) is the actor's facing (towards the eye) tilted by the gradient
-// across the screen's right / up axes, as a bas-relief of the sprite seen face-on.
+// pixels; the shading normal (world) is the actor's facing (towards the eye) tilted by the shading
+// slope across the screen's right / up axes, as a bas-relief of the sprite seen face-on.
 const FIELD_GLSL = /* glsl */ `
 uniform sampler2D tField;
 uniform vec2 uAtlasSize;
@@ -47,6 +70,10 @@ vec2 fieldGrad(vec2 uv, vec4 rect) {
   vec2 t = 1.0 / uAtlasSize;
   return 0.5 * vec2(fieldH(uv + vec2(t.x, 0.0), rect) - fieldH(uv - vec2(t.x, 0.0), rect),
                     fieldH(uv + vec2(0.0, t.y), rect) - fieldH(uv - vec2(0.0, t.y), rect));
+}
+// SHADE_GAIN x the slope of (h / amp)^2 = SHADE_GAIN x 2 h grad(h) / amp^2
+vec2 shadeSlope(vec2 uv, vec4 rect) {
+  return ${glsl(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect);
 }
 vec3 actorNormal(vec3 f, vec2 g) {
   vec3 r = normalize(uRight - dot(uRight, f) * f); // screen right, then screen up = f x r
@@ -74,11 +101,15 @@ vec3 card = aFoot + uRight * (local.x * aSize.x) + vec3(0.0, local.y * aSize.y +
 vFacing = normalize(uEye - (aFoot + vec3(0.0, 0.5 * aSize.y + aSize.z, 0.0)));
 `;
 
+// ... its vertex normal: the facing (the fragment shader builds the per-pixel normal; this one only offsets
+// the shadow lookup, three's normal bias) ...
+const VERT_NORMAL = 'vec3 objectNormal = vFacing;';
+
 // ... and its position: pushed towards the eye by the field (sprite px → world units). The relief fades
 // in above the legs (RELIEF_FADE): they keep the card's depth, so 3D grass blades in front still hide them.
 const VERT_POSITION = /* glsl */ `
 float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);
-float relief = smoothstep(${RELIEF_FADE.from.toFixed(2)}, ${RELIEF_FADE.to.toFixed(2)}, local.y);
+float relief = smoothstep(${glsl(RELIEF_FADE.from)}, ${glsl(RELIEF_FADE.to)}, local.y);
 vec3 transformed = card + normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief);
 `;
 
@@ -100,23 +131,42 @@ diffuseColor.rgb *= actorTexel.rgb;
 
 // per-pixel normal (smooth across the grid's facets), in view space
 const FRAG_NORMAL = /* glsl */ `
-normal = normalize((viewMatrix * vec4(actorNormal(normalize(vFacing), fieldGrad(vAtlasUv, vRect)), 0.0)).xyz);
+normal = normalize((viewMatrix * vec4(actorNormal(normalize(vFacing), shadeSlope(vAtlasUv, vRect)), 0.0)).xyz);
 `;
 
+// The rim: sky light reflected by the surface (× its colour), so dark outline pixels stay dark.
 const FRAG_RIM = /* glsl */ `
-totalEmissiveRadiance += uRimColor * uRim * pow(1.0 - saturate(dot(normal, normalize(vViewPosition))), 3.0);
+totalEmissiveRadiance += diffuseColor.rgb * uRimColor * uRim * pow(1.0 - saturate(dot(normal, normalize(vViewPosition))), 3.0);
 `;
 
 // Point lights (the cave lantern, carried at the player's chest) reach an actor with a soft ceiling
 // (irradiance E -> E / (1 + E / LAMP_CEILING)): a face next to the lamp is lit warm, not blown out.
 const POINT_ATTENUATION = 'light.color *= getDistanceAttenuation( lightDistance, pointLight.distance, pointLight.decay );';
-const LAMP_GLSL = `\nlight.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${LAMP_CEILING.toFixed(2)};`;
+const LAMP_GLSL = `\nlight.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${glsl(LAMP_CEILING)};`;
 
-// The diffuse light never drops below uFloor (LIGHT_FLOOR × the cards' light): actors stay readable in
-// the dark (a cave beyond the lantern, deep shade) and never turn black.
+// The diffuse light's luminance never drops below that of uFloor (LIGHT_FLOOR × the cards' light): actors
+// stay readable in the dark (a cave beyond the lantern, deep shade) and never turn black. Below it the lit
+// colour is scaled up, keeping its hue (no light at all: the floor's own colour).
 const FRAG_FLOOR = /* glsl */ `
-reflectedLight.indirectDiffuse += max(vec3(0.0),
-  material.diffuseColor * uFloor - reflectedLight.directDiffuse - reflectedLight.indirectDiffuse);
+{
+  const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+  reflectedLight.directDiffuse *= ${glsl(EXPOSURE)};
+  reflectedLight.indirectDiffuse *= ${glsl(EXPOSURE)};
+  vec3 lit = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
+  vec3 floorLight = material.diffuseColor * uFloor;
+  float l = dot(lit, LUMA), lf = dot(floorLight, LUMA);
+  if (l < lf) reflectedLight.indirectDiffuse += (l > 1e-5 ? lit * (lf / l) : floorLight) - lit;
+}
+`;
+
+// A soft shoulder on the actor's outgoing light (hue kept): above SHOULDER.knee it eases towards
+// SHOULDER.max, below the bloom threshold (post.ts: 1.05) — a sun-facing white crown would glow.
+const FRAG_SHOULDER = /* glsl */ `
+{
+  float m = max(outgoingLight.r, max(outgoingLight.g, outgoingLight.b));
+  const float K = ${glsl(SHOULDER.knee)}, R = ${glsl(SHOULDER.max - SHOULDER.knee)};
+  if (m > K) outgoingLight *= (K + R * (1.0 - exp(-(m - K) / R))) / m;
+}
 `;
 
 const DEPTH_VERT = /* glsl */ `
@@ -128,7 +178,7 @@ ${VERT_CARD}
 ${VERT_POSITION}
   vUv = vAtlasUv;
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-  mvPosition.z -= ${SHADOW_PUSH.toFixed(3)}; // away from the light, along its rays
+  mvPosition.z -= ${glsl(SHADOW_PUSH)}; // away from the light, along its rays
   gl_Position = projectionMatrix * mvPosition;
 }
 `;
@@ -138,21 +188,6 @@ function patch(src: string, chunk: string, by: string): string {
   const include = `#include <${chunk}>`;
   if (!src.includes(include)) throw new Error(`inflatedActors: three shader chunk <${chunk}> not found`);
   return src.replace(include, by);
-}
-
-/** Writes `v` (as float32) at `a[k]`; 1 if that changed the value, else 0. */
-function put(a: Float32Array, k: number, v: number): number {
-  const f = Math.fround(v);
-  if (a[k] === f) return 0;
-  a[k] = f;
-  return 1;
-}
-
-/** Marks the first `n` instances of `a` for upload (whole instances; at most MAX_ACTORS). */
-function markRange(a: THREE.InstancedBufferAttribute, n: number): void {
-  a.clearUpdateRanges();
-  a.addUpdateRange(0, n * a.itemSize);
-  a.needsUpdate = true;
 }
 
 /** three's lights_pars_begin with the point lights' soft ceiling; throws if the attenuation line changed. */
@@ -182,7 +217,7 @@ export class InflatedActors {
    * sprite px); `rimColor`: the rim's colour (kept by reference: the sky's, updated by the owner).
    */
   constructor(atlas: THREE.Texture, field: THREE.Texture, rimColor: { value: THREE.Color },
-    atlasSize = new THREE.Vector2(1024, 512)) {
+    atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS)) {
     const grid = new THREE.PlaneGeometry(1, 1, ACTOR_GRID.x, ACTOR_GRID.y);
     grid.translate(0, 0.5, 0); // x in [-0.5, 0.5], y in [0, 1]
     this.geometry.index = grid.index;
@@ -207,7 +242,7 @@ export class InflatedActors {
     material.onBeforeCompile = (s) => {
       Object.assign(s.uniforms, u);
       let v = VERT_PRELUDE + s.vertexShader;
-      v = patch(v, 'beginnormal_vertex', VERT_CARD + 'vec3 objectNormal = actorNormal(vFacing, fieldGrad(auv, vRect));');
+      v = patch(v, 'beginnormal_vertex', VERT_CARD + VERT_NORMAL);
       v = patch(v, 'begin_vertex', VERT_POSITION);
       s.vertexShader = v;
       let f = FRAG_PRELUDE + s.fragmentShader;
@@ -216,6 +251,7 @@ export class InflatedActors {
       f = patch(f, 'emissivemap_fragment', '#include <emissivemap_fragment>\n' + FRAG_RIM);
       f = patch(f, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
       f = patch(f, 'lights_fragment_end', '#include <lights_fragment_end>\n' + FRAG_FLOOR);
+      f = patch(f, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
       s.fragmentShader = f;
     };
     material.customProgramCacheKey = () => 'actor:inflated:1';

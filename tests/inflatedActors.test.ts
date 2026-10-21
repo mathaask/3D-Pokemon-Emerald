@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { InflatedActors, ACTOR_GRID, LAMP_CEILING } from '../src/render/actors/inflatedActors';
+import { InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH } from '../src/render/actors/inflatedActors';
+import { Billboards } from '../src/render/overworld/billboards';
 
 const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2, lift: 0, flat: false,
   slot: { u0: 0, v0: 32 / 512, u1: 16 / 1024, v1: 0 } });
@@ -39,10 +40,28 @@ describe('InflatedActors', () => {
     expect(v()).toEqual([first[0] + 1, first[1], first[2]]);
     expect(attr('aFoot').updateRanges).toEqual([{ start: 0, count: 6 }]);
   });
-  it('casts and receives shadows through a depth twin', () => {
+  it('re-uploads only the attribute a change touches (a new animation frame: uv; a jump: size)', () => {
+    const a = make();
+    const g = a.mesh.geometry as THREE.InstancedBufferGeometry;
+    const v = () => ['aFoot', 'aSize', 'aUv'].map((k) => (g.getAttribute(k) as THREE.BufferAttribute).version);
+    const right = new THREE.Vector3(1, 0, 0);
+    a.set([spec(1)], right);
+    const first = v();
+    a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 } }], right);
+    expect(v()).toEqual([first[0], first[1], first[2] + 1]);
+    a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 }, lift: 0.5 }], right);
+    expect(v()).toEqual([first[0], first[1] + 1, first[2] + 1]);
+  });
+  it('casts and receives shadows through a depth twin drawn on both faces with the same relief', () => {
     const a = make();
     expect(a.mesh.castShadow && a.mesh.receiveShadow).toBe(true);
-    expect(a.mesh.customDepthMaterial).toBeInstanceOf(THREE.ShaderMaterial);
+    const depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+    expect(depth).toBeInstanceOf(THREE.ShaderMaterial);
+    // three gives a custom depth material the main material's shadowSide (default: the opposite face)
+    expect((a.mesh.material as THREE.MeshStandardMaterial).shadowSide).toBe(THREE.DoubleSide);
+    // the twin rises like the mesh (along the ray to the eye, by the field) and is pushed away from the light
+    expect(depth.vertexShader).toContain('normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief)');
+    expect(depth.vertexShader).toContain(`mvPosition.z -= ${SHADOW_PUSH}`);
   });
   it('patches the standard shader chunks it relies on (catches three chunk renames)', () => {
     const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader,
@@ -56,6 +75,26 @@ describe('InflatedActors', () => {
     // the light floor and the point lights' soft ceiling (lights_pars_begin inlined and patched)
     expect(s.fragmentShader).toContain('uFloor');
     expect(s.fragmentShader).not.toContain('#include <lights_pars_begin>');
-    expect(s.fragmentShader).toContain(`/ ${LAMP_CEILING.toFixed(2)};`);
+    expect(s.fragmentShader).toContain(`light.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${LAMP_CEILING.toFixed(1)};`);
+    // the shading slope (not the relief's) and the highlight shoulder before the output
+    expect(s.fragmentShader).toContain('shadeSlope(vAtlasUv, vRect)');
+    expect(s.fragmentShader.indexOf('outgoingLight *=')).toBeLessThan(s.fragmentShader.indexOf('#include <opaque_fragment>'));
+  });
+});
+
+describe('Billboards', () => {
+  const card = (x: number, tint?: [number, number, number, number]) => ({ ...spec(x), tint });
+  it('re-uploads only the instance attributes that changed', () => {
+    const b = new Billboards({ target: { texture: new THREE.Texture() } });
+    const g = b.mesh.geometry as THREE.InstancedBufferGeometry;
+    const v = () => ['aFoot', 'aSize', 'aUv', 'aTint'].map((k) => (g.getAttribute(k) as THREE.BufferAttribute).version);
+    const right = new THREE.Vector3(1, 0, 0), light = new THREE.Color(1, 1, 1);
+    b.set([card(1), card(2)], right, light);
+    const first = v();
+    b.set([card(1), card(2)], right, light);
+    expect(v()).toEqual(first);
+    b.set([card(1), card(2, [0.5, 0.5, 0.5, 1])], right, light);
+    expect(v()).toEqual([first[0], first[1], first[2], first[3] + 1]);
+    expect(b.count).toBe(2);
   });
 });
