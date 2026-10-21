@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MB } from '../../game/behaviors';
 import { K } from '../overworld/analyze';
-import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
+import { CLAIM_OBJECT, type Claims } from '../overworld/claims';
 import { hashCell, noise3 } from './geom';
 import { kitMaterial } from './materials';
 import type { RGB } from './palette';
@@ -69,9 +69,10 @@ export const soilFamily: Family<SoilCell[]> = {
     const cells: SoilCell[] = [];
     for (let i = 0; i < a.N; i++) {
       if (a.beh[i] !== MB.BERRY_TREE_SOIL || a.kind[i] !== K.Block || claims.has(i, CLAIM_OBJECT)) continue;
-      // the object (and any top-layer card) is ours; the terrain draws the ground under it as the cells around
-      // (the soil's own art would paint the bed's surroundings soil-coloured); a plant stands on the bed's top
-      claims.claim(i, CLAIM_OBJECT | CLAIM_TOP);
+      // the object is ours (a blocked cell: the legacy art draws no top-layer card of its own); the terrain draws
+      // the ground under it as the cells around (the soil's own art would paint the bed's surroundings
+      // soil-coloured); a plant stands on the bed's top
+      claims.claim(i, CLAIM_OBJECT);
       if (a.groundOf[i] >= 0) claims.groundMt[i] = a.groundOf[i];
       const h = a.groundH[i];
       claims.surfaceY[i] = h + BED.top;
