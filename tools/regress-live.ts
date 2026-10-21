@@ -24,8 +24,8 @@
 // Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax()) px (SELFTEST_TOL: half-float
 // rounding grows with the field's height). The same call checks the HD sprite-edge shader (XBR_GLSL) against
 // its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
-// --ab (live entries, Modern) measures what the inflated actors cost over the same build with inflation off
-// (every character a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
+// --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
+// same build with them off (every sprite a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
 // --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot
 // (both modes emulate the same frames), 5 settle frames and gpuFrames(60). Two variants: idle, and
 // walking (entries with a `walk` key held through the block; `moved` = the least px the player walked in
@@ -586,7 +586,7 @@ async function main(): Promise<void> {
     console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`);
   }
   if (abRows.length) {
-    console.log(`\n--ab: inflation on vs off, ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${AB_GPU_MS} or Δcpu > +${AB_CPU_MS}`);
+    console.log(`\n--ab: Phase 2 actors (inflated + models) on vs off (all cards), ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${AB_GPU_MS} or Δcpu > +${AB_CPU_MS}`);
     console.log('| entry | idle gpu on / off | idle Δgpu | idle Δcpu | walk gpu on / off | walk Δgpu | walk Δcpu | walk moved px |');
     console.log('|---|---|---|---|---|---|---|---|');
     console.log(abRows.join('\n'));

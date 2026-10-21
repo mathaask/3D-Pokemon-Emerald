@@ -207,6 +207,21 @@ describe('SpriteColorCache', () => {
     putTile(src.vram, 0, () => 1); putTile(src.vram, 1, () => 1);
     expect(cache.get(s(), src).main).toEqual(bgr555ToSrgb(RED));
   });
+  it('can sample without storing (a spawn frame: the tiles may still be another object\'s)', () => {
+    const src = setup();
+    src.palette[256 + 3 * 16 + 2] = BLUE;
+    const cache = new SpriteColorCache();
+    // frame 1: the VBlank copy has not run yet, the slot's tiles are another object's (index 1 = RED)
+    expect(cache.get(s(), src, { store: false }).main).toEqual(bgr555ToSrgb(RED));
+    expect(cache.size).toBe(0);
+    // frame 2: the object's own tiles arrived (index 2 = BLUE); same key, decoded afresh and now stored
+    putTile(src.vram, 0, () => 2); putTile(src.vram, 1, () => 2);
+    const own = cache.get(s(), src);
+    expect(own.main).toEqual(bgr555ToSrgb(BLUE));
+    expect(cache.size).toBe(1);
+    // a stored entry is still returned by a non-storing lookup (an identical object spawning later)
+    expect(cache.get(s(), src, { store: false })).toBe(own);
+  });
   it('keeps at most 256 entries, evicting the least recently used', () => {
     const src = setup();
     const cache = new SpriteColorCache();

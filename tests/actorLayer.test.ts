@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { SpriteKind, type SpriteClassifier } from '../src/game/spriteKinds';
-import type { GameState, SpriteSnap } from '../src/game/state';
+import type { GameState, ObjectEventSnap, SpriteSnap } from '../src/game/state';
 import { routeSprite, cardSpec, uprightFoot, ActorLayer, type ActorFrame } from '../src/render/actors/actorLayer';
 import { inflateMax } from '../src/render/actors/inflateMath';
+import type { SpritePixelSource } from '../src/render/actors/spriteColors';
 import { createKitUniforms } from '../src/render/kit/materials';
+import { bgr555ToSrgb, toLinear } from '../src/render/kit/palette';
 import { blankSprite } from '../src/render/previewActors';
 
 const slot = { u0: 0, v0: 0.0625, u1: 0.015625, v1: 0 };
@@ -204,5 +206,156 @@ describe('ActorLayer with inflated actors', () => {
     layer.inflation = true;
     layer.update(state, { ...frame, style: 'modern' });
     expect(layer.counts()).toEqual({ cards: 1, inflated: 1, models: 0 });
+  });
+});
+
+describe('ActorLayer object models', () => {
+  const atlas = { slots: new Map([[0, slot]]), target: { texture: new THREE.Texture() } };
+  const upright: Omit<ActorFrame, 'style'> = {
+    classifier: { kind: () => SpriteKind.Upright } as unknown as SpriteClassifier,
+    heightAt: () => 0, hasGrassBlades: () => false,
+    cameraRight: new THREE.Vector3(1, 0, 0), charLight: new THREE.Color(1, 1, 1),
+  };
+  const modern: ActorFrame = { ...upright, style: 'modern' };
+  const newLayer = () => new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+  const state = (o: Partial<ObjectEventSnap> = {}, s: Partial<SpriteSnap> = {}, frame = 1) => ({
+    frame,
+    sprites: [blankSprite({ index: 0, worldX: 40, worldY: 64, ...s })],
+    objects: [{ index: 0, spriteId: 0, graphicsId: 59, invisible: false, ...o }],
+  }) as unknown as GameState;
+  const mesh = (layer: ActorLayer, kind: string) => layer.group.getObjectByName(kind) as THREE.InstancedMesh;
+  const placed = (layer: ActorLayer, kind: string, i = 0) => {
+    const m = new THREE.Matrix4();
+    mesh(layer, kind).getMatrixAt(i, m);
+    return new THREE.Vector3().setFromMatrixPosition(m);
+  };
+
+  it('draws a mapped object as its model in Modern, not as a sprite', () => {
+    const layer = newLayer();
+    layer.update(state(), modern);
+    expect(layer.counts()).toEqual({ cards: 0, inflated: 0, models: 1 });
+  });
+  it('draws a Cut tree being cut (animNum 1) as its inflated sprite', () => {
+    const layer = newLayer();
+    layer.update(state({ graphicsId: 82 }, { animNum: 1 }), modern);
+    expect(layer.counts()).toMatchObject({ inflated: 1, models: 0 });
+  });
+  it('draws no model in Retro', () => {
+    const layer = newLayer();
+    layer.update(state(), { ...upright, style: 'retro' });
+    expect(layer.counts()).toMatchObject({ cards: 1, models: 0 });
+  });
+  it('draws no model for an invisible object', () => {
+    const layer = newLayer();
+    layer.update(state({ invisible: true }), modern);
+    expect(layer.counts()).toMatchObject({ models: 0 });
+  });
+  it('keeps berry trees as inflated sprites until their model exists', () => {
+    const layer = newLayer();
+    layer.update(state({ graphicsId: 60 }), modern);
+    expect(layer.counts()).toMatchObject({ inflated: 1, models: 0 });
+  });
+
+  // ---- beyond the brief ----
+
+  it('stands a model where its card stood, follows the sprite every frame and bends the grass there', () => {
+    const layer = newLayer();
+    const feet = layer.update(state({ graphicsId: 87 }), { ...modern, heightAt: () => 1 });
+    expect(placed(layer, 'boulder').toArray()).toEqual([2.5, 1, 4.5]);
+    expect(feet.map((p) => [p.x, p.y, p.z])).toEqual([[2.5, 1, 4.5]]);
+    // pushed: the boulder slides with its sprite (mid-step, half a cell on)
+    layer.update(state({ graphicsId: 87 }, { worldX: 48 }, 2), { ...modern, heightAt: () => 1 });
+    expect(placed(layer, 'boulder').x).toBe(3);
+  });
+  it("stands the 48×48 truck on its own cells (its image's bottom, not its 32×32 base OAM's)", () => {
+    const layer = newLayer();
+    // gfx 94 at cell (2, 10): x = 40, worldY = y * 16 (live and preview), c2cY = −24
+    const truck = state({ graphicsId: 94 }, { width: 32, height: 32, c2cY: -24, worldX: 40, worldY: 160 });
+    layer.update(truck, { ...modern, heightAt: (_x, y) => (y > 10 ? 0.5 : 0) });
+    expect(placed(layer, 'truck').toArray()).toEqual([2.5, 0.5, 11]); // row 10's centre (10.5) on row 10's ground
+  });
+  it('routes models back to cards while inflation is off (the --ab baseline: the pre-Task-5 path)', () => {
+    const layer = newLayer();
+    layer.inflation = false;
+    layer.update(state(), modern);
+    expect(layer.counts()).toEqual({ cards: 1, inflated: 0, models: 0 });
+  });
+  it('hides the models in Retro and clears them when their objects are gone', () => {
+    const layer = newLayer();
+    const group = layer.group.getObjectByName('objectModels')!;
+    layer.update(state(), modern);
+    expect(group.visible).toBe(true);
+    layer.update(state(), { ...upright, style: 'retro' });
+    expect(group.visible).toBe(false);
+    expect(mesh(layer, 'pokeball').count).toBe(0);
+    layer.update(state(), modern);
+    layer.update({ frame: 3, sprites: [], objects: [] } as unknown as GameState, modern);
+    expect(layer.counts().models).toBe(0);
+    expect(mesh(layer, 'pokeball').count).toBe(0);
+  });
+
+  describe('colours', () => {
+    const bgr = (r: number, g: number, b: number) => r | (g << 5) | (b << 10);
+    const RED = bgr(31, 4, 4), BLUE = bgr(4, 8, 31);
+    /** Fills `tiles` 4bpp tiles from tile 0 with palette index `ci`. */
+    const fill = (vram: Uint8Array, ci: number, tiles = 4) => vram.fill(ci | (ci << 4), 0x10000, 0x10000 + tiles * 32);
+    const source = () => {
+      const src: SpritePixelSource = { vram: new Uint8Array(0x18000), palette: new Uint16Array(512) };
+      src.palette[257] = RED; src.palette[258] = BLUE;
+      fill(src.vram, 1);
+      return src;
+    };
+    const ball = (frame: number, images = 0x8500000) => state({}, { width: 16, height: 16, images }, frame);
+    const tints = (layer: ActorLayer, kind: string) => mesh(layer, kind).userData.tints as { a: THREE.Color; b: THREE.Color };
+    const linear = (c: number) => new THREE.Color(...toLinear(bgr555ToSrgb(c)));
+
+    it("tints a model with its sprite's colours (the ball's shell: its accent)", () => {
+      const layer = newLayer();
+      layer.setPixelSource(source());
+      layer.update(ball(1), modern);
+      expect(tints(layer, 'pokeball').a.equals(linear(RED))).toBe(true);
+    });
+    it('falls back to the default tints without a pixel source', () => {
+      const layer = newLayer();
+      layer.update(ball(1), modern);
+      expect(tints(layer, 'pokeball').a.equals(new THREE.Color(...toLinear([0.86, 0.16, 0.16])))).toBe(true);
+    });
+    it("never stores the colours of an object's first synced frame (its tiles may still be another object's)", () => {
+      const layer = newLayer();
+      const src = source();
+      layer.setPixelSource(src);
+      layer.update(ball(1), modern);                // spawn frame: the last object's tiles (RED)
+      expect(tints(layer, 'pokeball').a.equals(linear(RED))).toBe(true);
+      layer.update(ball(1), modern);                // (a second render of the same sync: still not stored)
+      fill(src.vram, 2);                            // the VBlank copy brought the ball's own tiles (BLUE)
+      layer.update(ball(2), modern);
+      expect(tints(layer, 'pokeball').a.equals(linear(BLUE))).toBe(true);
+      fill(src.vram, 1);                            // stored on frame 2: the same key keeps BLUE
+      layer.update(ball(3), modern);
+      expect(tints(layer, 'pokeball').a.equals(linear(BLUE))).toBe(true);
+    });
+    it('treats a new image set or anim on an existing object as a spawn frame too', () => {
+      const layer = newLayer();
+      const src = source();
+      layer.setPixelSource(src);
+      layer.update(ball(1), modern);
+      layer.update(ball(2), modern);                // stored: images 0x8500000 → RED
+      fill(src.vram, 2);
+      layer.update(ball(3, 0x8500100), modern);     // new images: decoded (BLUE), not stored
+      fill(src.vram, 1);
+      layer.update(ball(4, 0x8500100), modern);     // decoded again: RED (BLUE had frame 3 stored it)
+      expect(tints(layer, 'pokeball').a.equals(linear(RED))).toBe(true);
+    });
+    it('samples the truck at its 48×48 image size', () => {
+      const layer = newLayer();
+      const src = source();
+      // its 48×48 image (36 tiles, 1D): only the last tile row is BLUE, which a 32×32 decode never reaches
+      fill(src.vram, 0, 36);
+      src.vram.fill(0x22, 0x10000 + 30 * 32, 0x10000 + 36 * 32);
+      const truck = state({ graphicsId: 94 }, { width: 32, height: 32, c2cY: -24, worldY: 160, images: 0x8500200 }, 1);
+      layer.setPixelSource(src);
+      layer.update(truck, modern);
+      expect(tints(layer, 'truck').b.equals(linear(BLUE))).toBe(true);
+    });
   });
 });

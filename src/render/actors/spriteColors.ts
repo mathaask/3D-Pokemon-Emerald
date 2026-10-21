@@ -97,7 +97,8 @@ const MAX_ENTRIES = 256;
  * Cached per (images, animNum, palette slot contents): the sprite's own OAM palette slot (live play draws berry
  * trees in a per-berry slot, not their graphics info's) — or the whole OBJ palette for an 8bpp sprite — keyed by
  * its contents verbatim (no collisions; a palette change such as a fade step is a new key). At most 256 entries,
- * least recently used evicted first. A fully transparent image (tiles not copied in yet) is not cached.
+ * least recently used evicted first. A fully transparent image (tiles not copied in yet) is not cached, nor is
+ * a lookup with `store: false` (a spawn frame).
  */
 export class SpriteColorCache {
   private entries = new Map<string, SpriteColors>();
@@ -107,7 +108,12 @@ export class SpriteColorCache {
     return this.entries.size;
   }
 
-  get(s: SpriteSnap, src: SpritePixelSource): SpriteColors {
+  /**
+   * The colours of `s`'s current image. `store: false` decodes on a miss without caching the result: on the
+   * first synced frame of a new object (or of a new image set / anim), the VBlank tile copy may not have run
+   * yet and the sprite's OBJ VRAM may still hold another object's pixels (a stored entry is still returned).
+   */
+  get(s: SpriteSnap, src: SpritePixelSource, opts?: { store?: boolean }): SpriteColors {
     const base = s.bpp8 ? 256 : 256 + (s.palette & 15) * 16;
     const pal = src.palette.subarray(base, s.bpp8 ? 512 : base + 16);
     const key = `${s.images}:${s.animNum}:${String.fromCharCode(...pal)}`;
@@ -120,7 +126,7 @@ export class SpriteColorCache {
     }
     const indices = decodeSpriteIndices(src.vram, s, src.map2d ?? false);
     const colors = pickColors(indices, pal);
-    if (!indices.some((ci) => ci !== 0)) return colors;
+    if (opts?.store === false || !indices.some((ci) => ci !== 0)) return colors;
     this.entries.set(key, colors);
     if (this.entries.size > MAX_ENTRIES) this.entries.delete(this.entries.keys().next().value!);
     return colors;

@@ -1,19 +1,23 @@
 // Overworld actors: decides per world sprite (gSprites) how the 3D view draws it and owns what draws
-// them: camera-facing cards (billboards) with their blob shadows, and the inflated actors with their
-// contact shadows. Retro draws every sprite as a card; Modern inflates characters (given the
-// inflation field) and routes mapped objects to models, drawn as cards until that renderer exists.
-// Every list is rebuilt from the frame's sprites, so nothing outlives a sprite (despawns, warps,
-// map crossings).
+// them: camera-facing cards (billboards) with their blob shadows, the inflated actors with their
+// contact shadows, and the object models. Retro draws every sprite as a card; Modern inflates characters
+// (given the inflation field) and draws mapped objects (item balls, boulders, rocks, Cut trees, the truck)
+// as procedural models coloured from their own sprite's pixels. Every list is rebuilt from the frame's
+// sprites, so nothing outlives a sprite (despawns, warps, map crossings).
 
 import * as THREE from 'three';
-import type { GameState, SpriteSnap } from '../../game/state';
+import type { GameState, ObjectEventSnap, SpriteSnap } from '../../game/state';
 import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
 import type { WorldStyle } from '../overworld/world';
 import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
 import type { KitUniforms } from '../kit/materials';
+import { hashCell } from '../kit/geom';
 import { InflatedActors, CONTACT } from './inflatedActors';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
+import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
+import { SpriteColorCache, type SpriteColors, type SpritePixelSource } from './spriteColors';
+import { ObjectModels, precompileScene, type ModelInstance } from './objectModels';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
 /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. */
@@ -71,10 +75,18 @@ export interface ActorFrame {
   charLight: THREE.Color;
 }
 
-/** Inputs of the inflated actors and object models (not used by the cards). */
+/** Inputs of the inflated actors (field) and object models (kit) (not used by the cards). */
 export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: KitUniforms }
 
 type Foot = { x: number; y: number; z: number };
+
+const NO_COLORS: SpriteColors = { main: null, accent: null, green: null };
+
+/** What an object slot showed the last time the layer saw it, and since which synced frame (GameState.frame). */
+interface Seen { graphicsId: number; localId: number; map: number; images: number; animNum: number; since: number; frame: number }
+
+/** A model's turn about the vertical: stable per object (its map and local id), whatever cell it is pushed to. */
+const yawOf = (o: ObjectEventSnap) => (hashCell(o.localId, o.mapNum, o.mapGroup) / 4294967296) * Math.PI * 2;
 
 // An upright's foot point in grid units: half a cell above the sprite's bottom edge. The grid cell a
 // sprite stands on holds that point (for a flat decal: its rectangle's bottom half-cell).
@@ -125,19 +137,33 @@ export function cardSpec(s: SpriteSnap, kind: SpriteKind, slot: SlotUv, heightAt
 }
 
 export class ActorLayer {
-  /** Billboards + blob shadows, inflated actors + contact shadows (models later). */
+  /** Billboards + blob shadows, inflated actors + contact shadows, object models. */
   readonly group = new THREE.Group();
   private billboards: Billboards;
   private blobs: BlobShadows;
   /** Modern's characters (null without an inflation field: they stay cards). */
   private inflated: InflatedActors | null = null;
-  /** Modern inflates its characters (false: they are cards as in Retro — the harness's `--ab` baseline). */
+  /** Modern's Phase 2 actors: inflated characters and object models (false: every sprite is a card, as in
+   *  Retro — the pre-Task-5 path, the harness's `--ab` baseline). */
   inflation = true;
   private contact: BlobShadows | null = null;
-  // Reused every frame: the pools only grow; `cards` / `actors` / `feet` are this frame's lists.
+  /** Modern's object models (null without kit uniforms: mapped objects stay sprites). */
+  private models: ObjectModels | null = null;
+  /** Where the models' colours are sampled (null: their default tints). */
+  private pixels: SpritePixelSource | null = null;
+  private colorCache = new SpriteColorCache();
+  /** This frame's objects by sprite index (spriteId). */
+  private bySprite = new Map<number, ObjectEventSnap>();
+  /** Per object slot (ObjectEventSnap.index): what it showed and since when (spawn frames, see colorsOf). */
+  private seen = new Map<number, Seen>();
+  /** The truck's sprite at its 48×48 image size (colour sampling; reused). */
+  private truckImage: SpriteSnap | null = null;
+  // Reused every frame: the pools only grow; `cards` / `actors` / `models` / `feet` are this frame's lists.
   private specPool: BillboardSpec[] = [];
   private cards: BillboardSpec[] = [];
   private actors: BillboardSpec[] = [];
+  private modelPool: ModelInstance[] = [];
+  private modelList: ModelInstance[] = [];
   private footPool: Foot[] = [];
   private feet: Foot[] = [];
 
@@ -156,6 +182,35 @@ export class ActorLayer {
       this.contact.mesh.name = 'contactShadows';
       this.group.add(this.inflated.mesh, this.contact.mesh);
     }
+    if (opts.kit) {
+      this.models = new ObjectModels(opts.kit);
+      this.models.group.visible = false;
+      this.group.add(this.models.group);
+    }
+  }
+
+  /** Where the object models sample their sprites' colours: OBJ VRAM and the palette the sprite atlas draws
+   *  with (null: the models' default tints). */
+  setPixelSource(src: SpritePixelSource | null): void {
+    this.pixels = src;
+  }
+
+  /**
+   * Compiles the Phase 2 actor programs before they are first drawn (also in a Retro session, where they are
+   * hidden): the object models' and the inflated actors' (with their contact shadows), main and shadow-depth
+   * ones — a render of `scene` compiles the latter (ObjectModels.precompile). Resolves when they are ready.
+   */
+  precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Promise<void> {
+    const shown = [this.inflated?.mesh, this.contact?.mesh].filter((m): m is THREE.Mesh => m !== undefined);
+    const was = shown.map((m) => m.visible);
+    for (const m of shown) m.visible = true;
+    try {
+      return this.models
+        ? this.models.precompile(renderer, scene, camera, this.group)
+        : precompileScene(renderer, this.group, scene, camera).then(() => undefined);
+    } finally {
+      shown.forEach((m, i) => { m.visible = was[i]; });
+    }
   }
 
   /** Sprite edges of the inflated actors (Modern): HD smooth (xBR, the default) or Pixel. Cards are unaffected. */
@@ -163,30 +218,48 @@ export class ActorLayer {
     this.inflated?.setSmoothing(f === 'smooth');
   }
 
-  /** Draws every actor (cards and inflated) flat magenta: the harness's visible-actor mask. */
+  /** Draws every actor (cards, inflated actors, models) flat magenta: the harness's visible-actor mask. */
   setMask(on: boolean): void {
     this.billboards.setMask(on);
     this.inflated?.setMask(on);
+    this.models?.setMask(on);
   }
 
   /** Instances drawn by each renderer the layer owns (last update). */
   counts(): { cards: number; inflated: number; models: number } {
-    return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: 0 };
+    return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: this.models?.count ?? 0 };
   }
 
   /** Rebuilds every list from scratch; returns the grass-bending feet, reusing one array: every non-flat sprite
    *  drawn — uprights (cards, inflated actors, models) and grass overlays, in sprite order. */
   update(state: GameState, f: ActorFrame): readonly { x: number; y: number; z: number }[] {
     const sprites = state.sprites;
-    const inflate = this.inflated !== null && f.style === 'modern' && this.inflation;
-    let n = 0, c = 0, a = 0, m = 0;
+    const phase2 = f.style === 'modern' && this.inflation;
+    const inflate = this.inflated !== null && phase2;
+    const models = phase2 ? this.models : null;
+    const frame = state.frame ?? 0;
+    if (models) {
+      this.bySprite.clear();
+      for (const o of state.objects ?? []) this.bySprite.set(o.spriteId, o);
+    }
+    let n = 0, c = 0, a = 0, m = 0, k = 0;
     for (let i = 0; i < sprites.length; i++) {
       const s = sprites[i];
       if (!s.coordOffset || s.invisible) continue;
       const kind = f.classifier ? f.classifier.kind(s) : SpriteKind.Upright;
-      // No object is mapped to a model yet ('model' is drawn as a card for now).
-      const route = routeSprite(kind, f.style, false);
+      const o = models && kind === SpriteKind.Upright ? this.bySprite.get(s.index) : undefined;
+      const ref = o ? this.modelOf(o, s, models!) : null;
+      const route = routeSprite(kind, f.style, ref !== null);
       if (route === 'skip') continue;
+      if (route === 'model') {
+        // drawn by its model (not its sprite), which bends the grass where it stands
+        const inst = this.placeModel(this.modelPool[k] ??= blankInstance(), s, o!, ref!, f.heightAt, frame);
+        this.modelList[k++] = inst;
+        const foot = this.footPool[m] ??= { x: 0, y: 0, z: 0 };
+        foot.x = inst.x; foot.y = inst.y; foot.z = inst.z;
+        this.feet[m++] = foot;
+        continue;
+      }
       const cx = cellX(s) + 0.5, cy = cellY(s) + 0.5;
       if (hidesGrassOverlay(kind, f.style, f.hasGrassBlades(cx, cy))) continue;
       const slot = this.atlas.slots.get(s.index);
@@ -204,6 +277,7 @@ export class ActorLayer {
     }
     this.cards.length = c;
     this.actors.length = a;
+    this.modelList.length = k;
     this.feet.length = m;
     this.billboards.set(this.cards, f.cameraRight, f.charLight);
     if (this.inflated && this.contact) {
@@ -212,6 +286,68 @@ export class ActorLayer {
       this.inflated.setLightFloor(f.charLight);
       this.inflated.mesh.visible = this.contact.mesh.visible = inflate;
     }
+    if (this.models) {
+      // Retro (or Phase 2 off): no models (empty and hidden)
+      this.models.set(this.modelList);
+      this.models.group.visible = models !== null;
+      if (models) {
+        // objects gone since the last synced frame are new again when they reappear
+        for (const [slot, t] of this.seen) if (t.frame < frame) this.seen.delete(slot);
+      }
+    }
     return this.feet;
   }
+
+  /** The model drawing object `o` (its sprite `s`), or null: drawn as its sprite (an invisible object, a VAR or
+   *  unmapped graphics id, a Cut tree / rock breaking, a kind without meshes yet). */
+  private modelOf(o: ObjectEventSnap, s: SpriteSnap, models: ObjectModels): ObjectModelRef | null {
+    if (o.invisible) return null;
+    const ref = objectModelFor(o.graphicsId, s.animNum);
+    return ref && models.supports(ref.kind) ? ref : null;
+  }
+
+  /**
+   * A model where the object's card stood: x = worldX / 16; z from the bottom of the image the model stands for
+   * (the sprite's centre, worldY − height − c2cY, plus half the image's height, in px: for the truck's 48×48
+   * subsprite image, not its 32×32 base OAM's), half a cell up, on the ground of that cell (un-projected).
+   */
+  private placeModel(out: ModelInstance, s: SpriteSnap, o: ObjectEventSnap, ref: ObjectModelRef,
+    heightAt: (x: number, y: number) => number, frame: number): ModelInstance {
+    const row = (s.worldY - s.height - s.c2cY + modelImageHeight(ref.kind, s.height) / 2) / 16 - 0.5;
+    const h = heightAt(cellX(s) + 0.5, Math.floor(row) + 0.5);
+    out.kind = ref.kind;
+    out.stage = ref.stage;
+    out.x = s.worldX / 16;
+    out.y = h;
+    out.z = row + h;
+    out.yaw = yawOf(o);
+    out.colors = this.colorsOf(s, ref.kind, o, frame);
+    return out;
+  }
+
+  /**
+   * The colours of a model's sprite (SpriteColorCache; the truck at its 48×48 image size: the cache key ignores
+   * the size, so every lookup of it decodes the same image). Never stored on the first synced frame of an object,
+   * or of a new image set / anim on it: the VBlank tile copy can lag a frame, so OBJ VRAM may still hold another
+   * object's pixels then (they are used for that frame only).
+   */
+  private colorsOf(s: SpriteSnap, kind: ObjectModelKind, o: ObjectEventSnap, frame: number): SpriteColors {
+    if (!this.pixels) return NO_COLORS;
+    const map = (o.mapGroup << 8) | o.mapNum;
+    let t = this.seen.get(o.index);
+    if (!t || t.graphicsId !== o.graphicsId || t.localId !== o.localId || t.map !== map || t.images !== s.images || t.animNum !== s.animNum) {
+      t = { graphicsId: o.graphicsId, localId: o.localId, map, images: s.images, animNum: s.animNum, since: frame, frame };
+      this.seen.set(o.index, t);
+    }
+    t.frame = frame;
+    let snap = s;
+    if (kind === 'truck') {
+      snap = this.truckImage = Object.assign(this.truckImage ?? { ...s }, s);
+      snap.width = 48;
+      snap.height = modelImageHeight('truck', s.height);
+    }
+    return this.colorCache.get(snap, this.pixels, { store: frame > t.since });
+  }
 }
+
+const blankInstance = (): ModelInstance => ({ kind: 'pokeball', stage: 0, x: 0, y: 0, z: 0, colors: NO_COLORS });

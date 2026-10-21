@@ -20,6 +20,7 @@ import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
 import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
+import type { SpritePixelSource } from '../actors/spriteColors';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -122,8 +123,13 @@ export class OverworldView {
     charLight: this.charLight,
   };
 
+  /** The Phase 2 programs' compile (precompile), started once. */
+  private precompiled: Promise<void> | null = null;
+  /** Live play's sprite pixel source (object model colours), updated in place at every sync. */
+  private livePixels: SpritePixelSource | null = null;
+
   /** `field`: the sprite atlas's inflation field (Modern), kept up to date by the owner after each atlas bake. */
-  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, field?: SpriteField) {
+  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
@@ -230,8 +236,33 @@ export class OverworldView {
     return last[last.length - 1] !== grid.cells[grid.cells.length - 1];
   }
 
+  /**
+   * Compiles the Phase 2 programs once, whatever the style (a Retro session switching to Modern must not
+   * hitch): the inflation field's passes, the inflated actors (main and shadow twin) and the object models
+   * (main and shadow-depth). Live play starts it at the first sync, the map preview after its build.
+   */
+  precompile(renderer: THREE.WebGLRenderer): Promise<void> {
+    return this.precompiled ??= Promise.all([
+      this.field?.compile(renderer),
+      this.actors.precompile(renderer, this.scene, this.camera),
+    ]).then(() => undefined);
+  }
+
+  /** Where the object models sample their sprites' colours (the map preview: its scratch VRAM and palette). */
+  setActorPixelSource(src: SpritePixelSource | null): void {
+    this.actors.setPixelSource(src);
+  }
+
   /** Synchronises with the emulated state; call after each emulated frame. */
   sync(state: GameState, renderer: THREE.WebGLRenderer): void {
+    // Object model colours: OBJ VRAM and exactly the palette the sprite atlas samples (the unfaded buffer
+    // in the overworld: a fade darkens the whole frame afterwards, models included), its tile mapping.
+    const bus = state.mem.bus;
+    const pixels = this.livePixels ??= { vram: bus.vram, palette: bus.pram16 };
+    pixels.palette = this.gbaTex.paletteSource ?? bus.pram16;
+    pixels.map2d = (bus.io16[0] & 0x40) === 0;
+    this.actors.setPixelSource(pixels);
+    void this.precompile(renderer);
     if (!state.layout || !state.header) return;
     this.mapType = state.header.mapType;
     this.cave = state.header.cave;
@@ -309,7 +340,8 @@ export class OverworldView {
     return uprightFoot(s, this.actorFrame.heightAt, this.playerFoot);
   }
 
-  /** Modern inflates its characters (false: cards, as in Retro — the harness's `--ab` baseline). */
+  /** Modern's Phase 2 actors: inflated characters and object models (false: every sprite a card, as in Retro —
+   *  the harness's `--ab` baseline). */
   setActorInflation(on: boolean): void {
     this.actors.inflation = on;
   }

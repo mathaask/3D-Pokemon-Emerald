@@ -94,6 +94,8 @@ export class PreviewApp {
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
     this.view.setSpriteFilter(params.get('spriteFilter') === 'pixel' ? 'pixel' : 'smooth');
+    // object models sample their colours where the atlas does: the scratch OBJ VRAM and palette (1D mapping)
+    this.view.setActorPixelSource({ vram: bus.vram, palette, map2d: false });
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
     const grid: GridData = {
@@ -117,6 +119,8 @@ export class PreviewApp {
 
     const hour = parseFloat(params.get('hour') ?? '11');
     this.fakeState = {
+      // (frame: one "sync" per preview frame; the static OBJ VRAM is complete from the first)
+      frame: 0,
       hours: Math.floor(hour), minutes: Math.round((hour % 1) * 60), weather: parseInt(params.get('weather') ?? '0', 10),
       sprites: actors.sprites, objects: actors.objects, player: null, cameraX: 0, cameraY: 0,
       flashLevel: parseInt(params.get('flash') ?? '0', 10),
@@ -139,6 +143,8 @@ export class PreviewApp {
     if (params.has('preset')) this.view.presetIndex = parseInt(params.get('preset')!, 10);
 
     this.post = new PostFX(this.webgl, this.view.scene, this.view.camera, quality);
+    // the Phase 2 programs compile now, as live play's first sync does (models, inflated actors, field)
+    void this.view.precompile(this.webgl);
     const tilt = tiltShiftFor(this.view.worldStyle);
     this.post.setTiltShift(tilt.focus, tilt.band, tilt.strength);
     window.addEventListener('keydown', (e) => this.keys.add(e.code));
@@ -261,6 +267,7 @@ export class PreviewApp {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) this.target.addScaledVector(right, -speed);
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) this.target.addScaledVector(right, speed);
     this.view.renderAtlas(this.webgl);
+    this.fakeState.frame++;
     // object sprites use 1D tile mapping (DISPCNT bit 6 set in the field)
     if (this.actors) {
       this.spriteAtlas.update(this.webgl, this.fakeState.sprites, false);

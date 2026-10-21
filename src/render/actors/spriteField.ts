@@ -133,6 +133,12 @@ export class SpriteField {
     });
   }
 
+  /** Compiles the 4 pass programs (compileAsync) before the field first runs: a session started in Retro
+   *  computes no field until it switches to Modern. Resolves when they are ready. */
+  compile(renderer: THREE.WebGLRenderer): Promise<void> {
+    return Promise.all(this.passes.map((p) => renderer.compileAsync(p.scene, this.camera))).then(() => undefined);
+  }
+
   /** Draws the 4 passes over the first `count` slots of `slots` (instanced quads, like the atlas). */
   update(renderer: THREE.WebGLRenderer, atlas: THREE.Texture, slots: THREE.InstancedBufferAttribute, count: number): void {
     // the atlas's own attribute (no copy): the field always covers the slots of the atlas it reads
