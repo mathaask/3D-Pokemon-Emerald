@@ -29,7 +29,20 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - `npx tsx tools/regress-live.ts --label x [--static] [--gpu] [--compare p2-base] [--only a,b]` — deterministic
   live regression from save states (`?manual=1`, fixed RTC) + static actor previews (`?map=G.N&actors=1`)
   → `out/regress-live/x/` (contact sheets, `stats.json` with pixel diffs); Retro must stay 0 px vs `p2-base`
+- `npm run regress:live -- --label x --static --gpu --selftest --compare p2-base` — live visual regression
+  (`tools/regress-live.ts`, header documents every flag): save states replayed in manual mode (`?manual=1`: no frame
+  loop, fixed clock; `emu.step(keys, frames)` emulates + renders and returns each frame's renderer CPU ms,
+  `emu.gpuFrames(n, keys)` times frames with GPU timer queries) plus, with `--static`, map previews with their object
+  events; both styles → `out/regress-live/x/` (PNGs, `_sheet_*`, `_crops.png`, `stats.json`: calls/triangles/programs,
+  stepMsMax, gpuMs/cpuMs with `--gpu`, actorLum Modern/Retro). `--compare p2-base` diffs against the pre-Phase-2
+  baseline: Retro must stay 0.00 % (only `lr_truck`/`littleroot_npcs` differ: the composed truck, Task 10).
+  `--selftest`: GPU inflation field + xBR vs CPU references. `--ab`: same-session cost of the Phase 2 actors vs flat
+  cards (frame-interleaved; `--ab-aa` = noise floor, `--ab-feature npcfade`); budgets are judged this way, never
+  against stored gpuMs (the Intel iGPU drifts 6–14 ms between sessions). Also `--only a,b`, `--styles modern`,
+  `--query quality=high`, `--dpr 2`
 - `npx tsx tools/shot3d.ts --query "map=0.9&hour=11" --name x` — screenshot a static map preview → `out/3d/x_0.png`
+  (`&actors=1` adds the map's object events, `&focusGfx=<id>` / `&focusObj=<n>` aims at one, `&focus=1` puts a
+  stand-in player at the camera target for the occlusion fade, `&style=retro`, `&spriteFilter=pixel`, `&yaw=`)
 - `npx tsx tools/shot3d.ts --batch "name=map=0.9;name2=map=0.10"` — several previews in one run
 - `npx tsx tools/shot3d.ts --state out/r101.state --wait 3000 --keys "LEFT:600"` — screenshot live play from a save
   state (`r101.state`: Route 101, free to walk; `s22.state`: Littleroot; `littleroot.state` is an indoor cutscene;
@@ -38,4 +51,6 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 ## Conventions
 - ROM (`*.gba`), save states, `out/`, `vendor/` are gitignored; never commit Nintendo assets.
 - World mapping: grid (x, y) at height h → world (X=x, Y=h, Z=y+h) ("un-projection").
+- Live baselines: `out/regress-live/p2-base` = before Phase 2 (both styles; entries added later got their reference
+  at their task's base, noted beside them in `STATIC`). Never overwrite it; a new phase captures its own base label.
 - Keep context lean: store findings/decisions in the progress log instead of re-deriving them.
