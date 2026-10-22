@@ -69,6 +69,7 @@ export function instanceUniformsFailed(programs: readonly ProgramInfo[]): boolea
   const keys = [programKey(false, true), programKey(true, true)];
   return programs.some((p) => p.diagnostics?.runnable === false && keys.some((k) => p.cacheKey.endsWith(k)));
 }
+
 /** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
  *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.

@@ -94,9 +94,9 @@ export function lush(c: RGB, maxSat = 0.42): RGB {
 /** Turned earth's hue, saturation and lightness range (earthTone). */
 const EARTH = { hue: 25 / 360, sat: 0.18, l0: 0.4, l1: 0.6 };
 /** Art direction for turned earth (berry soil beds, the berry plants' mounds): a tile's soil colour at its own
- *  lightness (kept within EARTH's 0.4..0.6: a mid-tone, never near-black or pale), its hue moved to a warm earth brown and its saturation
- *  set low. The GBA's berry soil is a mauve, (156, 115, 115): as it is, it read pink by day and magenta under the
- *  night's blue light; darker earth went near-black at night. sRGB. */
+ *  lightness (kept within EARTH's 0.4..0.6: a mid-tone, never near-black or pale), its hue moved to a warm earth brown
+ *  and its saturation set low. The GBA's berry soil is a mauve, (156, 115, 115): as it is, it read pink by day and
+ *  magenta under the night's blue light; darker earth went near-black at night. sRGB. */
 export function earthTone(c: RGB): RGB {
   _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
   const l = Math.min(EARTH.l1, Math.max(EARTH.l0, _hsl.l));

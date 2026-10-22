@@ -205,10 +205,11 @@ export function fadeActorRamp(d: number): number {
 /**
  * Aims the occlusion fade's NPC circles at `feet` (the first MAX_FADE_ACTORS; world space), with the same
  * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC, filled in order (the radius grown, where it
- * must, until the core holds the card's corners); unused slots radius 0 (empty: off). Per NPC, uFocusExtraFoot gets its foot along the camera's back direction (uCamBack, set first), its
- * sprite band (spriteBand: half-width px, lean) and its strength: with `player`, fadeActorRamp of the NPC's XZ distance
- * (one ramped to 0 is left out), else 1. The rectangle holding what the circles can clear (each cut to its sprite's
- * band) goes into uFocusExtraBox (none: an empty one).
+ * must, until the core holds the card's corners); unused slots radius 0 (empty: off). Per NPC, uFocusExtraFoot gets
+ * its foot along the camera's back direction (uCamBack, set first), its sprite band (spriteBand: half-width px, lean)
+ * and its strength: with `player`, fadeActorRamp of the NPC's XZ distance (one ramped to 0 is left out), else 1. The
+ * rectangle holding what the circles can clear (each cut to its sprite's band) goes into uFocusExtraBox (none: an
+ * empty one).
  */
 export function setKitFocusExtra(u: KitUniforms, feet: readonly FadeFoot[], camera: THREE.Camera, w: number, h: number,
   player?: THREE.Vector3): void {
