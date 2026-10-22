@@ -192,3 +192,9 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
   });
   return { sprites, objects };
 }
+
+/** Whether buildPreviewActors drew template `t` (among its `objects`): it leaves out VAR graphics ids, templates whose
+ *  graphics info does not read and images that overflow OBJ VRAM. */
+export function templateDrawn(objects: readonly ObjectEventSnap[], t: ObjectEventTemplate): boolean {
+  return objects.some((o) => o.localId === t.localId && o.x === t.x && o.y === t.y);
+}

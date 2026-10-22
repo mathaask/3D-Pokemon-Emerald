@@ -21,7 +21,8 @@
 // on the current atlas, the bleed fixture, the GPU ms of one update) on the entries marked `selftest`, in
 // Modern (Retro computes no field), after their steps; it goes into stats and the field's slots into
 // _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
-// `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png).
+// `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png; an n naming no
+// step fails the entry; an entry without one leaves no older _mid dump behind).
 // Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax()) px (SELFTEST_TOL: half-float
 // rounding grows with the field's height). The same call checks the HD sprite-edge shader (XBR_GLSL) against
 // its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
@@ -30,7 +31,9 @@
 // the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
 //   frame (default): --ab-rounds ABBA quads (default 64; on off off on, then off on on off) of short halves: each half
 //     switches the mode, renders --ab-settle untimed frames (default 4) and times the next --ab-timed frames (default 4,
-//     back to back; their median); the snapshot is restored every 60 frames; per quad (on₁ + on₂ − off₁ − off₂) / 2.
+//     back to back; their median); the snapshot is restored between quads once FRAME_AB_WINDOW (60) frames ran since the
+//     last restore, the quads after successive restores starting with "on" and "off" in turn; per quad
+//     (on₁ + on₂ − off₁ − off₂) / 2.
 //     A quad spans well under a second, so the iGPU's clock state (it drifts by several ms within seconds on the
 //     Intel/ANGLE machine) cancels. A/A runs (--ab-aa, r101) read −0.38 … +0.04 ms at 64 quads. (Settle 1 / timed 1, the
 //     pure frame interleave, under-reads costs that build up over consecutive frames: r101 walking +0.2 … +0.5 vs +0.8 …
@@ -48,7 +51,12 @@
 // Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
-// Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table.
+// Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table. A mask that is not the
+// shot's frame (more than MASK_MISMATCH_MAX of the pixels away from the actors differ: the transition's zoom moved on)
+// flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary).
+// A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
+// exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
+// entry's reference): lr_truck_switch toggles the world style and the sprite edges mid-steps.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -60,12 +68,21 @@ import puppeteer, { type Page } from 'puppeteer-core';
 import { inflateMax } from '../src/render/actors/inflateMath';
 
 interface LiveEntry {
-  name: string; state: string; steps: [string, number][]; query?: string; eval?: string;
-  /** --selftest: self-test after the steps; `selftestAfter`: also right after step n (mid-walk). */
+  /** `steps`: keys held for n frames each; a step's third element is evaluated in the page before its frames (a
+   *  mid-steps switch). */
+  name: string; state: string; steps: [string, number, string?][]; query?: string; eval?: string;
+  /** --selftest: self-test after the steps; `selftestAfter`: also right after step n (mid-walk; out of range fails the
+   *  entry). */
   selftest?: boolean; selftestAfter?: number;
   /** --ab walking variant: the direction held (one that walks ≥ 3 cells from the steps' end); none: idle only. */
   walk?: string;
+  /** The entry must look exactly like this one (0 px against its shot of the same style in this run's folder: run it
+   *  first) and --compare diffs it against that entry's reference. */
+  sameAs?: string;
 }
+
+/** A step's switch: the world style to the other one (Modern ↔ Retro; the world rebuilds on the next sync). */
+const TOGGLE_STYLE = "emu.renderer.setWorldStyle(emu.renderer.overworld.worldStyle === 'modern' ? 'retro' : 'modern')";
 
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
 // takes 16 frames per cell). r101: standing still, the youngster stays off-screen left, so the
@@ -83,6 +100,11 @@ const LIVE: LiveEntry[] = [
   { name: 'r101_yaw', state: 'out/r101.state', eval: 'emu.renderer.overworld.yaw = 0.9', steps: [['', 30]], walk: 'LEFT' },
   { name: 'birch', state: 'out/s27.state', steps: [['', 30]], selftest: true },               // Birch, bag, Zigzagoon (a Pokémon)
   { name: 'lr_truck', state: 'out/lr_out.state', steps: [['', 30]], selftest: true },         // Littleroot: Mom, truck (gfx 94)
+  // lr_truck with the world style switched to the other one and back (Modern → Retro → Modern in the Modern run) and the
+  // sprite edges HD → Pixel → HD, mid-steps, the truck model and Mom in view: no page error, the same 30 frames end
+  // exactly as lr_truck (0 px)
+  { name: 'lr_truck_switch', state: 'out/lr_out.state', sameAs: 'lr_truck', steps: [['', 6], ['', 6, TOGGLE_STYLE],
+    ['', 6, TOGGLE_STYLE], ['', 6, "emu.renderer.setSpriteFilter('pixel')"], ['', 6, "emu.renderer.setSpriteFilter('smooth')"]] },
   { name: 'lr_walk', state: 'out/s22.state', steps: [['', 30]], walk: 'LEFT' },              // Littleroot free walk
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
@@ -175,10 +197,16 @@ const AB_FEATURES: Record<string, AbFeature> = {
 
 interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; xbr: { maxErr: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
-/** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. */
-interface ActorLum { ratio: number; modern: number; retro: number; pixels: number }
+/** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. `maskMismatch`:
+ *  the share of the frame, away from the actors, where a mask re-render differs from its shot (the worse style);
+ *  `unreliable` above MASK_MISMATCH_MAX (the mask is not the shot's frame: the masked pixels may not be the actors'). */
+interface ActorLum { ratio: number; modern: number; retro: number; pixels: number; maskMismatch: number; unreliable?: true }
 /** Fewer visible actor pixels than this: no luminance (battle, an actor hidden in one style). */
 const ACTOR_LUM_MIN_PX = 200;
+/** The mask re-render guard: pixels within this distance of a mask's magenta are not compared with the shot
+ *  (antialiasing, tilt-shift blur); a mismatch above this share of the frame flags the entry's luminance unreliable. */
+const MASK_GUARD_PX = 4;
+const MASK_MISMATCH_MAX = 0.002;
 /** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` = the least px the
  *  player walked in any timed block (walking). */
 interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
@@ -277,6 +305,26 @@ const LUM_FN = `(async function (shotM, shotR, maskM, maskR) {
   }
   var pm = pixels(imgs[0]), pr = pixels(imgs[1]), mm = pixels(imgs[2]), mr = pixels(imgs[3]);
   function magenta(d, x, y) { var k = (y * w + x) * 4; return d[k] > 200 && d[k + 1] < 90 && d[k + 2] > 200; }
+  // the mask is the shot's frame drawn again: away from the actors (no magenta within R px: antialiasing and blur
+  // spread it) its pixels must equal the shot's; the count of those that differ (> 8 in a channel)
+  function mismatch(shot, mask) {
+    var R = ${MASK_GUARD_PX}, near = new Uint8Array(w * h), n = 0, x, y, d, m;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        for (m = 0, d = -R; d <= R && !m; d++) if (x + d >= 0 && x + d < w && magenta(mask, x + d, y)) m = 1;
+        near[y * w + x] = m;
+      }
+    }
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        for (m = 0, d = -R; d <= R && !m; d++) if (y + d >= 0 && y + d < h && near[(y + d) * w + x]) m = 1;
+        if (m) continue;
+        var k = (y * w + x) * 4;
+        if (Math.abs(shot[k] - mask[k]) > 8 || Math.abs(shot[k + 1] - mask[k + 1]) > 8 || Math.abs(shot[k + 2] - mask[k + 2]) > 8) n++;
+      }
+    }
+    return n;
+  }
   function both(x, y) { return magenta(mm, x, y) && magenta(mr, x, y); }
   var n = 0, sm = 0, sr = 0;
   for (var y = 1; y < h - 1; y++) {
@@ -288,15 +336,19 @@ const LUM_FN = `(async function (shotM, shotR, maskM, maskR) {
       n++;
     }
   }
-  return { pixels: n, modern: n ? sm / n : 0, retro: n ? sr / n : 0 };
+  return { pixels: n, modern: n ? sm / n : 0, retro: n ? sr / n : 0, mismatch: Math.max(mismatch(pm, mm), mismatch(pr, mr)) / (w * h) };
 })`;
 
 async function actorLum(page: Page, files: [string, string, string, string]): Promise<ActorLum | null> {
   const url = (f: string) => JSON.stringify(`data:image/png;base64,${fs.readFileSync(f).toString('base64')}`);
   await page.setContent('<html><body></body></html>');
-  const r = await page.evaluate(`${LUM_FN}(${files.map(url).join(', ')})`) as { pixels: number; modern: number; retro: number };
+  const r = await page.evaluate(`${LUM_FN}(${files.map(url).join(', ')})`) as
+    { pixels: number; modern: number; retro: number; mismatch: number };
   if (r.pixels < ACTOR_LUM_MIN_PX || r.retro <= 0) return null;
-  return { ratio: round(r.modern / r.retro, 3), modern: round(r.modern, 1), retro: round(r.retro, 1), pixels: r.pixels };
+  const lum: ActorLum = { ratio: round(r.modern / r.retro, 3), modern: round(r.modern, 1), retro: round(r.retro, 1), pixels: r.pixels,
+    maskMismatch: round(r.mismatch, 5) };
+  if (r.mismatch > MASK_MISMATCH_MAX) lum.unreliable = true;
+  return lum;
 }
 
 async function diffPng(page: Page, file: string, ref: string): Promise<Diff> {
@@ -423,7 +475,9 @@ async function abVariant(page: Page, rounds: number, keys: string, feature: AbFe
   return v;
 }
 
-/** Frames emulated between snapshot restores in an interleaved --ab variant (live; settle frames included). */
+/** The fewest frames emulated between snapshot restores in an interleaved --ab variant (live; settle frames included): a
+ *  restore falls between quads, so a window runs up to one quad (4 × (settle + timed) frames) longer. With a larger
+ *  --ab-settle / --ab-timed a walk can reach an obstacle within a window and stall (the `moved` column shows it). */
 const FRAME_AB_WINDOW = 60;
 
 /** One half of an interleaved --ab quad: untimed settle frames after the switch, then timed frames back to back. */
@@ -532,7 +586,6 @@ async function main(): Promise<void> {
   const dpr = parseFloat(arg('dpr', '1'));
   const extra = arg('query', '');
   const compare = arg('compare', '');
-  if (compare && compare === label) throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   const gpu = flag('gpu');
   const selftest = flag('selftest');
   const ab = flag('ab');
@@ -556,6 +609,11 @@ async function main(): Promise<void> {
   const entries = only.length ? all.filter((e) => only.includes(e.name)) : all.filter((e) => e.kind === 'live' || flag('static'));
   const outDir = path.join(root, 'out/regress-live', label);
   const refDir = compare ? path.join(root, 'out/regress-live', compare) : '';
+  // (the same folder however spelled: ./p2, p2/, P2 on Windows' case-insensitive file system)
+  const folder = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  if (refDir && folder(refDir) === folder(outDir)) {
+    throw new Error('--compare must name another run than --label (it would diff a run against itself)');
+  }
   if (refDir && !fs.existsSync(refDir)) throw new Error(`no reference run ${refDir}`);
   fs.mkdirSync(outDir, { recursive: true });
   const statsFile = path.join(outDir, 'stats.json');
@@ -618,11 +676,16 @@ async function main(): Promise<void> {
           const selfTests = selftest && e.selftest === true && style === 'modern';
           let mid: { result: SelfTest; ok: boolean; text: string } | undefined;
           if (e.kind === 'live') {
+            const after = e.selftestAfter;
+            if (selfTests && after !== undefined && !(Number.isInteger(after) && after >= 0 && after < e.steps.length)) {
+              throw new Error(`selftestAfter ${after} names no step (${e.steps.length} steps)`);
+            }
             if (e.eval) await page.evaluate(e.eval);
             // the entry's first frame builds the world and compiles programs (seconds, varying with
             // Chrome's program cache): stepMsMax is the largest frame time after it
             stepMsMax = 0;
-            for (const [n, [keys, frames]] of e.steps.entries()) {
+            for (const [n, [keys, frames, before]] of e.steps.entries()) {
+              if (before) await page.evaluate(before);
               const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
               if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
@@ -661,6 +724,8 @@ async function main(): Promise<void> {
             entry.selftest = t.result;
             if (!t.ok) selftestFailures.push(key);
             selfLine += ` | ${t.text}`;
+            // (an entry without a mid point now: no older run's mid-walk dump may stand for it)
+            if (!mid) fs.rmSync(path.join(outDir, `_field_${e.name}_mid.png`), { force: true });
           }
           if (gpu) {
             const g = await page.evaluate(`${api}.gpuFrames(60)`) as { gpuMs: number; gpuP90: number; cpuMs: number };
@@ -668,7 +733,8 @@ async function main(): Promise<void> {
             entry.gpuP90 = round(g.gpuP90, 3);
             entry.cpuMs = round(g.cpuMs, 3);
           }
-          if (ab && style === 'modern' && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
+          // (an entry that equals another one: measured there)
+          if (ab && style === 'modern' && !(e.kind === 'live' && e.sameAs) && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
             const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature, abMethod, abAa, abHalf)
               : await abMeasureStatic(page, abRounds, abFeature, abMethod, abAa, abHalf);
             const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
@@ -681,8 +747,18 @@ async function main(): Promise<void> {
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
           if (entry.ab) line += ` | ab idle ${abText(entry.ab.idle)}${entry.ab.walk ? `, walk ${abText(entry.ab.walk)}` : ''}`;
           line += selfLine;
+          // (diffs load the images into the page: after everything else of the entry)
+          const sameAs = e.kind === 'live' ? e.sameAs : undefined;
+          if (sameAs) {
+            const plain = path.join(outDir, `${sameAs}_${style}.png`);
+            if (!fs.existsSync(plain)) throw new Error(`no ${sameAs}_${style}.png in this run's folder to equal (run ${sameAs} first)`);
+            const d = await diffPng(page, file, plain);
+            const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
+            if (d.pixels !== 0) throw new Error(`differs from ${sameAs}_${style}: ${d.pixels} px (${d.pct.toFixed(2)} %), bbox ${b}`);
+            line += ` | = ${sameAs} (0 px)`;
+          }
           if (refDir) {
-            const ref = path.join(refDir, `${key}.png`);
+            const ref = path.join(refDir, `${sameAs ?? e.name}_${style}.png`);
             if (fs.existsSync(ref)) {
               const d = await diffPng(page, file, ref);
               entry.diff = d;
@@ -735,12 +811,20 @@ async function main(): Promise<void> {
   if (diffs.length) console.log(`\ncompare ${label} vs ${compare}:\n${diffs.join('\n')}`);
   if (lumRows.length) {
     console.log('\nactor luminance, Modern / Retro (mean sRGB luma over the actor pixels visible in both styles):');
-    console.log('| entry | ratio | modern | retro | px |');
-    console.log('|---|---|---|---|---|');
-    for (const { name, lum } of lumRows) console.log(`| ${name} | ${lum.ratio.toFixed(3)} | ${lum.modern} | ${lum.retro} | ${lum.pixels} |`);
-    const r = lumRows.map((x) => x.lum.ratio);
-    const min = lumRows.reduce((a, b) => (b.lum.ratio < a.lum.ratio ? b : a));
-    console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`);
+    console.log(`| entry | ratio | modern | retro | px | mask mismatch (UNRELIABLE > ${(MASK_MISMATCH_MAX * 100).toFixed(1)} %) |`);
+    console.log('|---|---|---|---|---|---|');
+    for (const { name, lum } of lumRows) {
+      console.log(`| ${name} | ${lum.ratio.toFixed(3)} | ${lum.modern} | ${lum.retro} | ${lum.pixels} | `
+        + `${(lum.maskMismatch * 100).toFixed(3)} %${lum.unreliable ? ' UNRELIABLE' : ''} |`);
+    }
+    // (summary over the reliable entries: an unreliable mask does not show the shot's actors)
+    const ok = lumRows.filter((x) => !x.lum.unreliable);
+    if (ok.length) {
+      const r = ok.map((x) => x.lum.ratio);
+      const min = ok.reduce((a, b) => (b.lum.ratio < a.lum.ratio ? b : a));
+      console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`
+        + (ok.length < lumRows.length ? ` (${lumRows.length - ok.length} unreliable left out)` : ''));
+    }
   }
   if (abRows.length) {
     const how = abMethod === 'frame' ? `${abRounds} ABBA quads (per half ${abHalf.settle} settle + ${abHalf.timed} timed frames)`

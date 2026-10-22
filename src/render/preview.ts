@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { Bus } from '../gba/bus';
 import { Mem } from '../game/mem';
-import type { GameState } from '../game/state';
+import type { GameState, ObjectEventSnap } from '../game/state';
 import { RomReader } from '../game/rom/reader';
 import { loadMap, type ObjectEventTemplate } from '../game/rom/maps';
 import { loadTileset } from '../game/rom/tileset';
@@ -22,7 +22,7 @@ import { OverworldView } from './overworld/overworldView';
 import { PostFX, tiltShiftFor, type Quality } from './post';
 import type { GridData } from './overworld/world';
 import { gridEvents } from './kit/events';
-import { buildPreviewActors } from './previewActors';
+import { buildPreviewActors, templateDrawn } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
 import { SpriteField } from './actors/spriteField';
 import { instanceUniformsFit } from './actors/inflatedActors';
@@ -128,7 +128,7 @@ export class PreviewApp {
       sprites: actors.sprites, objects: actors.objects, player: null, cameraX: 0, cameraY: 0,
       flashLevel: parseInt(params.get('flash') ?? '0', 10),
     } as unknown as GameState;
-    const focus = this.focusTemplate(map.events.objects, params);
+    const focus = this.focusTemplate(map.events.objects, params, this.actors ? actors.objects : null);
     if (focus) {
       // an object's card stands on its cell centre, on the ground there
       const h = this.view.heightAt(focus.x + 0.5, focus.y + 0.5);
@@ -176,16 +176,21 @@ export class PreviewApp {
   }
 
   /** The template named by &focusObj=N (index) or &focusGfx=G (first with graphics id G), if any.
-   *  One that names no template sets focusError (the view falls back to x / y or the map centre). */
-  private focusTemplate(templates: readonly ObjectEventTemplate[], params: URLSearchParams): ObjectEventTemplate | null {
+   *  One that names no template, or (with `drawn`, the preview's actors) one that buildPreviewActors left out, sets
+   *  focusError (the view falls back to x / y or the map centre, or frames an empty cell). */
+  private focusTemplate(templates: readonly ObjectEventTemplate[], params: URLSearchParams,
+    drawn: readonly ObjectEventSnap[] | null): ObjectEventTemplate | null {
     const obj = params.get('focusObj');
     const gfx = params.get('focusGfx');
     const t = obj !== null ? templates[Number(obj)]
       : gfx !== null ? templates.find((e) => e.graphicsId === Number(gfx)) : undefined;
+    const named = obj !== null ? `focusObj=${obj}` : `focusGfx=${gfx}`;
     if ((obj !== null || gfx !== null) && !t) {
-      this.focusError = `no object template for ${obj !== null ? `focusObj=${obj}` : `focusGfx=${gfx}`} (${templates.length} templates)`;
-      console.warn(`[preview] ${this.focusError}`);
+      this.focusError = `no object template for ${named} (${templates.length} templates)`;
+    } else if (t && drawn && !templateDrawn(drawn, t)) {
+      this.focusError = `${named} names template local id ${t.localId} (gfx ${t.graphicsId}), which the preview's actors leave out`;
     }
+    if (this.focusError) console.warn(`[preview] ${this.focusError}`);
     return t ?? null;
   }
 

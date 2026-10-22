@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { blankSprite } from '../src/render/previewActors';
+import { blankSprite, templateDrawn } from '../src/render/previewActors';
+import type { ObjectEventTemplate } from '../src/game/rom/maps';
+import type { ObjectEventSnap } from '../src/game/state';
 
 describe('blankSprite', () => {
   it('defaults every field: a 16x32 world sprite, centre-to-corner from its size', () => {
@@ -23,5 +25,16 @@ describe('blankSprite', () => {
     expect(s.attr1).toBe(84 | 0x1000 | (2 << 14));
     expect(s.attr2).toBe(40 | (2 << 10) | (3 << 12));
     expect(blankSprite({ width: 32, height: 32, c2cY: -24, attr2: 7 })).toMatchObject({ c2cY: -24, attr2: 7 });
+  });
+});
+
+describe('templateDrawn', () => {
+  const template = (localId: number, x: number, y: number) => ({ localId, x, y, graphicsId: 7 }) as ObjectEventTemplate;
+  const object = (localId: number, x: number, y: number) => ({ localId, x, y }) as ObjectEventSnap;
+  it("tells whether buildPreviewActors drew a template (it leaves out VAR graphics, unreadable ones, OBJ VRAM overflow)", () => {
+    const objects = [object(1, 4, 5), object(3, 9, 2)];
+    expect(templateDrawn(objects, template(1, 4, 5))).toBe(true);
+    expect(templateDrawn(objects, template(2, 6, 6))).toBe(false);   // left out
+    expect(templateDrawn(objects, template(3, 9, 3))).toBe(false);   // (same local id elsewhere: another template)
   });
 });
