@@ -6,6 +6,7 @@
 import type { RomReader } from '../game/rom/reader';
 import type { ObjectEventTemplate } from '../game/rom/maps';
 import { OBJ_SIZES, type ObjectEventSnap, type SpriteSnap } from '../game/state';
+import { applyComposition, needsComposition, readSubsprites } from '../game/subsprites';
 import {
   NUM_OBJ_EVENT_GFX, firstAnimFrame, readFrameImage, readOamShape, readObjectGraphicsInfo, readObjectPalette,
 } from '../game/rom/objectGraphics';
@@ -28,6 +29,7 @@ const DIR_SOUTH = 1; // (frame 0 of a character faces south)
 const MOVEMENT_TYPE_INVISIBLE = 0x4c;
 const SUBSPRITES_OFF = 0;
 const SUBSPRITES_ON = 1;
+const SUBSPRITES_IGNORE_PRIORITY = 2;
 /** pokeemerald sElevationToPriority / sElevationToSubspriteTableNum. */
 const ELEVATION_TO_PRIORITY = [2, 2, 2, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 0, 0, 2];
 const ELEVATION_TO_SUBSPRITE_TABLE = [1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 0, 0, 1];
@@ -67,7 +69,7 @@ export function blankSprite(p: Partial<SpriteSnap> = {}): SpriteSnap {
     x: 0, y: 0, x2: 0, y2: 0, c2cX: 0, c2cY: 0, subpriority: 0, coordOffset: true, invisible: false,
     callback: 0, template: 0, screenX: 0, screenY: 0, worldX: 0, worldY: 0, data: new Int16Array(8),
     scaleX: 1, scaleY: 1, rotation: 0,
-    animNum: 0, images: 0, subspriteTables: 0, subspriteTableNum: 0, subspriteMode: 0,
+    animNum: 0, images: 0, subspriteTables: 0, subspriteTableNum: 0, subspriteMode: 0, pieces: null,
     ...p,
   };
   if (p.c2cX === undefined) s.c2cX = -(s.width >> 1);
@@ -94,7 +96,8 @@ export function blankSprite(p: Partial<SpriteSnap> = {}): SpriteSnap {
  * OBJ palette slot (`palette[256 + slot * 16 …]`; past 16 tags, slot 15 is reused). Frame 0 is shown,
  * except on berry trees (gfx 60-62): animNum = localId % 5, so a map shows every growth stage, each
  * as live play shows it (the stage's graphics id 61 / 62 and its first anim frame). `removing` puts
- * Cut trees and breakable rocks (gfx 82, 86) on their breaking anim (animNum 1). Positions are
+ * Cut trees and breakable rocks (gfx 82, 86) on their breaking anim (animNum 1). A multi-piece image
+ * (the truck) is composed from its subsprite table as live play draws it (subsprites.ts). Positions are
  * map-local (the preview grid has no offset); the caller sets the objects' mapGroup / mapNum.
  * Whatever is left out or drawn with a stand-in palette is reported with console.warn.
  */
@@ -149,7 +152,7 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
       else palette.set(colours, OBJ_PALETTE + slot * 16);
     }
 
-    // Size: the base OAM (the image may be larger and drawn as subsprites: the truck).
+    // Size: the base OAM (the image may be larger and drawn as subsprites: the truck, composed below).
     // SetSpritePosToMapCoords + centerToCornerVec: x = cell * 16 + 8, y = cell * 16 + 16 + c2cY
     const { shape, size } = readOamShape(rom, info);
     const [width, height] = OBJ_SIZES[shape][size];
@@ -162,7 +165,7 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
     const elevation = t.elevation & 0xf;
     const data = new Int16Array(8);
     data[0] = i; // sObjEventId
-    sprites.push(blankSprite({
+    const sprite = blankSprite({
       index: i, width, height, tileNum: tile, palette: slot, priority: ELEVATION_TO_PRIORITY[elevation],
       // GBA sprite position with the camera at the map origin (live play: worldY = y + c2cY + height)
       x: worldX, y: worldY - c2cY - height, c2cX, c2cY, worldX, worldY, data,
@@ -175,7 +178,16 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
       // the map-entry state only: after a return to field (SpawnObjectEventOnReturnToField) live play respawns
       // berry trees from gfx 61/62 with subsprites on
       subspriteMode: spawnInfo.subspriteTables ? SUBSPRITES_ON : SUBSPRITES_OFF,
-    }));
+    });
+    // a multi-piece image (the truck: 48×48 on a 32×32 OAM) is drawn from its pieces, as live play does: the
+    // graphics info's table 0 with subsprites on, composed like GameState's sprites
+    const pieces = readSubsprites(rom, info.subspriteTables, 0);
+    if (pieces && needsComposition(pieces, width, height)) {
+      sprite.subspriteTableNum = 0;
+      sprite.subspriteMode = SUBSPRITES_IGNORE_PRIORITY;
+      applyComposition(sprite, pieces);
+    }
+    sprites.push(sprite);
     objects.push({
       index: i, spriteId: i, graphicsId, localId: t.localId, mapGroup: 0, mapNum: 0,
       x: t.x, y: t.y, prevX: t.x, prevY: t.y, elevation, prevElevation: elevation, facing: DIR_SOUTH,

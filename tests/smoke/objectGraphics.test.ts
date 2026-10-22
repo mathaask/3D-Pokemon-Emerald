@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RomReader } from '../../src/game/rom/reader';
-import { readObjectGraphicsInfo, readFrameImage, readObjectPalette } from '../../src/game/rom/objectGraphics';
+import { NUM_OBJ_EVENT_GFX, readObjectGraphicsInfo, readFrameImage, readObjectPalette, readOamShape } from '../../src/game/rom/objectGraphics';
+import { OBJ_SIZES, composeBounds, needsComposition, readSubsprites } from '../../src/game/subsprites';
 import { loadMap } from '../../src/game/rom/maps';
 import { buildPreviewActors } from '../../src/render/previewActors';
 import { loadRom } from './helpers/staticMap';
@@ -12,6 +13,35 @@ describe('object graphics from the ROM', () => {
     expect(readObjectGraphicsInfo(rom, 87)).toMatchObject({ width: 16, height: 16, paletteTag: 0x1103 });
     expect(readObjectGraphicsInfo(rom, 94)).toMatchObject({ width: 48, height: 48, paletteTag: 0x110d, size: 1152 });
     expect(readObjectGraphicsInfo(rom, 239)).toBeNull();
+  });
+  it('composes the truck from its subsprite table: 48×48 on a 32×32 OAM, strips in row-major tile order', () => {
+    const info = readObjectGraphicsInfo(rom, 94)!;
+    const { shape, size } = readOamShape(rom, info);
+    expect(OBJ_SIZES[shape][size]).toEqual([32, 32]);
+    const pieces = readSubsprites(rom, info.subspriteTables, 0)!;
+    expect(pieces).toHaveLength(12); // 6 rows of a 32×8 and a 16×8 strip
+    expect(needsComposition(pieces, 32, 32)).toBe(true);
+    const b = composeBounds(pieces, false, false);
+    expect(b).toMatchObject({ minX: -24, minY: -24, width: 48, height: 48 });
+    for (const p of b.placed) expect(p.tileOffset).toBe((p.y / 8) * 6 + p.x / 8); // the image is 6 tiles wide
+  });
+  it('finds the multi-piece objects: only the truck fits a 64×64 atlas slot; one-piece tables (berry trees) stay', () => {
+    const composed: Record<number, string> = {};
+    for (let g = 0; g < NUM_OBJ_EVENT_GFX; g++) {
+      const info = readObjectGraphicsInfo(rom, g);
+      if (!info?.subspriteTables) continue;
+      const { shape, size } = readOamShape(rom, info);
+      const [w, h] = OBJ_SIZES[shape][size];
+      for (let t = 0; t < 6; t++) { // (every table array has 6 entries; elevations use 0-2)
+        const pieces = readSubsprites(rom, info.subspriteTables, t);
+        if (!pieces || !needsComposition(pieces, w, h)) continue;
+        const b = composeBounds(pieces, false, false);
+        composed[g] = `${b.width}x${b.height}`;
+      }
+    }
+    // the truck, the S.S. Tidal and the submarine shadow (the last two exceed a slot and stay as they are)
+    expect(composed).toEqual({ 94: '48x48', 140: '96x40', 141: '88x32' });
+    expect(readObjectGraphicsInfo(rom, 60)!.subspriteTables).toBe(0);
   });
   it('reads frame tiles and palettes by tag', () => {
     expect(readFrameImage(rom, readObjectGraphicsInfo(rom, 59)!, 0)).toHaveLength(128);
@@ -48,9 +78,18 @@ describe('preview actors from map templates', () => {
     });
     const truck = actors.sprites[templates.findIndex((t) => t.graphicsId === 94)];
     const tt = templates.find((t) => t.graphicsId === 94)!;
-    expect(truck).toMatchObject({ width: 32, height: 32, c2cX: -24, c2cY: -24, worldY: tt.y * 16 });
+    // the truck: its 48×48 image composed from subsprite table 0 (as live play draws it), bottom on its cell's bottom
+    expect(truck).toMatchObject({ width: 48, height: 48, c2cX: -24, c2cY: -24, worldX: tt.x * 16 + 8, worldY: tt.y * 16 + 16 });
+    expect(truck).toMatchObject({ subspriteTableNum: 0, subspriteMode: 2 });
+    expect(truck.attr0 >>> 14).toBe(0); // the base OAM stays 32×32 (square, size 2)
+    expect(truck.attr1 >>> 14).toBe(2);
+    expect(truck.pieces).toHaveLength(12);
+    expect(truck.pieces![1]).toEqual({ x: 32, y: 0, width: 16, height: 8, tileOffset: 4 });
+    // the sprite's centre is unchanged (y: live play's cell * 16 + 16 + c2cY), as Task 8's model foot reads it
+    expect(truck.worldY - truck.height - truck.c2cY).toBe(truck.y);
+    expect(truck.y).toBe(tt.y * 16 - 8);
     const npc = actors.sprites.find((s, i) => readObjectGraphicsInfo(rom, templates[i].graphicsId)!.height === 32)!;
-    expect(npc).toMatchObject({ width: 16, height: 32, c2cX: -8, c2cY: -16 });
+    expect(npc).toMatchObject({ width: 16, height: 32, c2cX: -8, c2cY: -16, pieces: null });
     expect(npc.worldY).toBe(actors.objects[npc.index].y * 16 + 16);
     // each (graphics, frame) is copied once: two objects of one graphics id share their tiles
     const byGfx = new Map<number, number>();
@@ -77,7 +116,7 @@ describe('preview actors from map templates', () => {
       expect(o.graphicsId).toBe(stageGfx);
       const info = readObjectGraphicsInfo(rom, stageGfx)!;
       expect(s).toMatchObject({ width: 16, height: s.animNum < 2 ? 16 : 32, c2cX: -8, c2cY: s.animNum < 2 ? -8 : -16 });
-      expect(s).toMatchObject({ images: info.images, subspriteTables: info.subspriteTables, subspriteMode: 0, subspriteTableNum: 1 });
+      expect(s).toMatchObject({ images: info.images, subspriteTables: info.subspriteTables, subspriteMode: 0, subspriteTableNum: 1, pieces: null });
       expect(info.subspriteTables).not.toBe(0);
       expect(s.worldY).toBe(o.y * 16 + 16);
       // live play draws the (Pecha) stages in OBJ palettes 3, 4, 4, 4, 4: tags NPC_2, NPC_3

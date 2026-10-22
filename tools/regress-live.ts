@@ -101,6 +101,10 @@ const STATIC: StaticEntry[] = [
   // granite_rocks --styles retro; Retro renders unchanged through Phase 2, 0.00 % on every older entry)
   { name: 'granite_rocks', q: 'map=24.9&flash=2&x=5.5&y=15.5' },
   { name: 'woods_shade', q: 'map=24.11&focusObj=3&hour=17.5' }, // Petalburg Woods: a Bug Catcher in tree shade (shadows on actors)
+  // Route 104: Mr. Briney's boat (gfx 88), a single 32×32 sprite that the subsprite composition leaves as it is
+  // (added in Phase 2 Task 10: its p2-base Retro and Modern references were captured at 1c6fe5a, before the composition,
+  // with --label p2-base --only r104_boat)
+  { name: 'r104_boat', q: 'map=0.19&focusGfx=88' },
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
