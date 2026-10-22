@@ -5,8 +5,9 @@ import { BLADES, bladeColor, clump, grassFamily, LONG_SCALE, type GrassCell } fr
 import { cellLook } from '../src/render/kit/terrain';
 import { Claims, CLAIM_BLADES, CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP } from '../src/render/overworld/claims';
 import { NO_EVENTS } from '../src/render/kit/events';
-import { createKitUniforms } from '../src/render/kit/materials';
-import { bgr555ToSrgb, luma, saturation } from '../src/render/kit/palette';
+import { createKitUniforms, kitMaterial } from '../src/render/kit/materials';
+import { bgr555ToSrgb, luma, nightSoilScale, saturation, SOIL_LINEAR, type RGB } from '../src/render/kit/palette';
+import { soilFamily, type SoilCell } from '../src/render/kit/soil';
 import { disposeKit } from '../src/render/kit/semantics';
 import { analyze, K, type MapAnalysis } from '../src/render/overworld/analyze';
 import { fakeInfo } from './helpers/fakeMap';
@@ -455,5 +456,42 @@ describe('flower extract: secret-base spots', () => {
     const claims = new Claims(a.N);
     expect(flowerFamily.extract(ctxOf(a), claims)).toEqual([]);
     expect(claims.bits[a.idx(1, 0)]).toBe(0);
+  });
+});
+
+describe('soilFamily (berry soil beds)', () => {
+  const callBefore = (mesh: THREE.Mesh) =>
+    mesh.onBeforeRender({} as THREE.WebGLRenderer, new THREE.Scene(), new THREE.Camera(), mesh.geometry, mesh.material as THREE.Material, null as unknown as THREE.Group);
+  it('moonlights the beds through their material colour, set from uNight before each draw (no shader hook: no program of its own)', () => {
+    const k = kit();
+    const cells: SoilCell[] = [{ i: 0, x: 1, y: 2, h: 0, color: SOIL_LINEAR }, { i: 1, x: 2, y: 2, h: 0.5, color: SOIL_LINEAR }];
+    const mesh = soilFamily.build(cells, ctxOf(map(['..'])), k) as THREE.Mesh;
+    expect(mesh.isMesh).toBe(true);                                   // one earth colour: one mesh
+    const m = mesh.material as THREE.MeshStandardMaterial;
+    // the program of a plain vertex-coloured kit material
+    expect(m.customProgramCacheKey()).toBe(kitMaterial(k.uniforms, { vertexColors: true }).material.customProgramCacheKey());
+    k.uniforms.uNight.value = 0.7;
+    callBefore(mesh);
+    const want = nightSoilScale(SOIL_LINEAR, 0.7);
+    m.color.toArray().forEach((v, i) => expect(v).toBeCloseTo(want[i], 12));
+    k.uniforms.uNight.value = 0;
+    callBefore(mesh);
+    expect(m.color.toArray()).toEqual([1, 1, 1]);
+    // every vertex colour is the soil × k (what makes the material colour exact)
+    const col = mesh.geometry.getAttribute('color');
+    for (let v = 0; v < col.count; v += 37) {
+      const kv = col.getX(v) / SOIL_LINEAR[0];
+      expect(col.getY(v)).toBeCloseTo(SOIL_LINEAR[1] * kv, 5);
+      expect(col.getZ(v)).toBeCloseTo(SOIL_LINEAR[2] * kv, 5);
+    }
+  });
+  it('gives each earth colour a mesh of its own', () => {
+    const other: RGB = [0.2, 0.15, 0.1];
+    const cells: SoilCell[] = [{ i: 0, x: 1, y: 2, h: 0, color: SOIL_LINEAR }, { i: 1, x: 2, y: 2, h: 0, color: other }];
+    const g = soilFamily.build(cells, ctxOf(map(['..'])), kit())!;
+    const ms: THREE.Mesh[] = [];
+    g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ms.push(o as THREE.Mesh); });
+    expect(ms).toHaveLength(2);
+    expect(ms[0].material).not.toBe(ms[1].material);
   });
 });

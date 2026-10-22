@@ -131,28 +131,52 @@ describe('semantics on real maps', () => {
     expect(payload<unknown[]>(run(24, 11).ex, 'trees').length).toBeGreaterThanOrEqual(100);
   });
 
-  it('berry soil lies flat: a bed on the ground the terrain draws, the plant standing on its top (Routes 104, 123)', () => {
+  it('berry soil lies flat on every map with soil cells: a bed on the ground the terrain draws, the plant standing on its top', () => {
     // (Phase 2 Task 9: the legacy art stood it up as a card or a soil wall, hiding the berry plants)
-    for (const [n, beds] of [[19, 10], [38, 18]] as const) {
-      const r = run(0, n);
+    const skip: number[] = [MapType.INDOOR, MapType.SECRET_BASE, MapType.UNDERGROUND, MapType.UNDERWATER];
+    const maps = loadAllMaps(new RomReader(loadRom())).filter((m) => !skip.includes(m.mapType));
+    const beds = new Map<string, number>();
+    const onCliffs: string[] = [];
+    for (const m of maps) {
+      const r = run(m.group, m.num);
       const soil = payload<SoilCell[]>(r.ex, 'berrySoil');
-      expect(soil.length, r.name).toBe(beds);
+      const bedAt = new Set(soil.map((c) => c.i));
+      let soilCells = 0;
+      for (let i = 0; i < r.a.N; i++) {
+        if (r.a.beh[i] !== MB.BERRY_TREE_SOIL || !inMap(r, i)) continue;
+        soilCells++;
+        if (bedAt.has(i)) continue;
+        // a soil cell without a bed: only on a cliff's top row, which the cliff family claims first (known gap)
+        expect(r.ex!.added.get('cliffs')![i] & CLAIM_OBJECT, `${r.name} ${r.a.cellX(i)},${r.a.cellY(i)}`).toBe(CLAIM_OBJECT);
+        onCliffs.push(`${m.group}.${m.num}`);
+      }
+      if (!soilCells) continue;
+      beds.set(`${m.group}.${m.num}`, soil.length);
       const terrain = new Map(payload<TerrainPlacement>(r.ex, 'terrain').cells.map((c) => [c.i, c]));
       for (const c of soil) {
         expect(r.a.beh[c.i]).toBe(MB.BERRY_TREE_SOIL);
-        expect(r.ex!.claims.has(c.i, CLAIM_OBJECT) && r.ex!.claims.has(c.i, CLAIM_SURFACE)).toBe(true);
-        expect(terrain.get(c.i)?.h, `${c.x},${c.y}`).toBe(r.a.groundH[c.i]);           // the ground around it, at its level
-        expect(r.ex!.claims.surfaceY[c.i]).toBeCloseTo(r.a.groundH[c.i] + BED.top, 5);  // its plant on the bed
-        expect(c.color).toEqual(SOIL_LINEAR);   // its tile's soil as earth, the plants' mounds' colour (one soil art)
+        const at = `${r.name} ${c.x},${c.y}`;
+        expect(r.ex!.claims.has(c.i, CLAIM_OBJECT) && r.ex!.claims.has(c.i, CLAIM_SURFACE), at).toBe(true);
+        expect(terrain.get(c.i)?.h, at).toBe(r.a.groundH[c.i]);           // the ground around it, at its level
+        expect(r.ex!.claims.surfaceY[c.i], at).toBeCloseTo(r.a.groundH[c.i] + BED.top, 5);  // its plant on the bed
+        // its tile's soil as earth, the plants' mounds' colour: one soil art, so one bed mesh per map, which its material
+        // colour moonlights exactly (soil.ts bedMesh)
+        expect(c.color, at).toEqual(SOIL_LINEAR);
       }
       // the legacy art draws nothing on it
       const quads = emitLegacy(r.a, r.ex!.claims).quads;
       for (const c of soil) {
         const on = quads.filter((q) => [q.a, q.b, q.c, q.d].every(([x, , z]) => x >= c.x - 1e-6 && x <= c.x + 1 + 1e-6
           && z >= c.y + c.h - 1e-6 && z <= c.y + 1 + c.h + 1e-6));
-        expect(on, `${c.x},${c.y}`).toEqual([]);
+        expect(on, `${r.name} ${c.x},${c.y}`).toEqual([]);
       }
     }
+    // 15 maps carry soil; Routes 104 and 123 (the harness's berry entries) all of theirs as beds
+    expect(beds.size).toBe(15);
+    expect([beds.get('0.19'), beds.get('0.38')]).toEqual([10, 18]);
+    // the known gap, pinned: 18 soil cells on cliff tops of Routes 103, 111, 120 and 121 are the cliff family's
+    expect(onCliffs.length).toBe(18);
+    expect([...new Set(onCliffs)]).toEqual(['0.18', '0.26', '0.35', '0.36']);
   });
 
   it("Fortree's treehouse corner tiles are not trees", () => {

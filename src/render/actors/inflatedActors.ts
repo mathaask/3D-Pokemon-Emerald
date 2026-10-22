@@ -40,7 +40,8 @@ export const INST_UNIFORM_VECTORS = MAX_ACTORS * INST_VEC4;
  * (shadow matrix + DirectionalLightShadow; the overworld's sun), ≈ 11 per shadow-casting point light (none today), ours 3
  * (uRight, uEye, uAtlasSize): ≈ 225 for the overworld — over WebGL2's guaranteed 256 once a second shadowed light
  * arrives, and drivers count some vectors more coarsely. 192 + 128 = 320 leaves ≈ 95 vectors of margin (8+ more
- * shadowed lights); desktop and mobile GPUs report 1024 or more, WebGL2-minimum devices 256 (attributes).
+ * shadowed lights). Desktop GPUs (ANGLE D3D11: 4096) report far more; mobile GPUs vary, down to WebGL2's minimum of 256
+ * (attributes). A device that reports enough but still fails to link falls back at run time (instanceUniformsFailed).
  */
 export const INST_UNIFORMS_MIN_VERTEX_VECTORS = INST_UNIFORM_VECTORS + 128;
 
@@ -330,8 +331,10 @@ export class InflatedActors {
   /**
    * `atlas`: the sprite atlas the actors sample; `field`: its inflation field (same layout, R = height in
    * sprite px); `rimColor`: the rim's colour (kept by reference: the sky's, updated by the owner);
-   * `instanceUniforms`: read the instance data from the uniform array (default) or from instance attributes — false on a
-   * device with too few vertex uniform vectors (instanceUniformsFit).
+   * `instanceUniforms`: read the instance data from the uniform array (default) or from instance attributes. The default
+   * suits tests and devices known to fit: a renderer's caller (the overworld; Phase 3's battlers alike) passes
+   * instanceUniformsFit(renderer.capabilities.maxVertexUniforms, …): false on a device with too few vertex uniform
+   * vectors.
    */
   constructor(atlas: THREE.Texture, field: THREE.Texture, rimColor: { value: THREE.Color },
     atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS), instanceUniforms = true) {

@@ -8,19 +8,23 @@
 // 21-texel neighbourhood (5×5 without its corners) is fetched once and shared by the four corners; a corner
 // none of whose lines reaches the sample is skipped before its edge rule.
 
-import { XBR, XBR_TIE } from '../kit/upscale';
+import { XBR, XBR_LINES, XBR_TIE } from '../kit/upscale';
 import { glslFloat } from './glsl';
 
 /**
  * Defines `vec4 xbrSample(sampler2D tex, vec2 p, vec4 rect, float delta)`: the xBR-smoothed colour of `tex`
  * at texel coordinates `p` (texel centres at k + 0.5, texelFetch's rows); `rect` = x0, y0, x1, y1 in texels
  * (integers; [x0, x1) × [y0, y1)), texels outside it read as transparent black; `delta`: the blend's
- * half-width across an edge. Blends with transparent texels come out premultiplied.
+ * half-width across an edge (the 45° line's; each line scales it to its slope, XBR_LINES). Blends with transparent
+ * texels come out premultiplied.
  */
 export const XBR_GLSL = /* glsl */ `
 const float XBR_EQ = ${glslFloat(XBR.eq)};
 const float XBR_COEF = ${glslFloat(XBR.coef)};
 const float XBR_TIE = ${glslFloat(XBR_TIE)};
+// each line's blend half-width: δ scaled by its gradient norm over the 45° line's, capped short of the texel centre
+const float XBR_K30 = ${glslFloat(XBR_LINES.k30)};
+const float XBR_K60 = ${glslFloat(XBR_LINES.k60)};
 // weighted distance of two keys (sqrt rgb, a): luma weights on the colour, alpha counted fully
 float xbrDf(vec4 a, vec4 b) {
   vec4 d = abs(a - b);
@@ -43,7 +47,8 @@ vec2 xbrCorner(vec4 kE, vec4 kF, vec4 kH, vec4 kI, vec4 kB, vec4 kD, vec4 kC, ve
   float dEF = xbrDf(kE, kF), dEH = xbrDf(kE, kH);
   if (dEF <= XBR_EQ || dEH <= XBR_EQ) return vec2(0.0);
   // (none of the three lines reaches this sample: no coverage, whatever the edge)
-  if (f.x + f.y <= 1.5 - d && f.y + 0.5 * f.x <= 1.0 - d && 2.0 * f.x + f.y <= 2.0 - d) return vec2(0.0);
+  float d45 = min(d, ${glslFloat(XBR_LINES.cap45)}), d30 = min(d * XBR_K30, ${glslFloat(XBR_LINES.cap30)}), d60 = min(d * XBR_K60, ${glslFloat(XBR_LINES.cap60)});
+  if (f.x + f.y <= 1.5 - d45 && f.y + 0.5 * f.x <= 1.0 - d30 && 2.0 * f.x + f.y <= 2.0 - d60) return vec2(0.0);
   // lv1: only where the edge runs on (past F or H, or E continues diagonally)
   bool runsOn = (xbrDf(kF, kB) > XBR_EQ && xbrDf(kF, kC) > XBR_EQ) || (xbrDf(kH, kD) > XBR_EQ && xbrDf(kH, kG) > XBR_EQ)
     || (xbrDf(kE, kI) <= XBR_EQ && ((xbrDf(kF, kF4) > XBR_EQ && xbrDf(kF, kI4) > XBR_EQ) || (xbrDf(kH, kH5) > XBR_EQ && xbrDf(kH, kI5) > XBR_EQ)))
@@ -53,10 +58,10 @@ vec2 xbrCorner(vec4 kE, vec4 kF, vec4 kH, vec4 kI, vec4 kB, vec4 kD, vec4 kC, ve
             < xbrDf(kH, kD) + xbrDf(kH, kI5) + xbrDf(kF, kI4) + xbrDf(kF, kB) + 4.0 * xbrDf(kE, kI);
   if (!edge) return vec2(0.0);
   float dFG = xbrDf(kF, kG), dHC = xbrDf(kH, kC);
-  float cov = smoothstep(1.5 - d, 1.5 + d, f.x + f.y);
+  float cov = smoothstep(1.5 - d45, 1.5 + d45, f.x + f.y);
   // lv2: a 30° line into G's side, a 60° line into C's side
-  if (XBR_COEF * dFG <= dHC + XBR_TIE && xbrDf(kE, kG) > XBR_EQ && xbrDf(kD, kG) > XBR_EQ) cov = max(cov, smoothstep(1.0 - d, 1.0 + d, f.y + 0.5 * f.x));
-  if (XBR_COEF * dHC <= dFG + XBR_TIE && xbrDf(kE, kC) > XBR_EQ && xbrDf(kB, kC) > XBR_EQ) cov = max(cov, smoothstep(2.0 - d, 2.0 + d, 2.0 * f.x + f.y));
+  if (XBR_COEF * dFG <= dHC + XBR_TIE && xbrDf(kE, kG) > XBR_EQ && xbrDf(kD, kG) > XBR_EQ) cov = max(cov, smoothstep(1.0 - d30, 1.0 + d30, f.y + 0.5 * f.x));
+  if (XBR_COEF * dHC <= dFG + XBR_TIE && xbrDf(kE, kC) > XBR_EQ && xbrDf(kB, kC) > XBR_EQ) cov = max(cov, smoothstep(2.0 - d60, 2.0 + d60, 2.0 * f.x + f.y));
   return vec2(cov, dEF <= dEH + XBR_TIE ? 1.0 : 0.0);
 }
 vec4 xbrSample(sampler2D tex, vec2 p, vec4 rect, float delta) {

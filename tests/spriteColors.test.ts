@@ -192,7 +192,7 @@ describe('SpriteColorCache', () => {
     const palette = new Uint16Array(512);
     palette[256 + 0 * 16 + 1] = BLUE;
     palette[256 + 3 * 16 + 1] = RED;
-    return { vram, palette };
+    return { vram, palette, map2d: false };
   }
   const s = (p: Partial<SpriteSnap> = {}) => blankSprite({ width: 16, height: 8, tileNum: 0, palette: 3, images: 0x8500000, ...p });
 
@@ -206,7 +206,7 @@ describe('SpriteColorCache', () => {
     const src = setup();
     const cache = new SpriteColorCache();
     const first = cache.get(s(), src);
-    expect(cache.get(s({ hflip: true, tileNum: 0 }), src)).toBe(first);
+    expect(cache.get(s({ hflip: true, tileNum: 6 }), src)).toBe(first);   // (tileNum is not in the key)
     src.palette[256 + 5 * 16 + 1] = BLUE;           // another slot: no effect
     expect(cache.get(s(), src)).toBe(first);
     src.palette[256 + 3 * 16 + 1] = BLUE;           // the sprite's slot changed (a berry, a fade step)

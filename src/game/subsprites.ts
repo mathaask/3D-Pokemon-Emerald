@@ -124,14 +124,15 @@ export function compositionOf(pieces: readonly SubspritePiece[], width: number, 
   return c;
 }
 
-/** Composes a world sprite in place when `needsComposition` and the bounds fit 64×64 (else leaves it as today):
+/** Composes a non-affine world sprite in place when `needsComposition` and the bounds fit 64×64 (else leaves it as today):
  *  sets `pieces`, `width/height` = bounds, `c2cY = minY`, and moves `worldX/worldY` from the base-OAM placement to
  *  the composed image. Shared by `GameState` (live) and `previewActors.ts` (static preview). (`c2cX = minX` and
  *  `screenX/Y` follow too, so the snapshot describes the composed image throughout; the raw OAM attributes stay.)
  *  The composition comes from `compositionOf` (cached; `pieces` is its shared, read-only list). */
 export function applyComposition(s: SpriteSnap, pieces: readonly SubspritePiece[]): void {
-  // world sprites drawing their tables only (HUD and battle sprites stay as they are)
-  if (!s.coordOffset || s.subspriteMode === 0) return;
+  // world sprites drawing their tables only (HUD and battle sprites stay as they are); not an affine one: the GBA
+  // transforms each piece about its own centre, a composed image would turn as one
+  if (!s.coordOffset || s.subspriteMode === 0 || s.affine) return;
   const b = compositionOf(pieces, s.width, s.height, s.hflip, s.vflip);
   if (!b) return;
   // the GBA draws each piece at the sprite's centre (oam.x − centerToCornerVecX, likewise y) plus its offset:

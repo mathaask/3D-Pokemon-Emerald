@@ -129,6 +129,10 @@ describe('ObjectModels tints, uploads and precompile', () => {
       if (b.clone().sub(a).cross(c.clone().sub(a)).dot(nn) > 0) out++;
     }
     expect(out / (p.count / 3)).toBeGreaterThan(0.98);
+    // one material and one shadow-depth material for both: their programs are shared (no extra program)
+    expect(mesh(m, 'boulder:mirror').material).toBe(mesh(m, 'boulder').material);
+    expect(mesh(m, 'boulder:mirror').customDepthMaterial).toBe(mesh(m, 'boulder').customDepthMaterial);
+    expect(mesh(m, 'boulder:mirror').customDepthMaterial).toBeDefined();
   });
   it('turns a mirrored truck half way round (cab to +X); other kinds ignore the flag', () => {
     const m = new ObjectModels(createKitUniforms());

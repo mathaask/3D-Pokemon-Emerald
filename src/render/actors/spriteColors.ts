@@ -9,8 +9,8 @@ export interface SpritePixelSource {
   vram: Uint8Array;
   /** 512 BGR555 colours, OBJ palettes at 256.. (hardware PRAM or the game's unfaded buffer). */
   palette: Uint16Array;
-  /** DISPCNT bit 6 == 0 (2D OBJ tile mapping), as passed to SpriteAtlas.update; default false (the field maps 1D). */
-  map2d?: boolean;
+  /** DISPCNT bit 6 == 0 (2D OBJ tile mapping), as passed to SpriteAtlas.update (the overworld maps 1D: false). */
+  map2d: boolean;
 }
 
 const OBJ_TILES = 0x10000;
@@ -189,7 +189,7 @@ export class SpriteColorCache {
       this.entries.set(key, hit);
       return hit;
     }
-    const indices = decodeSpriteIndices(src.vram, s, src.map2d ?? false);
+    const indices = decodeSpriteIndices(src.vram, s, src.map2d);
     const sample: SpriteSample = { colors: pickColors(indices, pal), tones: pickTones(indices, s.width, s.height, pal) };
     if (opts?.store === false || !indices.some((ci) => ci !== 0)) return sample;
     this.entries.set(key, sample);

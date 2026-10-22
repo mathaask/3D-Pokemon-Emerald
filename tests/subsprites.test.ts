@@ -74,10 +74,13 @@ describe('applyComposition', () => {
     expect(s.pieces![0]).toMatchObject({ x: 16, y: 0, width: 32 });
     expect(s.pieces![1]).toMatchObject({ x: 0, y: 0, width: 16 });
   });
-  it('leaves sprites as they are: subsprites off, HUD sprites, same-image tables, images past 64×64', () => {
+  it('leaves sprites as they are: subsprites off, HUD sprites, affine sprites, same-image tables, images past 64×64', () => {
     const cases: [SpriteSnap, SubspritePiece[]][] = [
       [liveTruck({ subspriteMode: 0 }), truckTable],
       [liveTruck({ coordOffset: false }), truckTable],
+      // (an affine sprite: the GBA transforms each piece about its own centre, a composed image would turn as one;
+      // drawn as its base OAM, as today)
+      [liveTruck({ affine: true }), truckTable],
       [blankSprite({ subspriteMode: 1 }), [{ x: -8, y: -16, width: 16, height: 32, tileOffset: 0 }]],
       // a 96×40 image (the S.S. Tidal's size) from 32×8 strips
       [blankSprite({ width: 8, height: 8, subspriteMode: 1 }), Array.from({ length: 15 }, (_, i) => (

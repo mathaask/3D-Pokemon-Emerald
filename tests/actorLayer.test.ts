@@ -117,9 +117,8 @@ describe('ActorLayer', () => {
   const classifier = { kind: (s: SpriteSnap) => kinds.get(s.index) ?? SpriteKind.Upright } as unknown as SpriteClassifier;
   const slots = new Map<number, typeof slot>();
   const layer = new ActorLayer({ slots, target: { texture: new THREE.Texture() } });
-  const meshes = layer.group.children as THREE.Mesh[];
-  const cards = meshes.find((m) => m.renderOrder === 2)!;
-  const blobs = meshes.find((m) => m.renderOrder === 1)!;
+  const cards = layer.group.getObjectByName('cards') as THREE.Mesh;
+  const blobs = layer.group.getObjectByName('blobShadows') as THREE.Mesh;
   const count = (m: THREE.Mesh) => (m.geometry as THREE.InstancedBufferGeometry).instanceCount;
   const foot = (i: number) => (cards.geometry.getAttribute('aFoot') as THREE.InstancedBufferAttribute).array.slice(i * 3, i * 3 + 3);
   const frame = (style: 'modern' | 'retro', blades = false): ActorFrame => ({
@@ -220,7 +219,7 @@ describe('ActorLayer with inflated actors', () => {
   const grass = { ...frame, classifier: { kind: (s: SpriteSnap) => (s.index === 0 ? SpriteKind.Upright : SpriteKind.Grass) } as unknown as SpriteClassifier };
   // the grass overlay's card foot (in Modern the only card here: the upright is inflated)
   const overlayCard = (layer: ActorLayer, i = 0) => {
-    const cards = (layer.group.children as THREE.Mesh[]).find((m) => m.renderOrder === 2 && m.name !== 'inflatedActors')!;
+    const cards = layer.group.getObjectByName('cards') as THREE.Mesh;
     const a = cards.geometry.getAttribute('aFoot');
     return new THREE.Vector3(a.getX(i), a.getY(i), a.getZ(i));
   };
@@ -394,7 +393,7 @@ describe('ActorLayer object models', () => {
   it('forgets which objects it has seen over a Retro (or Phase 2 off) period', () => {
     const layer = newLayer();
     const seen = () => (layer as unknown as { seen: Map<number, unknown> }).seen.size;
-    layer.setPixelSource({ vram: new Uint8Array(0x18000), palette: new Uint16Array(512) });
+    layer.setPixelSource({ vram: new Uint8Array(0x18000), palette: new Uint16Array(512), map2d: false });
     layer.update(state(), modern);
     expect(seen()).toBe(1);
     layer.update(state({}, {}, 2), { ...upright, style: 'retro' });
@@ -407,7 +406,7 @@ describe('ActorLayer object models', () => {
     /** Fills `tiles` 4bpp tiles from tile 0 with palette index `ci`. */
     const fill = (vram: Uint8Array, ci: number, tiles = 4) => vram.fill(ci | (ci << 4), 0x10000, 0x10000 + tiles * 32);
     const source = () => {
-      const src: SpritePixelSource = { vram: new Uint8Array(0x18000), palette: new Uint16Array(512) };
+      const src: SpritePixelSource = { vram: new Uint8Array(0x18000), palette: new Uint16Array(512), map2d: false };
       src.palette[257] = RED; src.palette[258] = BLUE;
       fill(src.vram, 1);
       return src;

@@ -82,8 +82,8 @@ export interface ActorFrame {
 }
 
 /** Inputs of the inflated actors (field; `instanceUniforms`: their instance data from a uniform array, default true —
- *  false on a device with too few vertex uniform vectors, see instanceUniformsFit) and object models (kit) (not used by
- *  the cards). */
+ *  a renderer's caller passes instanceUniformsFit(maxVertexUniforms, …), false on a device with too few vertex uniform
+ *  vectors) and object models (kit) (not used by the cards). */
 export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: KitUniforms; instanceUniforms?: boolean }
 
 /** A foot point (world); NPCs (inflatedFeet) also carry their sprite's half-width (world units). */

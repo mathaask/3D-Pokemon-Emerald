@@ -59,9 +59,9 @@ interface PartSpec {
 
 interface KindSpec {
   roughness: number;
-  /** How far the instance's yaw turns it (rad either way): rocks and trees vary by object; the ball keeps its
-   *  button, the truck its cab, the cracked rock its cracks, the boulder and the Cut tree their long side
-   *  (wider than deep: squat on screen) on the side the sprite shows them (0: never). */
+  /** How far the instance's yaw turns it (rad either way; 0: never): the boulder a full turn (and a mirror image by
+   *  object, `flips`); the cracked rock and the Cut tree only a little, so the cracks and the tree's long side (wider
+   *  than deep: squat on screen) stay on the side the sprite shows them; the ball keeps its button, the truck its cab. */
   spin: number;
   /** Turns half way round when the sprite is mirrored. */
   mirror?: boolean;

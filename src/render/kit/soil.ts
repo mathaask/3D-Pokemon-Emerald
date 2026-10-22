@@ -3,7 +3,8 @@
 // reconstruction draws as props: an upright cutout card on the cell's centre line, or a soil wall along its south
 // edge where the art fills the cell (Route 104) — either hid the lower half of a plant standing there. Here the
 // terrain draws the ground around them (the cell's ground, grass) and each cell gets a bed: a rounded square of
-// turned earth (the soil tile's own colour as earth: palette.ts earthTone; moonlit at night: NIGHT_SOIL), domed,
+// turned earth (the soil tile's own colour as earth: palette.ts earthTone; moonlit at night: NIGHT_SOIL, through the
+// material's colour, set per frame from uNight: no shader hook, no program of its own), domed,
 // its top ridged by furrows. The plants stand on its top (the cell's surface height).
 // Retro keeps the legacy soil (the kit only runs in Modern).
 
@@ -14,7 +15,7 @@ import { K } from '../overworld/analyze';
 import { CLAIM_OBJECT, type Claims } from '../overworld/claims';
 import { hashCell, noise3 } from './geom';
 import { kitMaterial } from './materials';
-import { earthTone, NIGHT_SOIL_GLSL, toLinear, type RGB } from './palette';
+import { earthTone, nightSoilScale, toLinear, type RGB } from './palette';
 import { cellLook, type CellLook } from './terrain';
 import type { Family, KitContext, SemanticContext } from './semantics';
 
@@ -87,12 +88,35 @@ export const soilFamily: Family<SoilCell[]> = {
 
   build(cells: SoilCell[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!cells.length) return null;
-    const beds = cells.map((c) => bedGeo(c.x + 0.5, c.h, c.y + 0.5 + c.h, hashCell(c.x, c.y, 0x5011), c.color));
-    const g = mergeGeometries(beds)!;
-    for (const b of beds) b.dispose();
-    g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95, fragColor: NIGHT_SOIL_GLSL, hookKey: 'berrySoil' }).material);
-    mesh.receiveShadow = true;
-    return mesh;
+    // a mesh per earth colour (in practice one: every berry soil tile shares the same art), so each mesh's vertex
+    // colours are all its soil × k and its material colour moonlights it exactly (bedMesh)
+    const byColor = new Map<string, SoilCell[]>();
+    for (const c of cells) {
+      const key = c.color.join();
+      (byColor.get(key) ?? byColor.set(key, []).get(key)!).push(c);
+    }
+    const meshes = [...byColor.values()].map((group) => bedMesh(group, kit));
+    if (meshes.length === 1) return meshes[0];
+    const g = new THREE.Group();
+    g.add(...meshes);
+    return g;
   },
 };
+
+/** The beds of `cells` (one earth colour), merged; moonlit at night by their material colour (nightSoilScale of their
+ *  soil, set from the kit's uNight before each draw), exactly as NIGHT_SOIL_GLSL turns soil × k. */
+function bedMesh(cells: SoilCell[], kit: KitContext): THREE.Mesh {
+  const beds = cells.map((c) => bedGeo(c.x + 0.5, c.h, c.y + 0.5 + c.h, hashCell(c.x, c.y, 0x5011), c.color));
+  const g = mergeGeometries(beds)!;
+  for (const b of beds) b.dispose();
+  g.computeBoundingSphere();
+  const material = kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95 }).material;
+  const mesh = new THREE.Mesh(g, material);
+  mesh.receiveShadow = true;
+  const soil = cells[0].color, night = kit.uniforms.uNight, scale: RGB = [1, 1, 1];
+  mesh.onBeforeRender = () => {
+    nightSoilScale(soil, night.value, scale);
+    material.color.setRGB(scale[0], scale[1], scale[2]);
+  };
+  return mesh;
+}

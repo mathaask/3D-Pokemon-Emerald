@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { pokeBallGeo, boulderGeo, crackedRockGeo, cutTreeGeo, truckGeo, truckLogoGeo, berryPlantGeo, berryFruitGeo, berryFlowerGeo } from '../src/render/actors/models';
+import {
+  pokeBallGeo, boulderGeo, crackedRockGeo, cutTreeGeo, truckGeo, truckLogoGeo, berryPlantGeo, berryFruitGeo, berryFlowerGeo, mirroredGeo,
+} from '../src/render/actors/models';
 
 const box = (g: THREE.BufferGeometry) => { g.computeBoundingBox(); return g.boundingBox!; };
 const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute('position').count) / 3;
@@ -107,5 +109,35 @@ describe('object model geometry', () => {
     }
     expect(far[0]).toBeCloseTo(near[0], 4);
     expect(far[1]).toBeCloseTo(near[1], 4);
+  });
+});
+
+describe('mirroredGeo', () => {
+  /** Share of the triangles whose winding agrees with their vertex normals (they face out). */
+  const facingOut = (g: THREE.BufferGeometry) => {
+    const p = g.getAttribute('position'), n = g.getAttribute('normal'), idx = g.index;
+    const at = (k: number) => (idx ? idx.getX(k) : k);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), nn = new THREE.Vector3();
+    let out = 0, all = 0;
+    for (let t = 0; t + 2 < (idx ? idx.count : p.count); t += 3, all++) {
+      a.fromBufferAttribute(p, at(t)); b.fromBufferAttribute(p, at(t + 1)); c.fromBufferAttribute(p, at(t + 2));
+      nn.fromBufferAttribute(n, at(t));
+      if (b.sub(a).cross(c.sub(a)).dot(nn) > 0) out++;
+    }
+    return out / all;
+  };
+  it('mirrors an indexed geometry too: its index rewound, every triangle still facing out', () => {
+    const src = new THREE.BoxGeometry(1, 0.5, 0.3, 2, 1, 1).translate(0.4, 0, 0);
+    expect(src.index).not.toBeNull();
+    expect(facingOut(src)).toBe(1);
+    const m = mirroredGeo(src);
+    expect(m.getAttribute('position').getX(0)).toBeCloseTo(-src.getAttribute('position').getX(0), 6);
+    expect(facingOut(m)).toBe(1);
+    expect(mirroredGeo(src)).toBe(m);                 // (cached per geometry)
+    expect(src.index!.getX(1)).not.toBe(m.index!.getX(1)); // (the source keeps its own index)
+  });
+  it('mirrors a non-indexed geometry (the models) by swapping each triangle\'s vertices', () => {
+    const src = new THREE.BoxGeometry(1, 0.5, 0.3).toNonIndexed().translate(0.4, 0, 0);
+    expect(facingOut(mirroredGeo(src))).toBe(1);
   });
 });

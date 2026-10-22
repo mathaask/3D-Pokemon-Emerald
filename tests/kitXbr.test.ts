@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { xbrSample, XBR, XBR_TIE } from '../src/render/kit/upscale';
+import { xbrSample, xbrLineDeltas, XBR, XBR_LINES, XBR_TIE } from '../src/render/kit/upscale';
 import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
 import { xbrFixture, XBR_FIX_RECT } from '../src/render/actors/selfTest';
 
@@ -38,6 +38,58 @@ describe('xbrSample', () => {
     const pal = [O, 0xffa8d0ff, 0xff282020, 0xffc06030];
     const img = new Uint32Array(100).map(() => pal[Math.floor(rnd() * 4)]);
     for (let i = 0; i < 100; i++) expect(xbrSample(img, 10, 10, (i % 10) + 0.5, Math.floor(i / 10) + 0.5, 0.1)).toEqual(rgba(img[i]));
+  });
+  it("keeps every texel centre's colour at any blend width: each line's band stops short of the centre", () => {
+    // (the shader's δ reaches 0.5 when a texel spans ~1 screen px; one δ for all three lines put the 30° line's band
+    // over the centre from δ > 0.25)
+    const W = 12, H = 8;
+    const st = new Uint32Array(W * H).map((_, i) => ((i % W) < 2 * Math.floor(i / W) + 1 ? X : O)); // 2:1 staircase: lv2 lines
+    let seed = 3;
+    const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32;
+    const pal = [O, 0xffa8d0ff, 0xff282020, 0xffc06030];
+    const noise = new Uint32Array(W * H).map(() => pal[Math.floor(rnd() * 4)]);
+    for (const img of [st, noise]) {
+      for (const delta of [0.25, 0.35, 0.5, 0.8]) {
+        for (let i = 0; i < W * H; i++) {
+          expect(xbrSample(img, W, H, (i % W) + 0.5, Math.floor(i / W) + 0.5, delta), `texel ${i} δ ${delta}`).toEqual(rgba(img[i]));
+        }
+      }
+    }
+  });
+  it('blends each line over the same screen width: δ (the 45° line\'s) scaled by its gradient norm, capped short of the centre', () => {
+    // lines in a corner's frame: 45° x + y = 1.5 (|∇| √2), 30° y + x/2 = 1 (|∇| √1.25), 60° 2x + y = 2 (|∇| √5)
+    const [d45, d30, d60] = xbrLineDeltas(0.1);
+    expect(d45).toBe(0.1);
+    expect(d30).toBeCloseTo(0.1 * Math.sqrt(1.25 / 2), 12);
+    expect(d60).toBeCloseTo(0.1 * Math.sqrt(5 / 2), 12);
+    // the texel centre (0.5, 0.5) lies 0.5, 0.25 and 0.5 below the lines' values: no band reaches it
+    expect(xbrLineDeltas(0.5)).toEqual([0.5, 0.25, 0.5]);
+    expect(xbrLineDeltas(2)).toEqual([0.5, 0.25, 0.5]);
+    expect(XBR_GLSL).toContain(`const float XBR_K30 = ${XBR_LINES.k30};`);
+    expect(XBR_GLSL).toContain(`const float XBR_K60 = ${XBR_LINES.k60};`);
+  });
+  it('stays finite at a zero or negative blend width (a hard step)', () => {
+    const st = new Uint32Array(64).map((_, i) => ((i % 8) <= Math.floor(i / 8) ? X : O));
+    for (const delta of [0, -0.2]) {
+      for (const [x, y] of [[3.9, 3.1], [3.75, 3.25], [3.5, 3.5], [4.1, 3.9]]) {
+        for (const v of xbrSample(st, 8, 8, x, y, delta)) {
+          expect(Number.isFinite(v), `δ ${delta} at ${x},${y}`).toBe(true);
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+    // away from the bands it is the δ 0.1 result (cut corners cut, the rest kept)
+    let compared = 0;
+    for (let y = 2.05; y < 6; y += 0.1) {
+      for (let x = 2.05; x < 6; x += 0.1) {
+        const ref = xbrSample(st, 8, 8, x, y, 0.1);
+        if (ref[3] !== 0 && ref[3] !== 1) continue;
+        expect(xbrSample(st, 8, 8, x, y, 0), `${x},${y}`).toEqual(ref);
+        compared++;
+      }
+    }
+    expect(compared).toBeGreaterThan(1000);
   });
   it('rounds a 2:1 staircase along its 30° line (lv2), beyond the 45° cut', () => {
     const W = 12, H = 8;

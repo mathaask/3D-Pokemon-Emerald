@@ -260,7 +260,8 @@ function crease(parts: Parts, hit: ReturnType<typeof surfaceHit>, c: Crease, cod
  * top reads as the sprite's gold plane (objectModels.ts blends it to the highlight tone). Grooves run round
  * its upper shoulder: a groove in the sprite's crevice tone (tint B, lit ×1.8: a shadowed groove, not ink) over a
  * wider mid-tone bevel (tint A × 0.72), as the sprite's light/dark bevelled lines read. Each boulder turns and
- * mirrors by object (objectModels.ts: one geometry, varied per instance).
+ * mirrors by object (objectModels.ts: every boulder draws this geometry or its rewound mirror image, mirroredGeo,
+ * turned per instance).
  */
 export function boulderGeo(seed: number): THREE.BufferGeometry {
   return cached(`boulder:${seed}`, () => {
@@ -282,21 +283,32 @@ export function boulderGeo(seed: number): THREE.BufferGeometry {
   });
 }
 
-/** A mirror image (x → −x) of a non-indexed geometry, its triangles rewound so they still face out (an instance
- *  matrix with a negative scale would turn them inside out: three only checks the object's determinant).
- *  Cached per geometry for the session (`userData.shared`). */
+/** A mirror image (x → −x) of a geometry, its triangles rewound so they still face out (an instance matrix with a
+ *  negative scale would turn them inside out: three only checks the object's determinant): an indexed one's index
+ *  triples, a non-indexed one's (the models') vertex triples in every attribute. Cached per geometry for the session
+ *  (`userData.shared`). */
 export function mirroredGeo(g: THREE.BufferGeometry): THREE.BufferGeometry {
   let m = mirrors.get(g);
   if (!m) {
     m = g.clone();
     m.scale(-1, 1, 1);
-    for (const name of Object.keys(m.attributes)) {
-      const a = m.getAttribute(name) as THREE.BufferAttribute, k = a.itemSize, arr = a.array;
-      for (let t = 0; t + 2 < a.count; t += 3) {
-        for (let c = 0; c < k; c++) {
-          const i1 = (t + 1) * k + c, i2 = (t + 2) * k + c, v = arr[i1];
-          arr[i1] = arr[i2];
-          arr[i2] = v;
+    const index = m.getIndex();
+    if (index) {
+      const arr = index.array;
+      for (let t = 0; t + 2 < index.count; t += 3) {
+        const v = arr[t + 1];
+        arr[t + 1] = arr[t + 2];
+        arr[t + 2] = v;
+      }
+    } else {
+      for (const name of Object.keys(m.attributes)) {
+        const a = m.getAttribute(name) as THREE.BufferAttribute, k = a.itemSize, arr = a.array;
+        for (let t = 0; t + 2 < a.count; t += 3) {
+          for (let c = 0; c < k; c++) {
+            const i1 = (t + 1) * k + c, i2 = (t + 2) * k + c, v = arr[i1];
+            arr[i1] = arr[i2];
+            arr[i2] = v;
+          }
         }
       }
     }
@@ -861,7 +873,8 @@ const plants = new Map<string, BerryPlant>();
  * A berry tree at growth stage `stage`, standing on y = 0, ≤ 1.0 wide: 1 a soil mound (≈0.5 wide, 0.12 tall,
  * a seed hole on top), 2 a sprout (≈0.35), 3 a young plant (≈0.65), 4 a small bush (≈0.9) with 5–7 flower anchors
  * on its crown, 5 the same bush with 5–7 berry anchors. Body tint codes: leaves and stems A (the plant's green),
- * soil fixed brown. Cached per (stage, seed) for the session (`userData.shared`).
+ * soil the beds' earth (SOIL_LINEAR, tint code TINT.soil: moonlit at night like the beds). Cached per (stage, seed) for
+ * the session (`userData.shared`).
  */
 export function berryPlantGeo(stage: BerryStage, seed: number): BerryPlant {
   const key = `${stage}:${seed}`;

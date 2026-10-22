@@ -277,7 +277,7 @@ export class OverworldView {
     // Object model colours: OBJ VRAM and exactly the palette the sprite atlas samples (the unfaded buffer
     // in the overworld: a fade darkens the whole frame afterwards, models included), its tile mapping.
     const bus = state.mem.bus;
-    const pixels = this.livePixels ??= { vram: bus.vram, palette: bus.pram16 };
+    const pixels = this.livePixels ??= { vram: bus.vram, palette: bus.pram16, map2d: false };
     pixels.palette = this.gbaTex.paletteSource ?? bus.pram16;
     pixels.map2d = (bus.io16[0] & 0x40) === 0;
     this.actors.setPixelSource(pixels);

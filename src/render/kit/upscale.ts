@@ -48,7 +48,24 @@ export const XBR = { eq: 0.06, coef: 2.0 };
  *  (float32): the left side must win by more than this. */
 export const XBR_TIE = 1e-4;
 
+/**
+ * The three lines of a corner, in its frame (f = the sample's position in the texel, the corner at +x/+y): the 45°
+ * cut x + y = 1.5 and the lv2 30° line y + x/2 = 1 and 60° line 2x + y = 2. The blend's half-width δ is given in
+ * the 45° line's units (its value changes by 2δ across ~one screen px): `k30` / `k60` scale it by the other lines'
+ * gradient norms over the 45° line's (√1.25 / √2, √5 / √2), so every line blends over the same screen width; `cap*`
+ * keep each band short of the texel centre (0.5, 0.5), where the lines' values are 1.0, 0.75 and 1.5: centres keep
+ * their colour whatever δ.
+ */
+export const XBR_LINES = { k30: Math.sqrt(1.25 / 2), k60: Math.sqrt(5 / 2), cap45: 0.5, cap30: 0.25, cap60: 0.5 };
+
+/** The blend half-widths of the 45°, 30° and 60° lines for a δ in the 45° line's units (XBR_LINES). */
+export function xbrLineDeltas(delta: number): [number, number, number] {
+  return [Math.min(delta, XBR_LINES.cap45), Math.min(delta * XBR_LINES.k30, XBR_LINES.cap30), Math.min(delta * XBR_LINES.k60, XBR_LINES.cap60)];
+}
+
+/** GLSL's smoothstep; with e1 ≤ e0 (a blend width ≤ 0) a hard step at their middle (GLSL leaves it undefined). */
 const smoothstep = (e0: number, e1: number, x: number): number => {
+  if (!(e1 > e0)) return x < (e0 + e1) / 2 ? 0 : 1;
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
@@ -66,8 +83,10 @@ function xbrCorner(E: Float64Array, F: Float64Array, H: Float64Array, I: Float64
   fx: number, fy: number, d: number): [number, number] {
   const dEF = xbrDf(E, F), dEH = xbrDf(E, H);
   if (dEF <= XBR.eq || dEH <= XBR.eq) return [0, 0];
+  // (each line's own half-width: XBR_LINES)
+  const [d45, d30, d60] = xbrLineDeltas(d);
   // (none of the three lines reaches this sample: no coverage, whatever the edge)
-  if (fx + fy <= 1.5 - d && fy + 0.5 * fx <= 1.0 - d && 2.0 * fx + fy <= 2.0 - d) return [0, 0];
+  if (fx + fy <= 1.5 - d45 && fy + 0.5 * fx <= 1.0 - d30 && 2.0 * fx + fy <= 2.0 - d60) return [0, 0];
   // lv1: only where the edge runs on (past F or H, or E continues diagonally): small blocks, single pixels and
   // their highlights keep their corners (rounding them all thins light details inside dark outlines)
   const eq = (a: Float64Array, b: Float64Array) => xbrDf(a, b) <= XBR.eq;
@@ -78,17 +97,18 @@ function xbrCorner(E: Float64Array, F: Float64Array, H: Float64Array, I: Float64
     < xbrDf(H, D) + xbrDf(H, I5) + xbrDf(F, I4) + xbrDf(F, B) + 4.0 * xbrDf(E, I);
   if (!edge) return [0, 0];
   const dFG = xbrDf(F, G), dHC = xbrDf(H, C);
-  let cov = smoothstep(1.5 - d, 1.5 + d, fx + fy);
+  let cov = smoothstep(1.5 - d45, 1.5 + d45, fx + fy);
   // lv2: a 30° line into G's side, a 60° line into C's side
-  if (XBR.coef * dFG <= dHC + XBR_TIE && xbrDf(E, G) > XBR.eq && xbrDf(D, G) > XBR.eq) cov = Math.max(cov, smoothstep(1.0 - d, 1.0 + d, fy + 0.5 * fx));
-  if (XBR.coef * dHC <= dFG + XBR_TIE && xbrDf(E, C) > XBR.eq && xbrDf(B, C) > XBR.eq) cov = Math.max(cov, smoothstep(2.0 - d, 2.0 + d, 2.0 * fx + fy));
+  if (XBR.coef * dFG <= dHC + XBR_TIE && xbrDf(E, G) > XBR.eq && xbrDf(D, G) > XBR.eq) cov = Math.max(cov, smoothstep(1.0 - d30, 1.0 + d30, fy + 0.5 * fx));
+  if (XBR.coef * dHC <= dFG + XBR_TIE && xbrDf(E, C) > XBR.eq && xbrDf(B, C) > XBR.eq) cov = Math.max(cov, smoothstep(2.0 - d60, 2.0 + d60, 2.0 * fx + fy));
   return [cov, dEF <= dEH + XBR_TIE ? 1 : 0];
 }
 
 /**
  * The xBR-smoothed colour (RGBA 0..1) of `src` (w×h, 0xAABBGGRR, rows in order of y) at continuous texel
  * coordinates (x, y) (texel centres at k + 0.5). `delta`: half-width of the blend across an edge (in units of
- * the texel's diagonal coordinate, ~ one screen pixel). `rect` = [x0, y0, x1, y1) in texels: texels outside it
+ * the texel's diagonal coordinate x + y, ~ one screen pixel; each line scales it to its own slope, XBR_LINES; ≤ 0:
+ * a hard step). `rect` = [x0, y0, x1, y1) in texels: texels outside it
  * (and outside the image) read as transparent black. Where transparent texels blend with opaque ones the
  * colour comes out premultiplied (as the GPU's mix of them does).
  */

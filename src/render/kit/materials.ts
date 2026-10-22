@@ -78,13 +78,14 @@ export const FADE_PER_SPRITE_PX = 0.69;
 /** Share of the fade radius that is fully faded (the rest is the soft edge). Centred on the sprite's
  *  middle, the core (0.85 x 0.69 = 0.59 of its projected height) holds all of it, feet to head top: the kit
  *  geometry that fades (trees, roofs, props) dithers out over the whole sprite where it stands more than 0.6
- *  nearer the camera than the character's chest. */
+ *  nearer the camera than the character's chest. (An NPC's circle grows until its core holds the card's corners
+ *  too: setKitFocusExtra.) */
 export const FADE_CORE = 0.85;
 /** Warm light of lit windows at night (GLSL, linear RGB): house windows (KIT_GLOW), special facades'
  *  panes and the legacy walls' glass. */
 export const WARM_GLOW_GLSL = 'vec3(1.0, 0.72, 0.38)';
 const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3(), _circle = new THREE.Vector4();
-const _right = new THREE.Vector3(), _edge = new THREE.Vector3(), _band = new THREE.Vector2();
+const _right = new THREE.Vector3(), _edge = new THREE.Vector3(), _band = new THREE.Vector3();
 // (reused by pickFadeActors / setKitActors: distances, the nearest feet)
 const _pickD: number[] = [], _nearD: number[] = [], _near: { x: number; y: number; z: number }[] = [];
 
@@ -120,16 +121,19 @@ function halfSpan(at: THREE.Vector3, right: THREE.Vector3, half: number, camera:
 /**
  * The screen band of a character's sprite card standing at `feet` (world space; the card faces the camera: it spans
  * the camera's right, `halfWidth` world units each way, and SPRITE_H up): into `out`, (its half-width in px — the
- * larger of its feet's and its head's, nearer the camera — and its lean: px x per px y of its projected vertical).
+ * larger of its feet's and its head's, nearer the camera —, its lean: px x per px y of its projected vertical, and its
+ * reach: how far its corners lie from its middle on screen, px — at most; the card's half-diagonal).
  */
-function spriteBand(feet: Foot, halfWidth: number, camera: THREE.Camera, w: number, h: number, out: THREE.Vector2): THREE.Vector2 {
+function spriteBand(feet: Foot, halfWidth: number, camera: THREE.Camera, w: number, h: number, out: THREE.Vector3): THREE.Vector3 {
   const right = _right.setFromMatrixColumn(camera.matrixWorld, 0);
   const f = _feet.set(feet.x, feet.y, feet.z), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z);
   const half = Math.max(halfSpan(f, right, halfWidth, camera, w), halfSpan(t, right, halfWidth, camera, w));
   f.project(camera);
   t.project(camera);
   const dy = (t.y - f.y) * h;
-  return out.set(half, Math.abs(dy) > 1e-9 ? ((t.x - f.x) * w) / dy : 0);
+  // (the middle is half way between feet and head; a corner half the vertical away, and `half` across)
+  const reach = Math.hypot(Math.abs(t.x - f.x) * 0.25 * w + half, (t.y - f.y) * 0.25 * h);
+  return out.set(half, Math.abs(dy) > 1e-9 ? ((t.x - f.x) * w) / dy : 0, reach);
 }
 
 /**
@@ -200,8 +204,8 @@ export function fadeActorRamp(d: number): number {
 
 /**
  * Aims the occlusion fade's NPC circles at `feet` (the first MAX_FADE_ACTORS; world space), with the same
- * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC, filled in order; unused slots radius 0
- * (empty: off). Per NPC, uFocusExtraFoot gets its foot along the camera's back direction (uCamBack, set first), its
+ * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC, filled in order (the radius grown, where it
+ * must, until the core holds the card's corners); unused slots radius 0 (empty: off). Per NPC, uFocusExtraFoot gets its foot along the camera's back direction (uCamBack, set first), its
  * sprite band (spriteBand: half-width px, lean) and its strength: with `player`, fadeActorRamp of the NPC's XZ distance
  * (one ramped to 0 is left out), else 1. The rectangle holding what the circles can clear (each cut to its sprite's
  * band) goes into uFocusExtraBox (none: an empty one).
@@ -217,6 +221,9 @@ export function setKitFocusExtra(u: KitUniforms, feet: readonly FadeFoot[], came
     if (ramp <= 0) continue;
     const c = fadeCircle(p, camera, w, h, slots[n]);
     const band = spriteBand(p, p.halfWidth ?? 0.5, camera, w, h, _band);
+    // the core (FADE_CORE of the radius) holds the whole card, its corners too: wider than the player's circle where
+    // the card is wide for its projected height (a steep pitch, a 32-px wide sprite); still capped, the band cuts it
+    c.w = Math.max(c.w, Math.min(band.z / FADE_CORE, 0.5 * h));
     foot[n++].set(p.x * back.x + p.z * back.y, band.x, band.y, ramp);
     // the band's reach across the circle (it leans by |lean| px per px of height)
     const side = Math.min(c.w, band.x + (FADE_SIDE_PAD + 1 - FADE_CORE + Math.abs(band.y)) * c.w);

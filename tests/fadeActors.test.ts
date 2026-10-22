@@ -89,14 +89,16 @@ describe('setKitFocusExtra', () => {
     return new THREE.Vector2((q.x * 0.5 + 0.5) * 1280, (q.y * 0.5 + 0.5) * 800);
   };
 
-  it("gives each NPC the player's circle at its feet (same projection as setKitFocus), its foot along the camera's back direction and full strength; unused slots radius 0", () => {
+  it("gives each NPC the player's circle at its feet (same projection as setKitFocus; its core widened to hold the card), its foot along the camera's back direction and full strength; unused slots radius 0", () => {
     const u = createKitUniforms();
     const npcs = [{ x: 11, y: 0, z: 8 }, { x: 8.5, y: 1, z: 12, halfWidth: 1 }];
     setKitFocusExtra(u, npcs, camera, 1280, 800);
     expect(u.uFocusExtra.value).toHaveLength(MAX_FADE_ACTORS);
     npcs.forEach((n, k) => {
       const e = u.uFocusExtra.value[k];
-      expect([e.x, e.y, e.z, e.w]).toEqual(circleOf(n));
+      expect([e.x, e.y, e.z]).toEqual(circleOf(n).slice(0, 3));
+      // (max(0.69 × its projected height, the card's half-diagonal / FADE_CORE): wider for the 32-px wide sprite)
+      expect(e.w).toBeGreaterThanOrEqual(circleOf(n)[3]);
       expect(e.w).toBeGreaterThan(0);
       const f = u.uFocusExtraFoot.value[k];
       expect(f.x).toBe(n.z); // (the back direction at yaw 0: +Z, exactly)
@@ -122,7 +124,7 @@ describe('setKitFocusExtra', () => {
     setKitFocusExtra(u, [n], cameraFor(0, 0, yaw), 1280, 800);
     expect(u.uFocusExtraFoot.value[0].x).toBeCloseTo(n.x * Math.sin(yaw) + n.z * Math.cos(yaw), 12);
   });
-  it('spans the whole sprite card in its leaning band, from every camera (preset, pitch offset, yaw, zoom) and screen position', () => {
+  it('spans the whole sprite card in its leaning band and the core of its circle, from every camera (preset, pitch offset, yaw, zoom) and screen position', () => {
     for (const preset of [0, 1, 2, 3]) {
       for (const pitchOffset of [-0.5, 0, 0.3, 0.5]) {
         for (const yaw of [0, 0.9, Math.PI]) {
@@ -142,6 +144,8 @@ describe('setKitFocusExtra', () => {
                   const dpx = q.x - e.x, dpy = q.y - e.y;
                   const where = `preset ${preset} pitch ${pitchOffset} yaw ${yaw} zoom ${zoom} npc (${dx}, ${dz}) up ${up} side ${s}`;
                   expect(Math.abs(dpx - f.z * dpy), where).toBeLessThanOrEqual(f.y * (1 + 1e-9) + 1e-6);
+                  // fully faded there, not in the circle's soft edge: the core (FADE_CORE of the radius) holds the card
+                  expect(Math.hypot(dpx, dpy), where).toBeLessThanOrEqual(FADE_CORE * e.w * (1 + 1e-9) + 1e-6);
                 }
               }
             }
@@ -168,8 +172,11 @@ describe('setKitFocusExtra', () => {
     const near = { x: 12, y: 0, z: 10 }, edge = { x: 10, y: 0, z: 13.5 }, out = { x: 14, y: 0, z: 10 };
     setKitFocusExtra(u, [near, out, edge], camera, 1280, 800, player);
     const [a, b, c] = u.uFocusExtra.value;
-    expect([a.x, a.y, a.z, a.w]).toEqual(circleOf(near)); // full circles: the window keeps the sprite's size
-    expect([b.x, b.y, b.z, b.w]).toEqual(circleOf(edge));
+    // full circles: the window keeps the sprite's size (as without a player: no ramp)
+    const unramped = createKitUniforms();
+    setKitFocusExtra(unramped, [near, edge], camera, 1280, 800);
+    expect(a.toArray()).toEqual(unramped.uFocusExtra.value[0].toArray());
+    expect(b.toArray()).toEqual(unramped.uFocusExtra.value[1].toArray());
     const [fa, fb] = u.uFocusExtraFoot.value;
     expect(fa.w).toBe(1); // 2 cells: full strength
     expect(fb.w).toBeCloseTo(0.5); // 3.5 cells: half
