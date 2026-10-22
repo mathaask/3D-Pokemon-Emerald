@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  pickFadeActors, createKitUniforms, FADE_CORE, FADE_FRONT_MARGIN, FADE_PER_SPRITE_PX, FADE_SIDE_PAD, fadeActorRamp, kitMaterial,
+  pickFadeActors, createKitUniforms, FADE_CORE, FADE_FRONT_MARGIN, FADE_SIDE_PAD, fadeActorRamp, kitMaterial,
   MAX_FADE_ACTORS, setKitFocus, setKitFocusExtra,
 } from '../src/render/kit/materials';
 import { CAMERA_PRESETS } from '../src/render/overworld/overworldView';
@@ -44,20 +44,32 @@ describe('fadeActorRamp', () => {
 });
 
 describe('setKitFocusExtra', () => {
-  // as OverworldView places the Classic camera: looking at the target + 0.9 up, from the preset's pitch and distance
-  const p = CAMERA_PRESETS[0];
-  const camera = new THREE.PerspectiveCamera(p.fov, 1.6, 0.1, 500);
-  const look = new THREE.Vector3(10, 0.9, 10);
-  camera.position.copy(look).add(new THREE.Vector3(0, Math.sin(p.pitch), Math.cos(p.pitch)).multiplyScalar(p.distance));
-  camera.lookAt(look);
-  camera.updateMatrixWorld();
-  const circleOf = (n: { x: number; y: number; z: number }) => {
+  // as OverworldView places the camera: looking at the target + 0.9 up, from a preset's pitch (+ the user's offset),
+  // distance and zoom, turned by `yaw` about the target
+  const cameraFor = (preset = 0, pitchOffset = 0, yaw = 0, zoom = 1) => {
+    const p = CAMERA_PRESETS[preset];
+    const pitch = p.pitch + pitchOffset;
+    const cam = new THREE.PerspectiveCamera(p.fov, 1.6, 0.1, 500);
+    const look = new THREE.Vector3(10, 0.9, 10);
+    cam.position.copy(look).add(new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
+      .multiplyScalar(p.distance * zoom));
+    cam.lookAt(look);
+    cam.updateMatrixWorld();
+    return cam;
+  };
+  const camera = cameraFor();
+  const circleOf = (n: { x: number; y: number; z: number }, cam = camera) => {
     const ref = createKitUniforms();
-    setKitFocus(ref, new THREE.Vector3(n.x, n.y, n.z), camera, 1280, 800);
+    setKitFocus(ref, new THREE.Vector3(n.x, n.y, n.z), cam, 1280, 800);
     return [ref.uFocusPx.value.x, ref.uFocusPx.value.y, ref.uFocusDepth.value, ref.uFadeRadius.value];
   };
+  /** Target px of a world point. */
+  const px = (v: THREE.Vector3, cam: THREE.Camera) => {
+    const q = v.clone().project(cam);
+    return new THREE.Vector2((q.x * 0.5 + 0.5) * 1280, (q.y * 0.5 + 0.5) * 800);
+  };
 
-  it("gives each NPC the player's circle at its feet (same projection as setKitFocus), its foot Z and sprite half-width; unused slots radius 0", () => {
+  it("gives each NPC the player's circle at its feet (same projection as setKitFocus), its foot along the camera's back direction and full strength; unused slots radius 0", () => {
     const u = createKitUniforms();
     const npcs = [{ x: 11, y: 0, z: 8 }, { x: 8.5, y: 1, z: 12, halfWidth: 1 }];
     setKitFocusExtra(u, npcs, camera, 1280, 800);
@@ -66,20 +78,57 @@ describe('setKitFocusExtra', () => {
       const e = u.uFocusExtra.value[k];
       expect([e.x, e.y, e.z, e.w]).toEqual(circleOf(n));
       expect(e.w).toBeGreaterThan(0);
-      // the half-width in px: a 16-px sprite (default 0.5 world) is a quarter of its 2-unit height's projection,
-      // which the radius is FADE_PER_SPRITE_PX of; a 32-px wide one twice that
       const f = u.uFocusExtraFoot.value[k];
-      expect(f.x).toBe(n.z);
-      expect(f.y).toBeCloseTo((e.w / FADE_PER_SPRITE_PX) * ((n.halfWidth ?? 0.5) / 2));
+      expect(f.x).toBe(n.z); // (the back direction at yaw 0: +Z, exactly)
+      expect(f.w).toBe(1);
     });
+    expect(u.uFocusExtraFoot.value[1].y).toBeGreaterThan(1.9 * u.uFocusExtraFoot.value[0].y); // a 32-px wide sprite
     expect(u.uFocusExtra.value[2].w).toBe(0);
-    // the rectangle holding what both can clear: each circle cut to its sprite's band (pad and soft edge)
+    // the rectangle holding what both can clear: each circle cut to its sprite's leaning band (pad and soft edge)
     const [a, b] = u.uFocusExtra.value;
-    const side = (k: number) => Math.min(u.uFocusExtra.value[k].w,
-      u.uFocusExtraFoot.value[k].y + (FADE_SIDE_PAD + 1 - FADE_CORE) * u.uFocusExtra.value[k].w);
+    const side = (k: number) => {
+      const e = u.uFocusExtra.value[k], f = u.uFocusExtraFoot.value[k];
+      return Math.min(e.w, f.y + (FADE_SIDE_PAD + 1 - FADE_CORE + Math.abs(f.z)) * e.w);
+    };
     expect(side(0)).toBeLessThan(a.w);
     expect(u.uFocusExtraBox.value.toArray()).toEqual([Math.min(a.x - side(0), b.x - side(1)), Math.min(a.y - a.w, b.y - b.w),
       Math.max(a.x + side(0), b.x + side(1)), Math.max(a.y + a.w, b.y + b.w)]);
+  });
+  it("measures each foot along the camera's horizontal back direction (uCamBack): in front of the NPC from any yaw", () => {
+    const u = createKitUniforms();
+    const yaw = 0.9;
+    u.uCamBack.value.set(Math.sin(yaw), Math.cos(yaw));
+    const n = { x: 11, y: 0, z: 8 };
+    setKitFocusExtra(u, [n], cameraFor(0, 0, yaw), 1280, 800);
+    expect(u.uFocusExtraFoot.value[0].x).toBeCloseTo(n.x * Math.sin(yaw) + n.z * Math.cos(yaw), 12);
+  });
+  it('spans the whole sprite card in its leaning band, from every camera (preset, pitch offset, yaw, zoom) and screen position', () => {
+    for (const preset of [0, 1, 2, 3]) {
+      for (const pitchOffset of [-0.5, 0, 0.3, 0.5]) {
+        for (const yaw of [0, 0.9, Math.PI]) {
+          for (const zoom of [0.45, 1, 2.5]) {
+            const cam = cameraFor(preset, pitchOffset, yaw, zoom);
+            for (const [dx, dz, halfWidth] of [[0, 0, 0.5], [3, 0, 0.5], [-2, -2, 0.5], [2, 3, 0.5], [-3, 1, 1]]) {
+              const n = { x: 10 + dx, y: 0, z: 10 + dz, halfWidth };
+              const u = createKitUniforms();
+              setKitFocusExtra(u, [n], cam, 1280, 800);
+              const e = u.uFocusExtra.value[0], f = u.uFocusExtraFoot.value[0];
+              if (e.w >= 400) continue; // (capped: a character filling the screen)
+              const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+              // the card's corners and edge midpoints: feet, middle and head, each at ± its half-width
+              for (const up of [0, 1, 2]) {
+                for (const s of [-1, 1]) {
+                  const q = px(new THREE.Vector3(n.x, n.y + up, n.z).addScaledVector(right, s * halfWidth), cam);
+                  const dpx = q.x - e.x, dpy = q.y - e.y;
+                  const where = `preset ${preset} pitch ${pitchOffset} yaw ${yaw} zoom ${zoom} npc (${dx}, ${dz}) up ${up} side ${s}`;
+                  expect(Math.abs(dpx - f.z * dpy), where).toBeLessThanOrEqual(f.y * (1 + 1e-9) + 1e-6);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   });
   it('an empty list turns every NPC circle off (Retro, no player, nobody near), their rectangle empty', () => {
     const u = createKitUniforms();
@@ -93,17 +142,18 @@ describe('setKitFocusExtra', () => {
     expect(u.uFocusExtra.value.every((e) => e.w === 0)).toBe(true);
     expect(empty()).toBe(true);
   });
-  it("ramps each radius by the NPC's distance from the player, leaving out a circle ramped to 0", () => {
+  it("ramps each NPC's strength (not its window) by its distance from the player, leaving out one ramped to 0", () => {
     const u = createKitUniforms();
     const player = new THREE.Vector3(10, 0, 10);
     const near = { x: 12, y: 0, z: 10 }, edge = { x: 10, y: 0, z: 13.5 }, out = { x: 14, y: 0, z: 10 };
     setKitFocusExtra(u, [near, out, edge], camera, 1280, 800, player);
     const [a, b, c] = u.uFocusExtra.value;
-    expect([a.x, a.y, a.z, a.w]).toEqual(circleOf(near)); // 2 cells: full radius
-    const ref = circleOf(edge); // 3.5 cells: half the radius, same centre and depth
-    expect([b.x, b.y, b.z]).toEqual(ref.slice(0, 3));
-    expect(b.w).toBeCloseTo(ref[3] * 0.5);
-    expect(u.uFocusExtraFoot.value.slice(0, 2).map((f) => f.x)).toEqual([near.z, edge.z]);
+    expect([a.x, a.y, a.z, a.w]).toEqual(circleOf(near)); // full circles: the window keeps the sprite's size
+    expect([b.x, b.y, b.z, b.w]).toEqual(circleOf(edge));
+    const [fa, fb] = u.uFocusExtraFoot.value;
+    expect(fa.w).toBe(1); // 2 cells: full strength
+    expect(fb.w).toBeCloseTo(0.5); // 3.5 cells: half
+    expect([fa.x, fb.x]).toEqual([near.z, edge.z]);
     expect(c.w).toBe(0); // the one at 4 cells is left out (the slots stay filled in order)
   });
 });
@@ -118,7 +168,8 @@ describe('kit occlusion fade shader', () => {
   it("tests the player's circle as in Phase 1, then (inside their rectangle) every NPC circle up to the first unused one", () => {
     const { u, shader } = shaderOf();
     expect(shader.fragmentShader).toContain(`uniform vec4 uFocusExtra[${MAX_FADE_ACTORS}];`);
-    expect(shader.fragmentShader).toContain(`uniform vec2 uFocusExtraFoot[${MAX_FADE_ACTORS}];`);
+    expect(shader.fragmentShader).toContain(`uniform vec4 uFocusExtraFoot[${MAX_FADE_ACTORS}];`);
+    expect(shader.fragmentShader).toContain('uniform vec2 uCamBack;');
     // the player's test, unchanged
     expect(shader.fragmentShader).toContain('if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {');
     expect(shader.fragmentShader).toContain(
@@ -131,14 +182,20 @@ describe('kit occlusion fade shader', () => {
     expect(shader.uniforms.uFocusExtra).toBe(u.uFocusExtra);
     expect(shader.uniforms.uFocusExtraBox).toBe(u.uFocusExtraBox);
     expect(shader.uniforms.uFocusExtraFoot).toBe(u.uFocusExtraFoot);
+    expect(shader.uniforms.uCamBack).toBe(u.uCamBack);
   });
-  it('an NPC circle fades only what covers the NPC: in front of it in the world (Z beyond its foot), over its sprite band', () => {
+  it('an NPC circle fades only what covers the NPC (in front of it along the camera, over its leaning sprite band), by its strength', () => {
     const { shader } = shaderOf();
     expect(FADE_FRONT_MARGIN).toBeGreaterThan(0);
     expect(shader.fragmentShader).toContain(
-      `if (d2 < e.w * e.w && vViewPosition.z < e.z - 0.6 && vKitWorld.z > f.x + ${FADE_FRONT_MARGIN.toFixed(2)})`);
+      `if (d2 < e.w * e.w && vViewPosition.z < e.z - 0.6 && dot(vKitWorld.xz, uCamBack) > f.x + ${FADE_FRONT_MARGIN.toFixed(2)})`);
     expect(shader.fragmentShader).toContain(`float side = f.y + e.w * ${FADE_SIDE_PAD.toFixed(2)};`);
-    expect(shader.fragmentShader).toContain(`* (1.0 - smoothstep(side, side + e.w * ${(1 - FADE_CORE).toFixed(2)}, abs(dp.x))));`);
+    expect(shader.fragmentShader).toContain(`kf = max(kf, f.w * (1.0 - smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, sqrt(d2)))`);
+    expect(shader.fragmentShader).toContain(
+      `* (1.0 - smoothstep(side, side + e.w * ${(1 - FADE_CORE).toFixed(2)}, abs(dp.x - f.z * dp.y))));`);
+  });
+  it("the camera's back direction defaults to +Z (yaw 0)", () => {
+    expect(createKitUniforms().uCamBack.value.toArray()).toEqual([0, 1]);
   });
 });
 

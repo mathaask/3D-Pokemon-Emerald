@@ -543,6 +543,8 @@ export class OverworldView {
     const dist = preset.distance * this.zoom * (1 - 0.55 * bz);
     const look = this.target.clone().add(new THREE.Vector3(0, 0.9, 0));
     const yawFx = this.yaw + bz * 1.2;
+    // (the camera's horizontal back direction: "in front of" for the NPC occlusion fade)
+    this.kitUniforms.uCamBack.value.set(Math.sin(yawFx), Math.cos(yawFx));
     const offset = new THREE.Vector3(
       Math.sin(yawFx) * Math.cos(pitch),
       Math.sin(pitch),

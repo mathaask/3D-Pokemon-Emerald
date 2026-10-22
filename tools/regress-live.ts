@@ -117,6 +117,11 @@ const STATIC: StaticEntry[] = [
   // without a purpose). (Added in Phase 2 Task 11 fix round 1: its p2-base Retro and Modern references were captured
   // at 9cd7896, before the NPC fade, with --label p2-base --only woods_npc)
   { name: 'woods_npc', q: 'map=24.11&x=32.5&y=34.5&focus=1' },
+  // woods_npc with the camera turned half way round (&yaw=π, from the north): the crown wall now stands between the
+  // camera and the NPC, which the NPC fade clears ("in front" follows the camera's yaw). (Added in Phase 2 Task 11 fix
+  // round 2: its p2-base Retro and Modern references were captured at 9cd7896, before the NPC fade, with --label p2-base
+  // --only woods_npc_yaw)
+  { name: 'woods_npc_yaw', q: 'map=24.11&x=32.5&y=34.5&focus=1&yaw=3.1416' },
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
