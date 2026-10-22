@@ -33,7 +33,7 @@
 // per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging the cell over
 // +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-feature npcfade switches the NPC
 // occlusion fade instead (Task 11: the player's circle only as the baseline; flagged over +0.3 ms GPU), on the
-// live entries and, idle only, the static ones (the preview's same frames, no snapshot).
+// live entries and, idle only, the static ones with a stand-in player (&focus; the preview's same frames, no snapshot).
 // Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
@@ -112,6 +112,11 @@ const STATIC: StaticEntry[] = [
   // Woods NPC stands behind a crown). (Added in Phase 2 Task 11: its p2-base Retro and Modern references were captured
   // at 9cd7896, before the NPC fade, with --label p2-base --only r103_npc)
   { name: 'r103_npc', q: 'map=0.18&x=53.5&y=12.5&focus=1' },
+  // Petalburg Woods, dense canopy: a stand-in player (&focus=1, cell 32,34) and, 2 cells west, the NPC of template 10
+  // (gfx 13, cell 30,34), not hidden, below a wall of crowns: the NPC fade must leave those crowns whole (no holes
+  // without a purpose). (Added in Phase 2 Task 11 fix round 1: its p2-base Retro and Modern references were captured
+  // at 9cd7896, before the NPC fade, with --label p2-base --only woods_npc)
+  { name: 'woods_npc', q: 'map=24.11&x=32.5&y=34.5&focus=1' },
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
@@ -133,8 +138,13 @@ const XBR_TOL = 2 / 255;
 const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
- *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5. */
-interface AbFeature { what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string }
+ *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5. `previewWhen`: the static
+ *  entries (by query) where the switch changes anything (the NPC fade needs a stand-in player, &focus; elsewhere both
+ *  arms would be the same frames). */
+interface AbFeature {
+  what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string;
+  previewWhen?: (q: string) => boolean;
+}
 const AB_FEATURES: Record<string, AbFeature> = {
   actors: {
     what: 'Phase 2 actors (inflated + models) on vs off (all cards)', gpuMs: 1.0, cpuMs: 0.5,
@@ -143,6 +153,7 @@ const AB_FEATURES: Record<string, AbFeature> = {
   npcfade: {
     what: "NPC occlusion fade on vs off (the player's circle only)", gpuMs: 0.3, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
+    previewWhen: (q) => /(^|&)focus=/.test(q),
   },
 };
 
@@ -556,7 +567,7 @@ async function main(): Promise<void> {
             entry.gpuP90 = round(g.gpuP90, 3);
             entry.cpuMs = round(g.cpuMs, 3);
           }
-          if (ab && style === 'modern' && (e.kind === 'live' || abFeature.preview)) {
+          if (ab && style === 'modern' && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
             const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature) : await abMeasureStatic(page, abRounds, abFeature);
             const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
               + `${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${v.dCpu > abFeature.cpuMs ? ' OVER' : ''}` : '- | -');

@@ -565,9 +565,10 @@ export class OverworldView {
     // The feet of the upright sprites (characters, objects) and grass overlays bend the kit's grass.
     const feet = this.actors.update(state, this.actorFrame);
     setKitActors(this.kitUniforms, feet, this.target);
-    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none)
+    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none), their circles
+    // growing as they come within reach
     const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus) : NO_FEET;
-    setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH);
+    setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH, focus ?? undefined);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;
     this.weather.update(state.weather, indoorish, dt, this.target, this.cameraRight);

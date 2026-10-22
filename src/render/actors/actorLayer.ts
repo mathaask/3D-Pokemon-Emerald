@@ -10,7 +10,7 @@ import type { GameState, ObjectEventSnap, SpriteSnap } from '../../game/state';
 import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
 import type { WorldStyle } from '../overworld/world';
 import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
-import type { KitUniforms } from '../kit/materials';
+import type { FadeFoot, KitUniforms } from '../kit/materials';
 import { hashCell } from '../kit/geom';
 import { InflatedActors, CONTACT } from './inflatedActors';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
@@ -78,7 +78,8 @@ export interface ActorFrame {
 /** Inputs of the inflated actors (field) and object models (kit) (not used by the cards). */
 export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: KitUniforms }
 
-type Foot = { x: number; y: number; z: number };
+/** A foot point (world); NPCs (inflatedFeet) also carry their sprite's half-width (world units). */
+type Foot = FadeFoot;
 
 const NO_SAMPLE: SpriteSample = { colors: { main: null, accent: null, green: null }, tones: { body: null, highlight: null, crevice: null, dark: null } };
 
@@ -235,9 +236,10 @@ export class ActorLayer {
     return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: this.models?.count ?? 0 };
   }
 
-  /** The feet of the last update's inflated actors (the player among them), in sprite order, reusing one array:
-   *  the NPCs the occlusion fade may clear — never grass overlays, cards (Retro, inflation off) or models. */
-  get inflatedFeet(): readonly { x: number; y: number; z: number }[] {
+  /** The feet of the last update's inflated object events (the player among them), with their sprites' half-widths, in
+   *  sprite order, reusing one array: the NPCs the occlusion fade may clear — never grass overlays, field-effect
+   *  sprites, cards (Retro, inflation off) or models. */
+  get inflatedFeet(): readonly FadeFoot[] {
     return this.npcs;
   }
 
@@ -249,7 +251,8 @@ export class ActorLayer {
     const inflate = this.inflated !== null && phase2;
     const models = phase2 ? this.models : null;
     const frame = state.frame ?? 0;
-    if (models) {
+    if (phase2) {
+      // (the objects' sprites: models, and the NPCs among the inflated actors)
       this.bySprite.clear();
       for (const o of state.objects ?? []) this.bySprite.set(o.spriteId, o);
     }
@@ -284,7 +287,10 @@ export class ActorLayer {
       const foot = this.footPool[m] ??= { x: 0, y: 0, z: 0 };
       foot.x = spec.footX; foot.y = spec.footY; foot.z = spec.footZ;
       this.feet[m++] = foot;
-      if (inflated) this.npcs[q++] = foot;
+      if (inflated && this.bySprite.has(s.index)) {
+        foot.halfWidth = spec.width / 2;
+        this.npcs[q++] = foot;
+      }
       // in front of the inflated legs it covers
       if (inflate && kind === SpriteKind.Grass) towardEye(spec, f.cameraPosition, f.cameraRight, INFLATED_GRASS_EXTRA);
     }
