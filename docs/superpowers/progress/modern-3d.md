@@ -305,7 +305,7 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
 - [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)
 - [x] 1 live regress harness · [x] 2 preview actors · [x] 3 ActorLayer · [x] 4 inflation field
 - [x] 5 inflated actors · [x] 6 xBR edges · [x] 7 gfx mapping · [x] 8 models I · [x] 9 berry plants
-- [ ] 10 multi-piece sprites · [ ] 11 NPC fade · [ ] 12 perf/robustness/docs
+- [x] 10 multi-piece sprites · [ ] 11 NPC fade · [ ] 12 perf/robustness/docs
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
