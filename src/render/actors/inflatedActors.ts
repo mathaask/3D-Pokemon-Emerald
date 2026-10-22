@@ -51,6 +51,22 @@ export function instanceUniformsFit(maxVertexUniforms: number, override?: string
   if (override === '1') return true;
   return maxVertexUniforms >= INST_UNIFORMS_MIN_VERTEX_VECTORS;
 }
+
+/** The program keys (customProgramCacheKey) of the actors' main material and shadow twin, per instance-data variant. */
+const programKey = (twin: boolean, uniforms: boolean) => `actor:inflated${twin ? '-depth' : ''}:1:${uniforms ? 'uniforms' : 'attributes'}`;
+
+/** A shader program as three lists it (renderer.info.programs): its cache key (ending with the material's
+ *  customProgramCacheKey) and, once it was first used with renderer.debug.checkShaderErrors on (three's default), its
+ *  link diagnostics (none when it linked without a log). */
+export interface ProgramInfo { cacheKey: string; diagnostics?: { runnable: boolean } }
+
+/** Whether a program of the uniform-array variant (main or shadow twin) failed to link on this device although
+ *  instanceUniformsFit let it through (a driver counting vectors more coarsely): the actors then need the attribute
+ *  path (ActorLayer.checkInstanceUniforms, after the precompile). */
+export function instanceUniformsFailed(programs: readonly ProgramInfo[]): boolean {
+  const keys = [programKey(false, true), programKey(true, true)];
+  return programs.some((p) => p.diagnostics?.runnable === false && keys.some((k) => p.cacheKey.endsWith(k)));
+}
 /** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
  *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
@@ -366,8 +382,7 @@ export class InflatedActors {
       f = patch(f, 'dithering_fragment', '#include <dithering_fragment>\n' + MASK_GLSL);
       s.fragmentShader = f;
     };
-    const variant = instanceUniforms ? 'uniforms' : 'attributes';
-    material.customProgramCacheKey = () => `actor:inflated:1:${variant}`;
+    material.customProgramCacheKey = () => programKey(false, instanceUniforms);
 
     const depth = new THREE.ShaderMaterial({
       vertexShader: depthVert(instanceUniforms),
@@ -375,7 +390,7 @@ export class InflatedActors {
       uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst },
       side: THREE.DoubleSide,
     });
-    depth.customProgramCacheKey = () => `actor:inflated-depth:1:${variant}`;
+    depth.customProgramCacheKey = () => programKey(true, instanceUniforms);
     this.mesh = new THREE.Mesh(this.geometry, material);
     this.mesh.name = 'inflatedActors';
     this.mesh.frustumCulled = false;
@@ -458,5 +473,12 @@ export class InflatedActors {
     g.instanceCount = this.geometry.instanceCount;
     this.shadowGeometries.push(g);
     return g;
+  }
+
+  /** Frees the geometries (the shadows' too) and materials; the atlas, the field and the rim colour are the owner's. */
+  dispose(): void {
+    for (const g of [this.geometry, this.quad, ...this.shadowGeometries]) g.dispose();
+    (this.mesh.material as THREE.Material).dispose();
+    this.mesh.customDepthMaterial?.dispose();
   }
 }

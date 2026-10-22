@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL, MAX_ACTORS, INST_UNIFORM_VECTORS,
-  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit,
+  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed,
 } from '../src/render/actors/inflatedActors';
 import { heights, INFLATE } from '../src/render/actors/inflateMath';
 import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
@@ -78,6 +78,17 @@ describe('InflatedActors', () => {
     expect(instanceUniformsFit(4096, '0')).toBe(false);
     expect(instanceUniformsFit(256, '1')).toBe(true);
     expect(instanceUniformsFit(4096, 'x')).toBe(true);
+  });
+  it("decides on the attribute fallback at run time when a uniform-array program (main or twin) did not link", () => {
+    // (three's renderer.info.programs: cache keys end with the material's customProgramCacheKey; diagnostics once used)
+    const p = (key: string, runnable?: boolean) => ({ cacheKey: `standard,1,2,${key}`, ...(runnable === undefined ? {} : { diagnostics: { runnable } }) });
+    expect(instanceUniformsFailed([])).toBe(false);
+    expect(instanceUniformsFailed([p('actor:inflated:1:uniforms'), p('actor:inflated-depth:1:uniforms')])).toBe(false);
+    expect(instanceUniformsFailed([p('actor:inflated:1:uniforms', true)])).toBe(false);   // linked with a log
+    expect(instanceUniformsFailed([p('actor:inflated:1:uniforms', false)])).toBe(true);
+    expect(instanceUniformsFailed([p('actor:inflated-depth:1:uniforms', false)])).toBe(true);
+    // another program's failure, or the attribute variant's, is not the uniform array's
+    expect(instanceUniformsFailed([p('kit:tree', false), p('actor:inflated:1:attributes', false)])).toBe(false);
   });
   it('compiles each variant to its own programs: the uniform array, or attributes of the same names', () => {
     const shaders = (a: InflatedActors) => {

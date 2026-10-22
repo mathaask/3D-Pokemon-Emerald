@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { SpriteKind, type SpriteClassifier } from '../src/game/spriteKinds';
 import type { GameState, ObjectEventSnap, SpriteSnap } from '../src/game/state';
@@ -73,6 +73,34 @@ describe('skipOverridePasses', () => {
       { inflated: { instanceUniforms: boolean } }).inflated.instanceUniforms;
     expect(of({})).toBe(true);
     expect(of({ instanceUniforms: false })).toBe(false);
+  });
+  it("rebuilds its inflated actors on the attribute path when the uniform-array programs did not link (once, warned)", () => {
+    const atlas = { slots: new Map(), target: { texture: new THREE.Texture() } };
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const inflatedOf = () => (layer as unknown as { inflated: { instanceUniforms: boolean; mesh: THREE.Mesh } }).inflated;
+    const before = inflatedOf();
+    layer.setSpriteFilter('pixel');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // linked: nothing to do
+      expect(layer.checkInstanceUniforms([{ cacheKey: 'x,actor:inflated:1:uniforms' }])).toBe(false);
+      expect(inflatedOf()).toBe(before);
+      const failed = [{ cacheKey: 'x,actor:inflated:1:uniforms', diagnostics: { runnable: false } }];
+      expect(layer.checkInstanceUniforms(failed)).toBe(true);
+      const after = inflatedOf();
+      expect(after.instanceUniforms).toBe(false);
+      expect(layer.group.children).not.toContain(before.mesh);
+      expect(layer.group.children).toContain(after.mesh);
+      expect(layer.group.getObjectByName('contactShadows')).toBeDefined();
+      expect(layer.group.children.filter((o) => o.name === 'contactShadows')).toHaveLength(1);
+      // the sprite edges chosen before carry over
+      expect((after.mesh.customDepthMaterial as THREE.ShaderMaterial).uniforms.uSmooth.value).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(layer.checkInstanceUniforms(failed)).toBe(false); // (already on the attribute path)
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
   it('covers every mesh of the layer that places its instances in its own shader (not the models)', () => {
     const layer = new ActorLayer({ slots: new Map(), target: { texture: new THREE.Texture() } }, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
@@ -412,6 +440,22 @@ describe('ActorLayer object models', () => {
       fill(src.vram, 1);                            // stored on frame 2: the same key keeps BLUE
       layer.update(ball(3), modern);
       expect(tints(layer, 'pokeball').a.equals(linear(BLUE))).toBe(true);
+    });
+    it('treats every object as new again after a gap in the synced frames (a battle, the bag: the overworld not presented)', () => {
+      const layer = newLayer();
+      const src = source();
+      layer.setPixelSource(src);
+      layer.update(ball(1), modern);                // spawn frame (RED tiles): not stored
+      fill(src.vram, 2);                            // frames 2-9 not presented: OBJ VRAM holds other tiles (BLUE)
+      layer.update(ball(10), modern);               // the first frame back: not stored either
+      fill(src.vram, 1);                            // the ball's own tiles again (RED)
+      layer.update(ball(11), modern);
+      expect(tints(layer, 'pokeball').a.equals(linear(RED))).toBe(true);
+      // consecutive frames and repeated renders of one frame keep what was seen
+      const since = () => (layer as unknown as { seen: Map<number, { since: number }> }).seen.get(0)!.since;
+      layer.update(ball(11), modern);
+      layer.update(ball(12), modern);
+      expect(since()).toBe(10);
     });
     it('treats a new image set or anim on an existing object as a spawn frame too', () => {
       const layer = newLayer();

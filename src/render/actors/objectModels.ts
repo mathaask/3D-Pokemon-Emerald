@@ -373,7 +373,7 @@ export class ObjectModels {
    * or one applying the tint codes, plus the inflated actors' lamp ceiling (a model next to the Flash lantern is
    * not blown out) and soft shoulder (no glow), the light floor after the lights and the harness's actor mask
    * (flat magenta) after everything else — no uniform or define of their own: no extra program. An instance
-   * colour (berry plants) tints only the tinted parts (COLOR_VERTEX).
+   * colour (berry plants) tints only the tinted parts (COLOR_VERTEX). Their program key is the kit's + ':model'.
    */
   private material(kit: KitUniforms, roughness: number, tree: boolean, t: { a: THREE.Color; b: THREE.Color; h: THREE.Color },
     highlight: number): KitMaterial {
@@ -397,6 +397,10 @@ export class ObjectModels {
       fs = include(fs, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
       s.fragmentShader = after(after(fs, 'lights_fragment_end', FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
     };
+    // (these patches are not in the kit's program key: the models' programs get a key of their own, so a kit material
+    // with the same options can never share them; the precompile compiles them all the same)
+    const kitKey = material.customProgramCacheKey;
+    material.customProgramCacheKey = () => kitKey.call(material) + ':model';
     return km;
   }
 

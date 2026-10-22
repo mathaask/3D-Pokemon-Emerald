@@ -9,6 +9,7 @@ import { Renderer } from './render/renderer';
 import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/settings';
 import { keyMask } from './input/keyNames';
 import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
+import { frameGuard } from './render/frameGuard';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
@@ -223,6 +224,12 @@ async function boot(): Promise<void> {
     return;
   }
 
+  // per-frame render code never stops the frame loop: its first exception is reported, emulation and audio go on, and
+  // V (the classic 2D view) stays the universal fallback (spec §11)
+  const guarded = frameGuard((e) => {
+    console.warn('[render] a frame failed to render; emulation goes on (V switches to the classic 2D view)', e);
+    shell.toast('3D view error — press V for the classic 2D view', 5000);
+  });
   let acc = 0;
   let last = performance.now();
   const stats = { fps: 0, emuFps: 0, emuMs: 0, renderMs: 0 };
@@ -256,7 +263,7 @@ async function boot(): Promise<void> {
     renderer.cameraInput.zoom += input.cameraZoom;
     input.cameraYaw = input.cameraPitch = input.cameraZoom = 0;
     const r0 = performance.now();
-    renderer.render(dt);
+    guarded(() => renderer.render(dt));
     renderTime += performance.now() - r0;
     statFrames++;
     if (now - statStart >= 1000) {

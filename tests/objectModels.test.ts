@@ -186,6 +186,16 @@ describe('ObjectModels tints, uploads and precompile', () => {
     expect(mesh(m, 'pokeball').visible).toBe(false);
     return done;
   });
+  it("keys every model material's programs apart from the kit's (its extra shader patches are not in the kit's key)", () => {
+    const m = new ObjectModels(createKitUniforms());
+    for (const o of m.group.children) {
+      const mat = (o as THREE.Mesh).material as THREE.Material;
+      expect(mat.customProgramCacheKey(), o.name).toMatch(/^kit:.*:model$/);
+    }
+    // (the Cut tree's sway twin is the kit's own depth material, unpatched: its key stays the kit's)
+    const twin = mesh(m, 'cutTree').customDepthMaterial!;
+    expect(twin.customProgramCacheKey()).toMatch(/:depth$/);
+  });
   it('gives every model a shadow-depth material of its own (none uses three\'s shared one)', () => {
     const m = new ObjectModels(createKitUniforms());
     for (const o of m.group.children) expect((o as THREE.Mesh).customDepthMaterial).toBeDefined();

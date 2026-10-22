@@ -12,7 +12,7 @@ import type { WorldStyle } from '../overworld/world';
 import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
 import type { FadeFoot, KitUniforms } from '../kit/materials';
 import { hashCell } from '../kit/geom';
-import { InflatedActors, CONTACT } from './inflatedActors';
+import { InflatedActors, CONTACT, instanceUniformsFailed, type ProgramInfo } from './inflatedActors';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
@@ -183,6 +183,11 @@ export class ActorLayer {
   private bySprite = new Map<number, ObjectEventSnap>();
   /** Per object slot (ObjectEventSnap.index): what it showed and since when (spawn frames, see sampleOf). */
   private seen = new Map<number, Seen>();
+  /** The synced frame (GameState.frame) of the last update. */
+  private lastFrame = -1;
+  /** The sprite edges and mask set so far (kept for inflated actors built later: checkInstanceUniforms). */
+  private spriteFilter: SpriteFilter = 'smooth';
+  private masked = false;
   /** The truck's sprite at its 48×48 image size (colour sampling; reused). */
   private truckImage: SpriteSnap | null = null;
   // Reused every frame: the pools only grow; `cards` / `actors` / `models` / `feet` are this frame's lists.
@@ -196,30 +201,59 @@ export class ActorLayer {
   /** This frame's inflated actors' feet (objects shared with `feet`). */
   private npcs: Foot[] = [];
 
-  constructor(private readonly atlas: ActorAtlas, opts: ActorLayerOptions = {}) {
+  constructor(private readonly atlas: ActorAtlas, private readonly opts: ActorLayerOptions = {}) {
     this.billboards = new Billboards(atlas);
     this.blobs = new BlobShadows(this.billboards);
+    this.billboards.mesh.name = 'cards';
+    this.blobs.mesh.name = 'blobShadows';
     this.group.add(this.billboards.mesh, this.blobs.mesh);
     skipOverridePasses(this.billboards.mesh);
     skipOverridePasses(this.blobs.mesh);
-    if (opts.field) {
-      // the rim takes the sky's colour (the kit's, updated by the view's lighting)
-      const rim = opts.kit?.uSky ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
-      const size = new THREE.Vector2(atlas.target.width ?? SLOT * SLOT_COLS, atlas.target.height ?? SLOT * SLOT_ROWS);
-      this.inflated = new InflatedActors(atlas.target.texture, opts.field.texture, rim, size, opts.instanceUniforms ?? true);
-      this.contact = new BlobShadows(this.inflated);
-      this.contact.setStrength(CONTACT.strength);
-      this.contact.setScale(CONTACT.scale);
-      this.contact.mesh.name = 'contactShadows';
-      this.group.add(this.inflated.mesh, this.contact.mesh);
-      skipOverridePasses(this.inflated.mesh);
-      skipOverridePasses(this.contact.mesh);
-    }
+    if (opts.field) this.makeInflated(opts.field, opts.instanceUniforms ?? true);
     if (opts.kit) {
       this.models = new ObjectModels(opts.kit);
       this.models.group.visible = false;
       this.group.add(this.models.group);
     }
+  }
+
+  /** Builds the inflated actors and their contact shadows (`instanceUniforms`: their instance-data path), with the
+   *  sprite edges and mask set so far. */
+  private makeInflated(field: { texture: THREE.Texture }, instanceUniforms: boolean): void {
+    // the rim takes the sky's colour (the kit's, updated by the view's lighting)
+    const rim = this.opts.kit?.uSky ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
+    const size = new THREE.Vector2(this.atlas.target.width ?? SLOT * SLOT_COLS, this.atlas.target.height ?? SLOT * SLOT_ROWS);
+    const inflated = this.inflated = new InflatedActors(this.atlas.target.texture, field.texture, rim, size, instanceUniforms);
+    inflated.setSmoothing(this.spriteFilter === 'smooth');
+    inflated.setMask(this.masked);
+    const contact = this.contact = new BlobShadows(inflated);
+    contact.setStrength(CONTACT.strength);
+    contact.setScale(CONTACT.scale);
+    contact.mesh.name = 'contactShadows';
+    this.group.add(inflated.mesh, contact.mesh);
+    skipOverridePasses(inflated.mesh);
+    skipOverridePasses(contact.mesh);
+  }
+
+  /**
+   * After the precompile (`programs`: renderer.info.programs): when the inflated actors' uniform-array programs did not
+   * link on this device (instanceUniformsFit let them through: a driver counting vectors more coarsely), rebuilds them on the
+   * instance-attribute path, warned once — else the Modern characters would stay invisible. Their programs then compile
+   * on first use. Returns whether it rebuilt them.
+   */
+  checkInstanceUniforms(programs: readonly ProgramInfo[]): boolean {
+    const field = this.opts.field;
+    if (!field || !this.inflated?.instanceUniforms || !instanceUniformsFailed(programs)) return false;
+    console.warn('[actors] the inflated actors\' uniform-array programs did not link on this device: falling back to instance attributes');
+    const { inflated, contact } = this;
+    this.group.remove(inflated.mesh);
+    inflated.dispose();
+    if (contact) {
+      this.group.remove(contact.mesh);
+      contact.material.dispose();
+    }
+    this.makeInflated(field, false);
+    return true;
   }
 
   /** Where the object models sample their sprites' colours: OBJ VRAM and the palette the sprite atlas draws
@@ -249,11 +283,13 @@ export class ActorLayer {
 
   /** Sprite edges of the inflated actors (Modern): HD smooth (xBR, the default) or Pixel. Cards are unaffected. */
   setSpriteFilter(f: SpriteFilter): void {
+    this.spriteFilter = f;
     this.inflated?.setSmoothing(f === 'smooth');
   }
 
   /** Draws every actor (cards, inflated actors, models) flat magenta: the harness's visible-actor mask. */
   setMask(on: boolean): void {
+    this.masked = on;
     this.billboards.setMask(on);
     this.inflated?.setMask(on);
     this.models?.setMask(on);
@@ -279,6 +315,10 @@ export class ActorLayer {
     const inflate = this.inflated !== null && phase2;
     const models = phase2 ? this.models : null;
     const frame = state.frame ?? 0;
+    // a gap in the synced frames: the overworld was not presented meanwhile (a battle, the bag, a menu) and OBJ VRAM held
+    // other tiles, so every object is new again (sampleOf: its first frame back is a spawn frame)
+    if (frame > this.lastFrame + 1) this.seen.clear();
+    this.lastFrame = frame;
     if (phase2) {
       // (the objects' sprites: models, and the NPCs among the inflated actors)
       this.bySprite.clear();

@@ -21,6 +21,7 @@ import { createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
+import type { ProgramInfo } from '../actors/inflatedActors';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -257,6 +258,8 @@ export class OverworldView {
         this.field?.compile(renderer),
         this.actors.precompile(renderer, this.scene, this.camera, this.precompileFrame ?? undefined),
       ]);
+      // (the precompile frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
+      this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[]);
     })().catch((e) => { console.warn('[overworld] precompile failed (programs compile on first use instead)', e); });
   }
 
