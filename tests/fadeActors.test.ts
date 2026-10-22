@@ -54,26 +54,38 @@ describe('setKitFocusExtra', () => {
       expect(e.w).toBeGreaterThan(0);
     });
     expect(u.uFocusExtra.value[2].w).toBe(0);
+    // the rectangle holding both circles
+    const [a, b] = u.uFocusExtra.value;
+    expect(u.uFocusExtraBox.value.toArray()).toEqual([Math.min(a.x - a.w, b.x - b.w), Math.min(a.y - a.w, b.y - b.w),
+      Math.max(a.x + a.w, b.x + b.w), Math.max(a.y + a.w, b.y + b.w)]);
   });
-  it('an empty list turns every NPC circle off (Retro, no player, nobody near)', () => {
+  it('an empty list turns every NPC circle off (Retro, no player, nobody near), their rectangle empty', () => {
     const u = createKitUniforms();
+    const empty = () => u.uFocusExtraBox.value.x > u.uFocusExtraBox.value.z && u.uFocusExtraBox.value.y > u.uFocusExtraBox.value.w;
     expect(u.uFocusExtra.value.every((e) => e.w === 0)).toBe(true);
+    expect(empty()).toBe(true);
     setKitFocusExtra(u, [{ x: 11, y: 0, z: 8 }, { x: 9, y: 0, z: 8 }, { x: 10, y: 0, z: 7 }], camera, 1280, 800);
     expect(u.uFocusExtra.value.every((e) => e.w > 0)).toBe(true);
+    expect(empty()).toBe(false);
     setKitFocusExtra(u, [], camera, 1280, 800);
     expect(u.uFocusExtra.value.every((e) => e.w === 0)).toBe(true);
+    expect(empty()).toBe(true);
   });
 });
 
 describe('kit occlusion fade shader', () => {
-  it("tests the player's circle, then every NPC circle (skipped when the first is unused), through the shared uniform", () => {
+  it("tests the player's circle, then (inside their rectangle) every NPC circle up to the first unused one, through the shared uniforms", () => {
     const u = createKitUniforms();
     const shader = { uniforms: {} as Record<string, unknown>, vertexShader: '', fragmentShader: '#include <clipping_planes_fragment>' };
     kitMaterial(u, { fade: true }).material.onBeforeCompile(shader as never, undefined as never);
     expect(shader.fragmentShader).toContain(`uniform vec4 uFocusExtra[${MAX_FADE_ACTORS}];`);
     expect(shader.fragmentShader).toContain('if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6)');
-    expect(shader.fragmentShader).toContain('if (uFocusExtra[0].w > 0.0)');
-    expect(shader.fragmentShader).toContain(`smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, length(gl_FragCoord.xy - e.xy))`);
+    expect(shader.fragmentShader).toContain('all(greaterThan(gl_FragCoord.xy, uFocusExtraBox.xy)) && all(lessThan(gl_FragCoord.xy, uFocusExtraBox.zw))');
+    expect(shader.fragmentShader).toContain('if (e.w <= 0.0) break;');
+    expect(shader.uniforms.uFocusExtraBox).toBe(u.uFocusExtraBox);
+    // the same depth / core / edge rule as the player's circle (outside it the edge term is 0: skipped)
+    expect(shader.fragmentShader).toContain('if (d2 < e.w * e.w && vViewPosition.z < e.z - 0.6)');
+    expect(shader.fragmentShader).toContain(`smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, sqrt(d2))`);
     // one object for every program (set once per frame, survives rebuilds through the material pool)
     expect(shader.uniforms.uFocusExtra).toBe(u.uFocusExtra);
   });

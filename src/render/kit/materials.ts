@@ -25,6 +25,9 @@ export interface KitUniforms {
   /** The occlusion fade's NPC circles (MAX_FADE_ACTORS, filled in order): (px.x, px.y, depth, radius) as the
    *  player's uFocusPx / uFocusDepth / uFadeRadius; radius 0 = unused (the rest are unused too). */
   uFocusExtra: { value: THREE.Vector4[] };
+  /** Pixel rectangle (x0, y0, x1, y1) holding every used uFocusExtra circle (none: empty): the fragments outside it
+   *  (most of them) skip the NPC circles with one test. */
+  uFocusExtraBox: { value: THREE.Vector4 };
   /** Feet of characters that bend grass (unused slots far away). */
   uActors: { value: THREE.Vector3[] };
   /** Sky colour (linear) for water reflections. */
@@ -40,6 +43,7 @@ export function createKitUniforms(): KitUniforms {
     uFocusDepth: { value: 0 },
     uFadeRadius: { value: 0 },
     uFocusExtra: { value: Array.from({ length: MAX_FADE_ACTORS }, () => new THREE.Vector4(-1e4, -1e4, 0, 0)) },
+    uFocusExtraBox: { value: new THREE.Vector4(1, 1, 0, 0) },
     uActors: { value: Array.from({ length: MAX_ACTORS }, () => new THREE.Vector3(1e4, 0, 1e4)) },
     uSky: { value: new THREE.Color(0.75, 0.88, 1.0) },
   };
@@ -110,13 +114,20 @@ export function pickFadeActors(feet: readonly Foot[], player: THREE.Vector3, max
 /**
  * Aims the occlusion fade's NPC circles at `feet` (the first MAX_FADE_ACTORS; world space), with the same
  * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC; unused slots radius 0 (empty: off).
+ * Their bounding rectangle goes into uFocusExtraBox (none: an empty one).
  */
 export function setKitFocusExtra(u: KitUniforms, feet: readonly Foot[], camera: THREE.Camera, w: number, h: number): void {
   const slots = u.uFocusExtra.value;
+  const box = u.uFocusExtraBox.value.set(Infinity, Infinity, -Infinity, -Infinity);
   for (let k = 0; k < slots.length; k++) {
-    if (k < feet.length) fadeCircle(feet[k], camera, w, h, slots[k]);
-    else slots[k].w = 0;
+    if (k >= feet.length) {
+      slots[k].w = 0;
+      continue;
+    }
+    const c = fadeCircle(feet[k], camera, w, h, slots[k]);
+    box.set(Math.min(box.x, c.x - c.w), Math.min(box.y, c.y - c.w), Math.max(box.z, c.x + c.w), Math.max(box.w, c.y + c.w));
   }
+  if (feet.length === 0) box.set(1, 1, 0, 0);
 }
 
 /**
@@ -251,13 +262,16 @@ uniform vec2 uFocusPx;
 uniform float uFocusDepth;
 uniform float uFadeRadius;
 uniform vec4 uFocusExtra[${MAX_FADE_ACTORS}];
+uniform vec4 uFocusExtraBox;
 uniform float uGlow;
 varying vec3 vKitWorld;
 ${KIT_NOISE_GLSL}
 `;
 
 // The player's circle, then the nearby NPCs' (same core / edge / Bayer rule: a fragment goes where any circle
-// dithers it out). The NPC slots fill in order, so an empty first slot skips them all (Retro, nobody near).
+// dithers it out). Most fragments lie outside the NPC circles' rectangle (an empty one: Retro, nobody near) and skip
+// them with one test; inside it, the slots fill in order (an empty one ends them) and a fragment outside a circle pays
+// a squared distance only (there the edge term is 0 anyway).
 const FADE = /* glsl */ `
 #ifdef KIT_FADE
 {
@@ -265,11 +279,14 @@ const FADE = /* glsl */ `
   if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
     kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
   }
-  if (uFocusExtra[0].w > 0.0) {
+  if (all(greaterThan(gl_FragCoord.xy, uFocusExtraBox.xy)) && all(lessThan(gl_FragCoord.xy, uFocusExtraBox.zw))) {
     for (int k = 0; k < ${MAX_FADE_ACTORS}; k++) {
       vec4 e = uFocusExtra[k];
-      if (e.w > 0.0 && vViewPosition.z < e.z - 0.6) {
-        kf = max(kf, 1.0 - smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, length(gl_FragCoord.xy - e.xy)));
+      if (e.w <= 0.0) break;
+      vec2 dp = gl_FragCoord.xy - e.xy;
+      float d2 = dot(dp, dp);
+      if (d2 < e.w * e.w && vViewPosition.z < e.z - 0.6) {
+        kf = max(kf, 1.0 - smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, sqrt(d2)));
       }
     }
   }
@@ -324,7 +341,8 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
   o: Hooks, full: boolean): void {
   Object.assign(s.uniforms, {
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
-    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, uFocusExtra: u.uFocusExtra, ...local, ...slots,
+    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, uFocusExtra: u.uFocusExtra,
+    uFocusExtraBox: u.uFocusExtraBox, ...local, ...slots,
   });
   s.vertexShader = VERT_PRELUDE + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
