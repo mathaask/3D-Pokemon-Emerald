@@ -67,6 +67,13 @@ describe('skipOverridePasses', () => {
     mesh.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
     expect(g.instanceCount).toBe(5);
   });
+  it('passes the instance-data variant to its inflated actors (uniform array by default, attributes on request)', () => {
+    const atlas = { slots: new Map(), target: { texture: new THREE.Texture() } };
+    const of = (o: object) => (new ActorLayer(atlas, { field: { texture: new THREE.Texture() }, ...o }) as unknown as
+      { inflated: { instanceUniforms: boolean } }).inflated.instanceUniforms;
+    expect(of({})).toBe(true);
+    expect(of({ instanceUniforms: false })).toBe(false);
+  });
   it('covers every mesh of the layer that places its instances in its own shader (not the models)', () => {
     const layer = new ActorLayer({ slots: new Map(), target: { texture: new THREE.Texture() } }, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
     const meshes: THREE.Mesh[] = [];

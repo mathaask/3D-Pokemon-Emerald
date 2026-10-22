@@ -15,6 +15,7 @@ import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
 import { SpriteField } from './actors/spriteField';
+import { instanceUniformsFit } from './actors/inflatedActors';
 import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
 import type { SpriteFilter } from './actors/actorLayer';
 
@@ -78,7 +79,9 @@ export class Renderer {
     this.gbaTex = new GbaTextures(gba.bus);
     this.spriteAtlas = new SpriteAtlas(this.gbaTex);
     this.spriteField = new SpriteField();
-    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField);
+    // (the inflated actors' instance data: a uniform array where the device has the vertex uniform vectors; ?actorUniforms=0|1)
+    const actorUniforms = instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, new URLSearchParams(location.search).get('actorUniforms'));
+    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField, actorUniforms);
     this.battle = new BattleView(this.spriteAtlas);
     this.classifier = new SpriteClassifier(this.state.mem);
     this.overworld.classifier = this.classifier;

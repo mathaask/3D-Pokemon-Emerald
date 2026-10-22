@@ -104,8 +104,9 @@ npx tsx tools/shot3d.ts --state s.state --wait 3000               # screenshot t
 npx tsx tools/shot3d.ts --query "map=0.9&hour=21"                  # 3D preview of any map
 node --import tsx tools/map-atlas.ts       # render every map to out/atlas/
 npm run regress -- --label mine            # 16 maps at day + night → out/regress/mine/ (add --style retro)
-npm run regress:live -- --label mine --static --gpu --selftest --compare base
+npm run regress:live -- --label mine --static --gpu --selftest
                                            # live save-state scenes + map previews with actors, both styles
+                                           # (add --compare <label> to diff against an earlier run)
 npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.test.ts tests/smoke/semantics.test.ts
                                            # ROM-driven smoke tests; coverage report → out/coverage*.txt
 ```

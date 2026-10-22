@@ -6,7 +6,9 @@
 // One instanced draw call; the instance data is the cards' (Billboards: foot, size (width, height, lift, 0), uv), read
 // from a uniform array by gl_InstanceID: on ANGLE (D3D11, Intel) the first draw of this grid that reads an instance
 // vertex buffer re-uploaded this frame cost ~0.3-0.5 ms of GPU time wherever it fell (the shadow twin, the main pass,
-// a 1×1 pre-draw: Phase 2 Task 12), a uniform array nothing measurable. The contact shadows keep instance attributes.
+// a 1×1 pre-draw: Phase 2 Task 12), a uniform array nothing measurable. A device with too few vertex uniform vectors
+// for that array (instanceUniformsFit) reads the same data from instance attributes instead (uploaded on change).
+// The contact shadows keep instance attributes.
 // The front silhouette is the sprite's own (alpha test on the game's frame; with HD edges, setSmoothing, on its
 // xBR-smoothed outline — the shadow's too).
 // Not tied to the overworld: battles can reuse it with any atlas and field of the same layout.
@@ -28,6 +30,27 @@ export const CONTACT = { strength: 0.25, scale: 0.75 };
 export const MAX_ACTORS = 64;
 /** vec4s of instance data per actor in the uInst uniform array: foot, size, uv. */
 const INST_VEC4 = 3;
+/** Vertex uniform vectors the uInst array takes (MAX_ACTORS × INST_VEC4 = 192). */
+export const INST_UNIFORM_VECTORS = MAX_ACTORS * INST_VEC4;
+/**
+ * Fewest vertex uniform vectors (gl MAX_VERTEX_UNIFORM_VECTORS) for the uniform-array path; below it the actors read
+ * instance attributes (same data, uploaded on change). Estimate for the main program's vertex stage: uInst 192, three's
+ * standard material ≈ 21 (model/view/projection/normal matrices, camera), ≈ 9 per shadow-casting directional light
+ * (shadow matrix + DirectionalLightShadow; the overworld's sun), ≈ 11 per shadow-casting point light (none today), ours 3
+ * (uRight, uEye, uAtlasSize): ≈ 225 for the overworld — over WebGL2's guaranteed 256 once a second shadowed light
+ * arrives, and drivers count some vectors more coarsely. 192 + 128 = 320 leaves ≈ 95 vectors of margin (8+ more
+ * shadowed lights); desktop and mobile GPUs report 1024 or more, WebGL2-minimum devices 256 (attributes).
+ */
+export const INST_UNIFORMS_MIN_VERTEX_VECTORS = INST_UNIFORM_VECTORS + 128;
+
+/** Whether the actors can read their instance data from the uniform array on a device with `maxVertexUniforms` vertex
+ *  uniform vectors (renderer.capabilities.maxVertexUniforms). `override` (the URL's `?actorUniforms=`): '0' forces the
+ *  attribute fallback, '1' the uniform array; anything else decides by the device. */
+export function instanceUniformsFit(maxVertexUniforms: number, override?: string | null): boolean {
+  if (override === '0') return false;
+  if (override === '1') return true;
+  return maxVertexUniforms >= INST_UNIFORMS_MIN_VERTEX_VECTORS;
+}
 /** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
  *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
@@ -88,13 +111,23 @@ vec3 actorNormal(vec3 f, vec2 g) {
 }
 `;
 
-const VERT_PRELUDE = /* glsl */ `
-// per actor (gl_InstanceID) INST_VEC4 vec4s: its foot point (world), size (width, height, lift; world units), atlas uv
-// (u0, v0 top, u1, v1 bottom) — the cards' (Billboards) instance layout, from a uniform array (see InflatedActors.set)
-uniform vec4 uInst[${MAX_ACTORS * INST_VEC4}];
+// Per actor: its foot point (world), size (width, height, lift; world units, 0), atlas uv (u0, v0 top, u1, v1 bottom) —
+// the cards' (Billboards) instance layout: from the uniform array by gl_InstanceID (INST_VEC4 vec4s each, see
+// InflatedActors.set) or, on a device with too few vertex uniform vectors, from instance attributes of those names.
+const INSTANCE_UNIFORMS_GLSL = /* glsl */ `
+uniform vec4 uInst[${INST_UNIFORM_VECTORS}];
 #define aFoot (uInst[gl_InstanceID * ${INST_VEC4}].xyz)
 #define aSize (uInst[gl_InstanceID * ${INST_VEC4} + 1])
 #define aUv (uInst[gl_InstanceID * ${INST_VEC4} + 2])
+`;
+const INSTANCE_ATTRIBUTES_GLSL = /* glsl */ `
+attribute vec3 aFoot;
+attribute vec4 aSize;
+attribute vec4 aUv;
+`;
+
+const vertPrelude = (uniforms: boolean) => /* glsl */ `
+${uniforms ? INSTANCE_UNIFORMS_GLSL : INSTANCE_ATTRIBUTES_GLSL}
 varying vec2 vAtlasUv;
 varying vec4 vRect;     // the sprite's rectangle in atlas texels: x0, y0 (bottom), x1, y1 (top)
 ${FIELD_GLSL}
@@ -218,9 +251,9 @@ export const FRAG_SHOULDER = /* glsl */ `
 /** The harness's actor mask: every drawn actor pixel flat magenta (after the alpha test and depth test). */
 export const MASK_GLSL = 'if (uMask > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);';
 
-const DEPTH_VERT = /* glsl */ `
+const depthVert = (uniforms: boolean) => /* glsl */ `
 #include <common>
-${VERT_PRELUDE}
+${vertPrelude(uniforms)}
 varying vec2 vUv;
 void main() {
 ${VERT_CARD}
@@ -265,11 +298,16 @@ export class InflatedActors {
   readonly mesh: THREE.Mesh;
   private geometry = new THREE.InstancedBufferGeometry();
   private quad: THREE.BufferGeometry;
-  /** The contact shadows' instance attributes (BlobShadows): foot point, size (width, height, lift, 0). */
+  /** Whether the shaders read the instance data from the uInst uniform array (else from the instance attributes). */
+  readonly instanceUniforms: boolean;
+  /** Instance attributes: foot point, size (width, height, lift, 0) — the contact shadows' (BlobShadows), and the
+   *  actors' own with uv on the attribute path. */
   private foot = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 3), 3);
   private size = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 4), 4);
+  /** The atlas uv (u0, v0, u1, v1): the attribute path only. */
+  private uv: THREE.InstancedBufferAttribute | null = null;
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
-  /** The most instances ever set (the uploaded part of the contact shadows' instance buffers). */
+  /** The most instances ever set (the uploaded part of the instance buffers). */
   private used = 0;
   private uniforms: {
     tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
@@ -280,10 +318,13 @@ export class InflatedActors {
 
   /**
    * `atlas`: the sprite atlas the actors sample; `field`: its inflation field (same layout, R = height in
-   * sprite px); `rimColor`: the rim's colour (kept by reference: the sky's, updated by the owner).
+   * sprite px); `rimColor`: the rim's colour (kept by reference: the sky's, updated by the owner);
+   * `instanceUniforms`: read the instance data from the uniform array (default) or from instance attributes — false on a
+   * device with too few vertex uniform vectors (instanceUniformsFit).
    */
   constructor(atlas: THREE.Texture, field: THREE.Texture, rimColor: { value: THREE.Color },
-    atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS)) {
+    atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS), instanceUniforms = true) {
+    this.instanceUniforms = instanceUniforms;
     const grid = new THREE.PlaneGeometry(1, 1, ACTOR_GRID.x, ACTOR_GRID.y);
     grid.translate(0, 0.5, 0); // x in [-0.5, 0.5], y in [0, 1]
     this.geometry.index = grid.index;
@@ -291,7 +332,13 @@ export class InflatedActors {
     // (unused by the shader, which builds its own normal: its presence enables the shadow normal bias)
     this.geometry.setAttribute('normal', grid.getAttribute('normal'));
     this.geometry.instanceCount = 0;
-    for (const a of [this.foot, this.size]) a.setUsage(THREE.DynamicDrawUsage);
+    if (!instanceUniforms) {
+      this.uv = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 4), 4);
+      this.geometry.setAttribute('aFoot', this.foot);
+      this.geometry.setAttribute('aSize', this.size);
+      this.geometry.setAttribute('aUv', this.uv);
+    }
+    for (const a of [this.foot, this.size, this.uv]) a?.setUsage(THREE.DynamicDrawUsage);
     this.quad = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
 
     const u = this.uniforms = {
@@ -305,7 +352,7 @@ export class InflatedActors {
     material.shadowSide = THREE.DoubleSide;
     material.onBeforeCompile = (s) => {
       Object.assign(s.uniforms, u);
-      let v = VERT_PRELUDE + s.vertexShader;
+      let v = vertPrelude(instanceUniforms) + s.vertexShader;
       v = patch(v, 'beginnormal_vertex', VERT_CARD + VERT_NORMAL);
       v = patch(v, 'begin_vertex', VERT_POSITION);
       s.vertexShader = v;
@@ -319,14 +366,16 @@ export class InflatedActors {
       f = patch(f, 'dithering_fragment', '#include <dithering_fragment>\n' + MASK_GLSL);
       s.fragmentShader = f;
     };
-    material.customProgramCacheKey = () => 'actor:inflated:1';
+    const variant = instanceUniforms ? 'uniforms' : 'attributes';
+    material.customProgramCacheKey = () => `actor:inflated:1:${variant}`;
 
     const depth = new THREE.ShaderMaterial({
-      vertexShader: DEPTH_VERT,
+      vertexShader: depthVert(instanceUniforms),
       fragmentShader: DEPTH_FRAG,
       uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst },
       side: THREE.DoubleSide,
     });
+    depth.customProgramCacheKey = () => `actor:inflated-depth:1:${variant}`;
     this.mesh = new THREE.Mesh(this.geometry, material);
     this.mesh.name = 'inflatedActors';
     this.mesh.frustumCulled = false;
@@ -341,7 +390,8 @@ export class InflatedActors {
     return this.geometry.instanceCount;
   }
 
-  /** The actors' instance data as the shaders read it (uInst: per actor INST_VEC4 vec4s, see VERT_PRELUDE). */
+  /** The actors' instance data in the uniform array (uInst: per actor INST_VEC4 vec4s: foot, size, uv; see vertPrelude).
+   *  Filled on the uniform path only. */
   get instances(): Float32Array {
     return this.uniforms.uInst.value;
   }
@@ -353,21 +403,27 @@ export class InflatedActors {
    */
   set(list: readonly BillboardSpec[], cameraRight: THREE.Vector3, eye?: THREE.Vector3): void {
     const n = Math.min(MAX_ACTORS, list.length);
-    const inst = this.uniforms.uInst.value, foot = this.foot.array as Float32Array, size = this.size.array as Float32Array;
-    let dFoot = 0, dSize = 0;
+    const inst = this.instanceUniforms ? this.uniforms.uInst.value : null;
+    const foot = this.foot.array as Float32Array, size = this.size.array as Float32Array;
+    const uv = this.uv ? this.uv.array as Float32Array : null;
+    let dFoot = 0, dSize = 0, dUv = 0;
     for (let i = 0; i < n; i++) {
       const s = list[i], k = i * INST_VEC4 * 4;
-      inst[k] = s.footX; inst[k + 1] = s.footY; inst[k + 2] = s.footZ; inst[k + 3] = 0;
-      inst[k + 4] = s.width; inst[k + 5] = s.height; inst[k + 6] = s.lift; inst[k + 7] = 0;
-      inst[k + 8] = s.slot.u0; inst[k + 9] = s.slot.v0; inst[k + 10] = s.slot.u1; inst[k + 11] = s.slot.v1;
+      if (inst) {
+        inst[k] = s.footX; inst[k + 1] = s.footY; inst[k + 2] = s.footZ; inst[k + 3] = 0;
+        inst[k + 4] = s.width; inst[k + 5] = s.height; inst[k + 6] = s.lift; inst[k + 7] = 0;
+        inst[k + 8] = s.slot.u0; inst[k + 9] = s.slot.v0; inst[k + 10] = s.slot.u1; inst[k + 11] = s.slot.v1;
+      }
       dFoot |= put(foot, i * 3, s.footX) | put(foot, i * 3 + 1, s.footY) | put(foot, i * 3 + 2, s.footZ);
       dSize |= put(size, i * 4, s.width) | put(size, i * 4 + 1, s.height) | put(size, i * 4 + 2, s.lift) | put(size, i * 4 + 3, 0);
+      if (uv) dUv |= put(uv, i * 4, s.slot.u0) | put(uv, i * 4 + 1, s.slot.v0) | put(uv, i * 4 + 2, s.slot.u1) | put(uv, i * 4 + 3, s.slot.v1);
     }
-    // The contact shadows' attributes upload only when they changed (instanceUpload.ts), up to the most instances ever
-    // set: the GPU copy mirrors the arrays there, whatever the instance count did in between.
+    // The instance attributes upload only when they changed (instanceUpload.ts), up to the most instances ever set: the
+    // GPU copy mirrors the arrays there, whatever the instance count did in between.
     this.used = Math.max(this.used, n);
     if (dFoot) markRange(this.foot, this.used);
     if (dSize) markRange(this.size, this.used);
+    if (dUv && this.uv) markRange(this.uv, this.used);
     this.geometry.instanceCount = n;
     for (const g of this.shadowGeometries) g.instanceCount = n;
     this.uniforms.uRight.value.copy(cameraRight);

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL } from '../src/render/actors/inflatedActors';
+import {
+  InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL, MAX_ACTORS, INST_UNIFORM_VECTORS,
+  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit,
+} from '../src/render/actors/inflatedActors';
 import { heights, INFLATE } from '../src/render/actors/inflateMath';
 import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
 import { Billboards } from '../src/render/overworld/billboards';
@@ -8,6 +11,8 @@ import { Billboards } from '../src/render/overworld/billboards';
 const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2, lift: 0, flat: false,
   slot: { u0: 0, v0: 32 / 512, u1: 16 / 1024, v1: 0 } });
 const make = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() });
+/** The attribute fallback (a device with too few vertex uniform vectors). */
+const makeAttributes = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, false);
 
 describe('InflatedActors', () => {
   it('draws one instanced 16x32 grid per actor, its instance data in a uniform array (no instance vertex buffer)', () => {
@@ -62,6 +67,62 @@ describe('InflatedActors', () => {
     expect(a.instances[8]).toBe(Math.fround(16 / 1024));
     a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 }, lift: 0.5 }], right);
     expect(v()).toEqual([first[0], first[1] + 1]);
+  });
+  it('uses the uniform array only where the device has the vertex uniform vectors for it (URL override 0 / 1)', () => {
+    expect(INST_UNIFORM_VECTORS).toBe(MAX_ACTORS * 3);
+    expect(INST_UNIFORMS_MIN_VERTEX_VECTORS).toBe(320);
+    expect(instanceUniformsFit(256)).toBe(false);   // WebGL2's guaranteed minimum
+    expect(instanceUniformsFit(319)).toBe(false);
+    expect(instanceUniformsFit(320)).toBe(true);
+    expect(instanceUniformsFit(4096)).toBe(true);   // ANGLE D3D11
+    expect(instanceUniformsFit(4096, '0')).toBe(false);
+    expect(instanceUniformsFit(256, '1')).toBe(true);
+    expect(instanceUniformsFit(4096, 'x')).toBe(true);
+  });
+  it('compiles each variant to its own programs: the uniform array, or attributes of the same names', () => {
+    const shaders = (a: InflatedActors) => {
+      const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+        uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms;
+      const m = a.mesh.material as THREE.MeshStandardMaterial;
+      m.onBeforeCompile(s, null as unknown as THREE.WebGLRenderer);
+      const depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+      return { main: s.vertexShader, depth: depth.vertexShader, keys: [m.customProgramCacheKey(), depth.customProgramCacheKey()] };
+    };
+    const u = shaders(make()), at = shaders(makeAttributes());
+    for (const v of [u.main, u.depth]) {
+      expect(v).toContain(`uniform vec4 uInst[${INST_UNIFORM_VECTORS}];`);
+      expect(v).toContain('#define aUv (uInst[gl_InstanceID * 3 + 2])');
+      expect(v).not.toContain('attribute vec3 aFoot;');
+    }
+    for (const v of [at.main, at.depth]) {
+      expect(v).toMatch(/attribute vec3 aFoot;\s*attribute vec4 aSize;\s*attribute vec4 aUv;/);
+      expect(v).not.toContain('uInst');
+      // the same body reads them
+      expect(v).toContain('vec3 card = aFoot + uRight * (local.x * aSize.x)');
+    }
+    expect(u.keys).toEqual(['actor:inflated:1:uniforms', 'actor:inflated-depth:1:uniforms']);
+    expect(at.keys).toEqual(['actor:inflated:1:attributes', 'actor:inflated-depth:1:attributes']);
+  });
+  it('attribute fallback: the grid carries foot / size / uv instance attributes (shared with the contact shadows), uploaded on change', () => {
+    const a = makeAttributes();
+    expect(a.instanceUniforms).toBe(false);
+    const g = a.mesh.geometry as THREE.InstancedBufferGeometry;
+    const s = a.geometryForShadows();
+    const right = new THREE.Vector3(1, 0, 0);
+    a.set([spec(1), { ...spec(2), lift: 0.25 }], right);
+    expect(g.instanceCount).toBe(2);
+    expect(Array.from((g.getAttribute('aFoot') as THREE.InstancedBufferAttribute).array.slice(3, 6))).toEqual([2, 0, 3]);
+    expect((g.getAttribute('aSize') as THREE.InstancedBufferAttribute).getZ(1)).toBe(0.25);
+    expect((g.getAttribute('aUv') as THREE.InstancedBufferAttribute).getZ(0)).toBe(Math.fround(16 / 1024));
+    expect(s.getAttribute('aFoot')).toBe(g.getAttribute('aFoot'));
+    expect(Array.from(a.instances.slice(0, 12)).every((x) => x === 0)).toBe(true); // (the uniform array stays unused)
+    const v = () => ['aFoot', 'aSize', 'aUv'].map((k) => (g.getAttribute(k) as THREE.BufferAttribute).version);
+    const first = v();
+    a.set([spec(1), { ...spec(2), lift: 0.25 }], right);       // still: nothing uploads
+    expect(v()).toEqual(first);
+    a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 } }, { ...spec(2), lift: 0.25 }], right);
+    expect(v()).toEqual([first[0], first[1], first[2] + 1]); // a new animation frame: uv only
+    expect((g.getAttribute('aUv') as THREE.InstancedBufferAttribute).updateRanges).toEqual([{ start: 0, count: 8 }]);
   });
   it('casts and receives shadows through a depth twin drawn on both faces with the same relief', () => {
     const a = make();

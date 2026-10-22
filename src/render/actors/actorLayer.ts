@@ -75,8 +75,10 @@ export interface ActorFrame {
   charLight: THREE.Color;
 }
 
-/** Inputs of the inflated actors (field) and object models (kit) (not used by the cards). */
-export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: KitUniforms }
+/** Inputs of the inflated actors (field; `instanceUniforms`: their instance data from a uniform array, default true —
+ *  false on a device with too few vertex uniform vectors, see instanceUniformsFit) and object models (kit) (not used by
+ *  the cards). */
+export interface ActorLayerOptions { field?: { texture: THREE.Texture }; kit?: KitUniforms; instanceUniforms?: boolean }
 
 /** A foot point (world); NPCs (inflatedFeet) also carry their sprite's half-width (world units). */
 type Foot = FadeFoot;
@@ -204,7 +206,7 @@ export class ActorLayer {
       // the rim takes the sky's colour (the kit's, updated by the view's lighting)
       const rim = opts.kit?.uSky ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
       const size = new THREE.Vector2(atlas.target.width ?? SLOT * SLOT_COLS, atlas.target.height ?? SLOT * SLOT_ROWS);
-      this.inflated = new InflatedActors(atlas.target.texture, opts.field.texture, rim, size);
+      this.inflated = new InflatedActors(atlas.target.texture, opts.field.texture, rim, size, opts.instanceUniforms ?? true);
       this.contact = new BlobShadows(this.inflated);
       this.contact.setStrength(CONTACT.strength);
       this.contact.setScale(CONTACT.scale);

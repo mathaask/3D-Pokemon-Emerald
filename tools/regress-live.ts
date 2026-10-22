@@ -434,7 +434,8 @@ interface AbHalf { settle: number; timed: number }
  * switches the mode, emulates and renders `half.settle` untimed frames back to back (a switch re-uploads the instance
  * buffers the modes share, and the iGPU ramps its clock after the harness's idle waits: the settle frames take both),
  * then times `half.timed` frames back to back (gpuFrames: their median). Live: the snapshot `window.__abSnap` is
- * restored before a half once FRAME_AB_WINDOW frames ran since the last restore, `keys` held throughout. Per quad the
+ * restored before a quad once FRAME_AB_WINDOW frames ran since the last restore, `keys` held throughout; the quads after
+ * successive restores start with "on" and "off" in turn, so the half after a restore falls on each arm equally. Per quad the
  * delta is (on₁ + on₂ − off₁ − off₂) / 2: a quad spans well under a second, so the iGPU's clock and thermal drift
  * (several ms within seconds) cancel, and so do a linear trend and the half's place in the quad. Medians over the quads.
  * `aa`: both arms on (an A/A run: the method's noise floor).
@@ -445,14 +446,16 @@ async function abVariantFrames(page: Page, quads: number, keys: string, feature:
   const on = live ? feature.live(true) : feature.preview!(true);
   const off = live ? feature.live(aa) : feature.preview!(aa);
   const script = `(async () => {
-    const out = []; let moved = Infinity, frames = ${FRAME_AB_WINDOW}, p0 = null, restores = 0;
+    const out = []; let moved = Infinity, frames = ${FRAME_AB_WINDOW}, p0 = null, w = -1, qw = 0;
     const pos = () => ${live ? PLAYER_POS : 'null'};
     for (let q = 0; q < ${quads}; q++) {
-      for (const m of q % 2 === 0 ? [1, 0, 0, 1] : [0, 1, 1, 0]) {
-        ${live ? `if (frames >= ${FRAME_AB_WINDOW}) {
-          if (restores++ > 0) { const p1 = pos(); moved = Math.min(moved, p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0); }
-          emu.gba.loadState(window.__abSnap); frames = 0; p0 = undefined;
-        }` : ''}
+      // restores fall between quads; the quads after one start with "on" and "off" in turn (window w), so the half right
+      // after a restore belongs to each arm equally often
+      ${live ? `if (frames >= ${FRAME_AB_WINDOW}) {
+        if (w >= 0) { const p1 = pos(); moved = Math.min(moved, p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0); }
+        emu.gba.loadState(window.__abSnap); frames = 0; p0 = undefined; w++; qw = 0;
+      }` : 'w = 0;'}
+      for (const m of (qw++ + w) % 2 === 0 ? [1, 0, 0, 1] : [0, 1, 1, 0]) {
         if (m) { ${on}; } else { ${off}; }
         ${live ? `emu.step(${k}, ${half.settle})` : `preview.frames(${half.settle})`};
         ${live ? 'if (p0 === undefined) p0 = pos();' : ''}

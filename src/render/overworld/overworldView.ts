@@ -135,13 +135,16 @@ export class OverworldView {
   private livePixels: SpritePixelSource | null = null;
 
   /** `field`: the sprite atlas's inflation field (Modern), kept up to date by the owner after each atlas bake. */
-  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField) {
+  /** `instanceUniforms`: the inflated actors read their instance data from a uniform array (default; false: instance
+   *  attributes, for a device with too few vertex uniform vectors — instanceUniformsFit). */
+  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
+    instanceUniforms = true) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
-    this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms });
+    this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms, instanceUniforms });
     this.scene.add(this.world.group);
     this.scene.add(this.actors.group);
 
@@ -571,7 +574,7 @@ export class OverworldView {
     setKitActors(this.kitUniforms, feet, this.target);
     // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none), each fade's
     // strength ramping up as they come within reach (fadeActorRamp)
-    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus, undefined, undefined, this.fadeNpcs) : NO_FEET;
+    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus, { out: this.fadeNpcs }) : NO_FEET;
     setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH, focus ?? undefined);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;

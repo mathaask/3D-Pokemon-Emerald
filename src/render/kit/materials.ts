@@ -147,35 +147,50 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
   u.uFadeRadius.value = c.w;
 }
 
+/** pickFadeActors's options: at most `max` feet (MAX_FADE_ACTORS) within `radius` (FADE_ACTOR_RADIUS); `out`: a list to
+ *  fill and return (reused across frames, see pickFadeActors). */
+export interface FadePickOptions<T> { max?: number; radius?: number; out?: T[] }
+
+/** No NPC to clear (pickFadeActors with `out`, nothing in reach). */
+const NO_PICKS: readonly never[] = Object.freeze([]);
+
 /**
  * Nearest `max` feet within `radius` (XZ, world units) of the player, excluding the player itself (a foot
  * closer than 0.01): the NPCs the occlusion fade also clears, nearest first (the feet's own objects).
+ * With `out`, the picks are written into it and it is returned truncated to them; with none in reach the shared empty
+ * list is returned and `out` keeps its storage (V8 drops an array's backing store when its length is set to 0): no
+ * allocation per frame once `out` grew.
  */
-export function pickFadeActors<T extends Foot>(feet: readonly T[], player: THREE.Vector3, max = MAX_FADE_ACTORS,
-  radius = FADE_ACTOR_RADIUS, out: T[] = []): T[] {
-  out.length = 0;
+export function pickFadeActors<T extends Foot>(feet: readonly T[], player: THREE.Vector3,
+  { max = MAX_FADE_ACTORS, radius = FADE_ACTOR_RADIUS, out }: FadePickOptions<T> = {}): readonly T[] {
+  const list = out ?? [];
+  let n = 0;
   for (let i = 0; i < feet.length; i++) {
     const p = feet[i];
     const d = (p.x - player.x) ** 2 + (p.z - player.z) ** 2;
-    if (d >= 0.01 ** 2 && d <= radius * radius) insertNearest(out, _pickD, max, p, d);
+    if (d >= 0.01 ** 2 && d <= radius * radius) n = insertNearest(list, _pickD, n, max, p, d);
   }
-  return out;
+  if (n === 0) return out ? NO_PICKS : list;
+  if (list.length !== n) list.length = n; // (n ≥ 1: truncated in place)
+  return list;
 }
 
-/** Inserts `p` at squared distance `d` into `out`, kept ascending by `ds` (its distances) and at most `max` long; after
- *  the equal distances already in it (as a stable sort of the input order). Allocates nothing once `out` / `ds` grew. */
-function insertNearest<T>(out: T[], ds: number[], max: number, p: T, d: number): void {
-  let k = out.length;
+/** Inserts `p` at squared distance `d` into the first `n` entries of `out`, kept ascending by `ds` (their distances) and at
+ *  most `max` long; after the equal distances already there (as a stable sort of the input order). Returns the new
+ *  count. Entries past it are stale (never read); the arrays' lengths only grow, so nothing allocates once they grew. */
+function insertNearest<T>(out: T[], ds: number[], n: number, max: number, p: T, d: number): number {
+  let k = n;
   if (k >= max) {
-    if (!(d < ds[max - 1])) return;
+    if (!(d < ds[max - 1])) return n;
     k = max - 1; // (drops the farthest)
-  }
+  } else n++;
   for (; k > 0 && d < ds[k - 1]; k--) {
     out[k] = out[k - 1];
     ds[k] = ds[k - 1];
   }
   out[k] = p;
   ds[k] = d;
+  return n;
 }
 
 /** Strength of an NPC's fade at XZ distance `d` from the player: 1 up to FADE_ACTOR_FULL, 0 from FADE_ACTOR_RADIUS. */
@@ -217,16 +232,15 @@ export function setKitFocusExtra(u: KitUniforms, feet: readonly FadeFoot[], came
  */
 export function setKitActors(u: KitUniforms, feet: readonly Foot[], target: THREE.Vector3): void {
   const slots = u.uActors.value, near = _near;
-  near.length = 0;
+  let n = 0;
   for (let i = 0; i < feet.length; i++) {
     const p = feet[i];
-    insertNearest(near, _nearD, slots.length, p, (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2);
+    n = insertNearest(near, _nearD, n, slots.length, p, (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2);
   }
   for (let k = 0; k < slots.length; k++) {
-    if (k < near.length) slots[k].set(near[k].x, near[k].y, near[k].z);
+    if (k < n) slots[k].set(near[k].x, near[k].y, near[k].z);
     else slots[k].set(1e4, 0, 1e4);
   }
-  near.length = 0; // (holds no feet between frames)
 }
 
 export type KitPattern = 'none' | 'roofTiles' | 'planks' | 'stone';

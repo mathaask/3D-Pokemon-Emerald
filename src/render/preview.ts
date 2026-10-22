@@ -25,6 +25,7 @@ import { gridEvents } from './kit/events';
 import { buildPreviewActors } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
 import { SpriteField } from './actors/spriteField';
+import { instanceUniformsFit } from './actors/inflatedActors';
 import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
 
 export class PreviewApp {
@@ -89,7 +90,8 @@ export class PreviewApp {
 
     const quality = (params.get('quality') as Quality) ?? 'medium';
     this.spriteAtlas = new SpriteAtlas(tex);
-    this.view = new OverworldView(tex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField);
+    this.view = new OverworldView(tex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField,
+      instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, params.get('actorUniforms')));
     this.view.quality = quality;
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');

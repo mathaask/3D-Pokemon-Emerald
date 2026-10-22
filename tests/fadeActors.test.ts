@@ -27,23 +27,30 @@ describe('pickFadeActors', () => {
     expect(pickFadeActors([{ x: 10, y: 3, z: 13.5 }], player)).toEqual([{ x: 10, y: 3, z: 13.5 }]);
     expect(pickFadeActors([{ x: 14, y: 0, z: 10 }, { x: 14.01, y: 0, z: 10 }], player)).toEqual([{ x: 14, y: 0, z: 10 }]);
     const ring = [1, 2, 3].map((d) => ({ x: 10 + d, y: 0, z: 10 }));
-    expect(pickFadeActors(ring, player, 2)).toEqual(ring.slice(0, 2));
-    expect(pickFadeActors(ring, player, 3, 1.5)).toEqual(ring.slice(0, 1));
+    expect(pickFadeActors(ring, player, { max: 2 })).toEqual(ring.slice(0, 2));
+    expect(pickFadeActors(ring, player, { max: 3, radius: 1.5 })).toEqual(ring.slice(0, 1));
     // the player itself (closer than 0.01), but a character a step beside it counts
     expect(pickFadeActors([{ x: 10.005, y: 0, z: 10 }, { x: 10.5, y: 0, z: 10 }], player)).toEqual([{ x: 10.5, y: 0, z: 10 }]);
   });
   it('fills a reused list (no allocation per frame), nearest first, equal distances in input order', () => {
-    const out: { x: number; y: number; z: number }[] = [{ x: 0, y: 0, z: 0 }];
+    const out: { x: number; y: number; z: number }[] = [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }];
     const a = { x: 12, y: 0, z: 10 }, b = { x: 8, y: 0, z: 10 }, c = { x: 10, y: 0, z: 13 }, d = { x: 10, y: 0, z: 11 };
-    expect(pickFadeActors([c, a, b, d], player, 3, 4, out)).toBe(out);
+    expect(pickFadeActors([c, a, b, d], player, { max: 3, radius: 4, out })).toBe(out);
     expect(out).toEqual([d, a, b]);
     expect(out[1]).toBe(a);
     // the same as sorting every candidate by distance (stable) and keeping the first `max`
     const many = Array.from({ length: 20 }, (_, i) => ({ x: 10 + ((i * 7) % 5) - 2, y: 0, z: 10 + ((i * 3) % 4) - 2 }));
     const d2 = (p: { x: number; z: number }) => (p.x - 10) ** 2 + (p.z - 10) ** 2;
     const ref = many.filter((p) => d2(p) >= 1e-4 && d2(p) <= 9).sort((p, q) => d2(p) - d2(q)).slice(0, 5);
-    expect(pickFadeActors(many, player, 5, 3, out)).toEqual(ref);
+    expect(pickFadeActors(many, player, { max: 5, radius: 3, out })).toEqual(ref);
     expect(out.every((p, i) => p === ref[i])).toBe(true);
+    // nobody in reach: the shared empty list, `out` untouched (its length never drops to 0)
+    const none = pickFadeActors([{ x: 30, y: 0, z: 30 }], player, { out });
+    expect(none).toEqual([]);
+    expect(none).not.toBe(out);
+    expect(out).toHaveLength(5);
+    expect(pickFadeActors([a], player, { out })).toBe(out);
+    expect(out).toEqual([a]);
   });
 });
 
