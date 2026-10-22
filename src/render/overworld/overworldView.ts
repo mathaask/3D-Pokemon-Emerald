@@ -18,7 +18,7 @@ import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
-import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
+import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
 
@@ -54,6 +54,8 @@ export function shadowSettings(q: Quality, style: WorldStyle): { size: number; r
   const size = q === 'low' ? 1024 : q === 'high' ? 4096 : 2048;
   return { size, radius: (SHADOW_SOFTNESS * size) / (2 * SHADOW_SPAN) };
 }
+
+const NO_FEET: readonly { x: number; y: number; z: number }[] = [];
 
 const MAP_TYPE_INDOOR = 8;
 const MAP_TYPE_UNDERGROUND = 4;
@@ -105,6 +107,8 @@ export class OverworldView {
   overrideTarget: THREE.Vector3 | null = null;
   /** When set (map preview `&focus=1`), the occlusion fade centres on this point instead of the player. */
   focusOverride: THREE.Vector3 | null = null;
+  /** The occlusion fade also clears the nearest inflated NPCs (setNpcFade). */
+  private npcFade = true;
   private bufferW = 1;
   private bufferH = 1;
   /** Sprite classifier (set once the ROM tables are readable). */
@@ -353,6 +357,12 @@ export class OverworldView {
     this.actors.inflation = on;
   }
 
+  /** Whether the occlusion fade also clears the nearest inflated NPCs (Modern; false: the player only, as in
+   *  Phase 1 — the harness's `--ab-feature npcfade` baseline). */
+  setNpcFade(on: boolean): void {
+    this.npcFade = on;
+  }
+
   /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (Retro's cards are unaffected). */
   setSpriteFilter(f: SpriteFilter): void {
     this.actors.setSpriteFilter(f);
@@ -544,8 +554,9 @@ export class OverworldView {
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld();
     // Occlusion fade (Modern only): trees/roofs between the camera and the player dither out.
-    const focus = this.focusOverride ?? (this.overrideTarget ? null : this.playerWorld(state));
-    setKitFocus(this.kitUniforms, this.worldStyle === 'modern' ? focus : null, this.camera, this.bufferW, this.bufferH);
+    const modern = this.worldStyle === 'modern';
+    const focus = modern ? this.focusOverride ?? (this.overrideTarget ? null : this.playerWorld(state)) : null;
+    setKitFocus(this.kitUniforms, focus, this.camera, this.bufferW, this.bufferH);
     this.cameraRight.set(Math.cos(yawFx), 0, -Math.sin(yawFx));
 
     this.updateLighting(state);
@@ -554,6 +565,9 @@ export class OverworldView {
     // The feet of the upright sprites (characters, objects) and grass overlays bend the kit's grass.
     const feet = this.actors.update(state, this.actorFrame);
     setKitActors(this.kitUniforms, feet, this.target);
+    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none)
+    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus) : NO_FEET;
+    setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;
     this.weather.update(state.weather, indoorish, dt, this.target, this.cameraRight);

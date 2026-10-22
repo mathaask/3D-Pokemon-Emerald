@@ -3,7 +3,7 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]
+//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--ab [--ab-rounds n] [--ab-feature actors|npcfade]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -31,7 +31,9 @@
 // walking (entries with a `walk` key held through the block; `moved` = the least px the player walked in
 // any timed block, so a block that did not walk shows). Reported per entry: medians of on, off and of the
 // per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging the cell over
-// +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated).
+// +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-feature npcfade switches the NPC
+// occlusion fade instead (Task 11: the player's circle only as the baseline; flagged over +0.3 ms GPU), on the
+// live entries and, idle only, the static ones (the preview's same frames, no snapshot).
 // Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
@@ -105,6 +107,11 @@ const STATIC: StaticEntry[] = [
   // (added in Phase 2 Task 10: its p2-base Retro and Modern references were captured at 1c6fe5a, before the composition,
   // with --label p2-base --only r104_boat)
   { name: 'r104_boat', q: 'map=0.19&focusGfx=88' },
+  // Route 103: a stand-in player on the sand path (&focus=1 at the camera target, cell 53,12) and, 3 cells east, the
+  // NPC of template 11 (gfx 25, cell 56,13) behind a tree crown: the NPC occlusion fade clears it (Task 11; no Petalburg
+  // Woods NPC stands behind a crown). (Added in Phase 2 Task 11: its p2-base Retro and Modern references were captured
+  // at 9cd7896, before the NPC fade, with --label p2-base --only r103_npc)
+  { name: 'r103_npc', q: 'map=0.18&x=53.5&y=12.5&focus=1' },
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
@@ -124,9 +131,20 @@ const SELFTEST_TOL = Math.max(0.02, 0.003 * inflateMax());
 /** xBR self-test parity tolerance (RGBA 0..1: the RGBA8 target's rounding plus float differences). */
 const XBR_TOL = 2 / 255;
 const FIELD_GPU_MS = 0.3;
-/** --ab budgets over inflation off (Phase 2: GPU frame +1.0 ms, renderer CPU +0.5 ms): flagged in the table. */
-const AB_GPU_MS = 1.0;
-const AB_CPU_MS = 0.5;
+/** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
+ *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
+ *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5. */
+interface AbFeature { what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string }
+const AB_FEATURES: Record<string, AbFeature> = {
+  actors: {
+    what: 'Phase 2 actors (inflated + models) on vs off (all cards)', gpuMs: 1.0, cpuMs: 0.5,
+    live: (on) => `emu.renderer.overworld.setActorInflation(${on})`,
+  },
+  npcfade: {
+    what: "NPC occlusion fade on vs off (the player's circle only)", gpuMs: 0.3, cpuMs: 0.5,
+    live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
+  },
+};
 
 interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; xbr: { maxErr: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
@@ -338,17 +356,23 @@ const median = (xs: number[]) => {
 };
 
 /**
- * One --ab variant: `rounds` on/off pairs (order alternating per round), each block restoring the
- * snapshot `window.__abSnap`, settling 5 frames and timing gpuFrames(60) with `keys` held.
+ * One --ab variant: `rounds` on/off pairs (order alternating per round) of `feature`, each block settling 5 frames
+ * and timing gpuFrames(60). Live: each block restores the snapshot `window.__abSnap` first, `keys` held through it.
+ * Static (the preview): the same frames, idle.
  */
-async function abVariant(page: Page, rounds: number, keys: string): Promise<AbVariant> {
+async function abVariant(page: Page, rounds: number, keys: string, feature: AbFeature, live: boolean): Promise<AbVariant> {
   type T = { gpuMs: number; cpuMs: number };
   const on: T[] = [], off: T[] = [];
   let moved = Infinity;
   const k = JSON.stringify(keys);
   for (let r = 0; r < rounds; r++) {
     for (const mode of r % 2 === 0 ? [true, false] : [false, true]) {
-      await page.evaluate(`emu.renderer.overworld.setActorInflation(${mode}); emu.gba.loadState(window.__abSnap)`);
+      if (!live) {
+        await page.evaluate(`${feature.preview!(mode)}; preview.frames(5)`);
+        (mode ? on : off).push(await page.evaluate('preview.gpuFrames(60)') as T);
+        continue;
+      }
+      await page.evaluate(`${feature.live(mode)}; emu.gba.loadState(window.__abSnap)`);
       await page.evaluate(`emu.gpuFrames(5, ${k})`);
       const p0 = await page.evaluate(PLAYER_POS) as number[] | null;
       const g = await page.evaluate(`emu.gpuFrames(60, ${k})`) as T;
@@ -368,14 +392,23 @@ async function abVariant(page: Page, rounds: number, keys: string): Promise<AbVa
 }
 
 /** --ab on a live entry after its steps: idle and (with `walk`) walking variants; leaves the entry as found. */
-async function abMeasure(page: Page, e: LiveEntry, rounds: number): Promise<NonNullable<EntryStats['ab']>> {
+async function abMeasure(page: Page, e: LiveEntry, rounds: number, feature: AbFeature): Promise<NonNullable<EntryStats['ab']>> {
   await page.evaluate('window.__abSnap = emu.gba.saveState()');
   try {
-    const idle = await abVariant(page, rounds, '');
-    const walk = e.walk ? await abVariant(page, rounds, e.walk) : undefined;
+    const idle = await abVariant(page, rounds, '', feature, true);
+    const walk = e.walk ? await abVariant(page, rounds, e.walk, feature, true) : undefined;
     return { rounds, idle, walk };
   } finally {
-    await page.evaluate('emu.renderer.overworld.setActorInflation(true); emu.gba.loadState(window.__abSnap)');
+    await page.evaluate(`${feature.live(true)}; emu.gba.loadState(window.__abSnap)`);
+  }
+}
+
+/** --ab on a static entry (a feature with a preview switch): idle only; leaves the feature on. */
+async function abMeasureStatic(page: Page, rounds: number, feature: AbFeature): Promise<NonNullable<EntryStats['ab']>> {
+  try {
+    return { rounds, idle: await abVariant(page, rounds, '', feature, false) };
+  } finally {
+    await page.evaluate(feature.preview!(true));
   }
 }
 
@@ -398,6 +431,9 @@ async function main(): Promise<void> {
   const ab = flag('ab');
   const abRounds = parseInt(arg('ab-rounds', '8'), 10);
   if (ab && !(abRounds >= 1)) throw new Error('--ab-rounds must be a positive integer');
+  const abFeatureName = arg('ab-feature', 'actors');
+  const abFeature = AB_FEATURES[abFeatureName];
+  if (!abFeature) throw new Error(`unknown --ab-feature ${abFeatureName} (${Object.keys(AB_FEATURES).join(', ')})`);
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
   const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
@@ -520,10 +556,10 @@ async function main(): Promise<void> {
             entry.gpuP90 = round(g.gpuP90, 3);
             entry.cpuMs = round(g.cpuMs, 3);
           }
-          if (ab && e.kind === 'live' && style === 'modern') {
-            const r = entry.ab = await abMeasure(page, e, abRounds);
-            const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > AB_GPU_MS ? ' OVER' : ''} | `
-              + `${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${v.dCpu > AB_CPU_MS ? ' OVER' : ''}` : '- | -');
+          if (ab && style === 'modern' && (e.kind === 'live' || abFeature.preview)) {
+            const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature) : await abMeasureStatic(page, abRounds, abFeature);
+            const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
+              + `${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${v.dCpu > abFeature.cpuMs ? ' OVER' : ''}` : '- | -');
             abRows.push(`| ${e.name} | ${r.idle.gpuOn.toFixed(2)} / ${r.idle.gpuOff.toFixed(2)} | ${cell(r.idle)} | `
               + `${r.walk ? `${r.walk.gpuOn.toFixed(2)} / ${r.walk.gpuOff.toFixed(2)}` : '-'} | ${cell(r.walk)} | ${r.walk?.moved ?? '-'} |`);
           }
@@ -594,7 +630,7 @@ async function main(): Promise<void> {
     console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`);
   }
   if (abRows.length) {
-    console.log(`\n--ab: Phase 2 actors (inflated + models) on vs off (all cards), ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${AB_GPU_MS} or Δcpu > +${AB_CPU_MS}`);
+    console.log(`\n--ab: ${abFeature.what}, ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${abFeature.gpuMs} or Δcpu > +${abFeature.cpuMs}`);
     console.log('| entry | idle gpu on / off | idle Δgpu | idle Δcpu | walk gpu on / off | walk Δgpu | walk Δcpu | walk moved px |');
     console.log('|---|---|---|---|---|---|---|---|');
     console.log(abRows.join('\n'));

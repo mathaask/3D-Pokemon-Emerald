@@ -168,6 +168,8 @@ export class ActorLayer {
   private modelList: ModelInstance[] = [];
   private footPool: Foot[] = [];
   private feet: Foot[] = [];
+  /** This frame's inflated actors' feet (objects shared with `feet`). */
+  private npcs: Foot[] = [];
 
   constructor(private readonly atlas: ActorAtlas, opts: ActorLayerOptions = {}) {
     this.billboards = new Billboards(atlas);
@@ -233,6 +235,12 @@ export class ActorLayer {
     return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: this.models?.count ?? 0 };
   }
 
+  /** The feet of the last update's inflated actors (the player among them), in sprite order, reusing one array:
+   *  the NPCs the occlusion fade may clear — never grass overlays, cards (Retro, inflation off) or models. */
+  get inflatedFeet(): readonly { x: number; y: number; z: number }[] {
+    return this.npcs;
+  }
+
   /** Rebuilds every list from scratch; returns the grass-bending feet, reusing one array: every non-flat sprite
    *  drawn — uprights (cards, inflated actors, models) and grass overlays, in sprite order. */
   update(state: GameState, f: ActorFrame): readonly { x: number; y: number; z: number }[] {
@@ -245,7 +253,7 @@ export class ActorLayer {
       this.bySprite.clear();
       for (const o of state.objects ?? []) this.bySprite.set(o.spriteId, o);
     }
-    let n = 0, c = 0, a = 0, m = 0, k = 0;
+    let n = 0, c = 0, a = 0, m = 0, k = 0, q = 0;
     for (let i = 0; i < sprites.length; i++) {
       const s = sprites[i];
       if (!s.coordOffset || s.invisible) continue;
@@ -268,13 +276,15 @@ export class ActorLayer {
       const slot = this.atlas.slots.get(s.index);
       if (!slot) continue;
       const spec = placeCard(this.specPool[n++] ??= blankSpec(), s, kind, slot, f.heightAt(cx, cy), GRASS_OFFSET);
-      if (route === 'inflated' && inflate) this.actors[a++] = spec;
+      const inflated = route === 'inflated' && inflate;
+      if (inflated) this.actors[a++] = spec;
       else this.cards[c++] = spec;
       if (spec.flat) continue;
       // (the grass bends around where the sprite stands, before an overlay moves nearer the eye)
       const foot = this.footPool[m] ??= { x: 0, y: 0, z: 0 };
       foot.x = spec.footX; foot.y = spec.footY; foot.z = spec.footZ;
       this.feet[m++] = foot;
+      if (inflated) this.npcs[q++] = foot;
       // in front of the inflated legs it covers
       if (inflate && kind === SpriteKind.Grass) towardEye(spec, f.cameraPosition, f.cameraRight, INFLATED_GRASS_EXTRA);
     }
@@ -282,6 +292,7 @@ export class ActorLayer {
     this.actors.length = a;
     this.modelList.length = k;
     this.feet.length = m;
+    this.npcs.length = q;
     this.billboards.set(this.cards, f.cameraRight, f.charLight);
     if (this.inflated && this.contact) {
       // Retro: no inflated mesh, no contact shadows (empty and hidden)

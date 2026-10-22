@@ -201,6 +201,11 @@ export class PreviewApp {
     this.view.setActorMask(on);
   }
 
+  /** Whether the occlusion fade also clears the NPCs near the focus (&focus; the harness's `--ab-feature npcfade`). */
+  setNpcFade(on: boolean): void {
+    this.view.setNpcFade(on);
+  }
+
   /** Times n frames (as frames(1) each) on the GPU: timer queries, medians (as emu.gpuFrames). */
   gpuFrames(n: number): Promise<GpuTiming> {
     return timeGpuFrames(this.webgl.getContext() as WebGL2RenderingContext, n, () => this.frame(1 / 60));

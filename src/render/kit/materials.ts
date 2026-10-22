@@ -1,10 +1,14 @@
 // Stylised material factory: MeshStandardMaterial with injected wind sway, actor bending,
-// camera-to-player occlusion fade, night glow and procedural surface patterns.
+// occlusion fade (between the camera and the player, and the nearest NPCs), night glow and procedural surface patterns.
 
 import * as THREE from 'three';
 import { KIT_NOISE_GLSL } from './noise.glsl';
 
 export const MAX_ACTORS = 8;
+/** NPCs the occlusion fade also clears (besides the player): the nearest ones, those you talk to. */
+export const MAX_FADE_ACTORS = 3;
+/** How near the player (XZ, world units = cells) an NPC must stand for the occlusion fade to clear it. */
+export const FADE_ACTOR_RADIUS = 4;
 
 /** Shared, per-frame uniforms (owned by OverworldView; referenced by every kit material). */
 export interface KitUniforms {
@@ -18,6 +22,9 @@ export interface KitUniforms {
   uFocusDepth: { value: number };
   /** Occlusion-fade radius in pixels (0 disables). */
   uFadeRadius: { value: number };
+  /** The occlusion fade's NPC circles (MAX_FADE_ACTORS, filled in order): (px.x, px.y, depth, radius) as the
+   *  player's uFocusPx / uFocusDepth / uFadeRadius; radius 0 = unused (the rest are unused too). */
+  uFocusExtra: { value: THREE.Vector4[] };
   /** Feet of characters that bend grass (unused slots far away). */
   uActors: { value: THREE.Vector3[] };
   /** Sky colour (linear) for water reflections. */
@@ -32,6 +39,7 @@ export function createKitUniforms(): KitUniforms {
     uFocusPx: { value: new THREE.Vector2(-1e4, -1e4) },
     uFocusDepth: { value: 0 },
     uFadeRadius: { value: 0 },
+    uFocusExtra: { value: Array.from({ length: MAX_FADE_ACTORS }, () => new THREE.Vector4(-1e4, -1e4, 0, 0)) },
     uActors: { value: Array.from({ length: MAX_ACTORS }, () => new THREE.Vector3(1e4, 0, 1e4)) },
     uSky: { value: new THREE.Color(0.75, 0.88, 1.0) },
   };
@@ -50,7 +58,27 @@ export const FADE_CORE = 0.85;
 /** Warm light of lit windows at night (GLSL, linear RGB): house windows (KIT_GLOW), special facades'
  *  panes and the legacy walls' glass. */
 export const WARM_GLOW_GLSL = 'vec3(1.0, 0.72, 0.38)';
-const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3();
+const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3(), _circle = new THREE.Vector4();
+
+type Foot = { x: number; y: number; z: number };
+
+/**
+ * The occlusion-fade circle of a character standing at `feet` (world space), seen by `camera` in a
+ * `w`×`h`-pixel render target, into `out`: (centre px x, centre px y, depth, radius px). The camera's
+ * matrices must be current.
+ */
+function fadeCircle(feet: Foot, camera: THREE.Camera, w: number, h: number, out: THREE.Vector4): THREE.Vector4 {
+  // the character as projected: feet and the top of its sprite (NDC)
+  const f = _feet.set(feet.x, feet.y, feet.z).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
+  // the circle centres on the sprite's middle on screen; what is nearer the camera than its chest fades
+  out.x = ((f.x + t.x) * 0.25 + 0.5) * w;
+  out.y = ((f.y + t.y) * 0.25 + 0.5) * h;
+  out.z = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
+  // its projected height, in target pixels
+  const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
+  out.w = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
+  return out;
+}
 
 /**
  * Aims the occlusion fade at a character standing at `feet` (world space), seen by `camera`
@@ -61,22 +89,42 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
     u.uFadeRadius.value = 0;
     return;
   }
-  // the character as projected: feet and the top of its sprite (NDC)
-  const f = _feet.copy(feet).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
-  // the circle centres on the sprite's middle on screen; what is nearer the camera than its chest fades
-  u.uFocusPx.value.set(((f.x + t.x) * 0.25 + 0.5) * w, ((f.y + t.y) * 0.25 + 0.5) * h);
-  u.uFocusDepth.value = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
-  // its projected height, in target pixels
-  const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
-  u.uFadeRadius.value = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
+  const c = fadeCircle(feet, camera, w, h, _circle);
+  u.uFocusPx.value.set(c.x, c.y);
+  u.uFocusDepth.value = c.z;
+  u.uFadeRadius.value = c.w;
+}
+
+/**
+ * Nearest `max` feet within `radius` (XZ, world units) of the player, excluding the player itself (a foot
+ * closer than 0.01): the NPCs the occlusion fade also clears, nearest first (the feet's own objects).
+ */
+export function pickFadeActors(feet: readonly Foot[], player: THREE.Vector3, max = MAX_FADE_ACTORS,
+  radius = FADE_ACTOR_RADIUS): Foot[] {
+  const d2 = (p: Foot) => (p.x - player.x) ** 2 + (p.z - player.z) ** 2;
+  return feet.filter((p) => { const d = d2(p); return d >= 0.01 ** 2 && d <= radius * radius; })
+    .sort((p, q) => d2(p) - d2(q))
+    .slice(0, max);
+}
+
+/**
+ * Aims the occlusion fade's NPC circles at `feet` (the first MAX_FADE_ACTORS; world space), with the same
+ * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC; unused slots radius 0 (empty: off).
+ */
+export function setKitFocusExtra(u: KitUniforms, feet: readonly Foot[], camera: THREE.Camera, w: number, h: number): void {
+  const slots = u.uFocusExtra.value;
+  for (let k = 0; k < slots.length; k++) {
+    if (k < feet.length) fadeCircle(feet[k], camera, w, h, slots[k]);
+    else slots[k].w = 0;
+  }
 }
 
 /**
  * Feet (world space) of the characters that bend the grass: the MAX_ACTORS nearest `target` (the
  * camera's focus) fill the slots, unused slots go far away.
  */
-export function setKitActors(u: KitUniforms, feet: readonly { x: number; y: number; z: number }[], target: THREE.Vector3): void {
-  const d2 = (p: { x: number; y: number; z: number }) => (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2;
+export function setKitActors(u: KitUniforms, feet: readonly Foot[], target: THREE.Vector3): void {
+  const d2 = (p: Foot) => (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2;
   const near = [...feet].sort((p, q) => d2(p) - d2(q));
   const slots = u.uActors.value;
   for (let k = 0; k < slots.length; k++) {
@@ -202,15 +250,29 @@ uniform vec3 uSky;
 uniform vec2 uFocusPx;
 uniform float uFocusDepth;
 uniform float uFadeRadius;
+uniform vec4 uFocusExtra[${MAX_FADE_ACTORS}];
 uniform float uGlow;
 varying vec3 vKitWorld;
 ${KIT_NOISE_GLSL}
 `;
 
+// The player's circle, then the nearby NPCs' (same core / edge / Bayer rule: a fragment goes where any circle
+// dithers it out). The NPC slots fill in order, so an empty first slot skips them all (Retro, nobody near).
 const FADE = /* glsl */ `
 #ifdef KIT_FADE
-if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
-  float kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
+{
+  float kf = 0.0;
+  if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
+    kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
+  }
+  if (uFocusExtra[0].w > 0.0) {
+    for (int k = 0; k < ${MAX_FADE_ACTORS}; k++) {
+      vec4 e = uFocusExtra[k];
+      if (e.w > 0.0 && vViewPosition.z < e.z - 0.6) {
+        kf = max(kf, 1.0 - smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, length(gl_FragCoord.xy - e.xy)));
+      }
+    }
+  }
   if (kf > 0.0 && kitBayer4(gl_FragCoord.xy) < kf * 0.9) discard;
 }
 #endif
@@ -262,7 +324,7 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
   o: Hooks, full: boolean): void {
   Object.assign(s.uniforms, {
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
-    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, ...local, ...slots,
+    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, uFocusExtra: u.uFocusExtra, ...local, ...slots,
   });
   s.vertexShader = VERT_PRELUDE + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
