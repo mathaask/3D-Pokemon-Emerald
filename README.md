@@ -140,4 +140,7 @@ their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one o
   ridges (Mt Chimney, Route 112, Jagged Pass), much of Ever Grande City's rock, the crater
   walls of Sootopolis and Lavaridge's cliffs, and a few special buildings (Devon Corp, the
   Battle Pyramid, Pike and Palace) still use the pixel-art reconstruction.
+- The two largest multi-piece world sprites, the S.S. Tidal and the submarine's shadow, are still
+  drawn from their base sprite shape (garbled) in both 3D styles; the moving truck is composed
+  correctly.
 - Audio needs one key press or click before it can start (a browser requirement).

@@ -5,12 +5,13 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 
 ## Active work (read this first after a context reset)
 - **Project:** Modern stylized 3D models (replace pixel-textured boxes/cards with real models).
-- **Phase 1 (outdoor environment) is done** (merged to `main`; known gaps in the progress log).
-- **Phase 2 — characters, Pokémon, field objects — in progress** on branch `phase2-characters`,
-  plan `docs/superpowers/plans/2026-10-20-phase2-characters.md` (12 tasks), executed subagent-driven.
-  Resume from the SDD ledger `.superpowers/sdd/2026-10-20-phase2-characters/progress.md` (gitignored;
-  tasks with a `Task N: complete` line are done) and the Phase 2 checklist in the progress log.
-  Show the user a phase progress bar in every update (they write Norwegian; reply in Norwegian).
+- **Phase 1 (outdoor environment) and Phase 2 (characters, Pokémon, field objects) are done** (merged to
+  `main`; results, numbers and known gaps in the progress log; full rulings in `phase1-sdd-ledger.md` /
+  `phase2-sdd-ledger.md`).
+- **Next:** Phase 1 follow-up (terrain height solver v2, world-program precompile, cheaper crossings), then
+  Phase 3 (battles) — see "Next step" in the progress log. Write the plan first, then execute
+  subagent-driven (only `opus` subagents work here). Show the user a phase progress bar in every update
+  (they write Norwegian; reply in Norwegian). Merge + push to `origin` (private account) without asking.
 - **Spec:** `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - **Progress log (source of truth for where we are):** `docs/superpowers/progress/modern-3d.md`
   — update it after every completed task / milestone, and before long-running steps.

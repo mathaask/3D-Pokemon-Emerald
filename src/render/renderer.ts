@@ -239,6 +239,10 @@ export class Renderer {
 
   render(_dtMs: number): void {
     this.webgl.info.reset();
+    // a throw inside an earlier frame's PostFX pass leaves its offscreen target bound and autoClear off:
+    // start every frame from the canvas, so classic 2D (V) still shows up after such a failure
+    this.webgl.setRenderTarget(null);
+    this.webgl.autoClear = true;
     let now: number, dt: number;
     if (this.fixedDt !== null) {
       dt = this.fixedDt;
