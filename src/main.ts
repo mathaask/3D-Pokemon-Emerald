@@ -10,6 +10,7 @@ import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/s
 import { keyMask } from './input/keyNames';
 import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
 import { frameGuard } from './render/frameGuard';
+import { parseSpriteFilter } from './render/actors/actorLayer';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
@@ -23,8 +24,8 @@ function urlOverrides(params: URLSearchParams, s: Settings): void {
   if (style === 'modern' || style === 'retro') s.worldStyle = style;
   const camera = params.get('camera');
   if (camera !== null && /^[0-3]$/.test(camera)) s.camera = Number(camera);
-  const spriteFilter = params.get('spriteFilter');
-  if (spriteFilter === 'smooth' || spriteFilter === 'pixel') s.spriteFilter = spriteFilter;
+  const spriteFilter = parseSpriteFilter(params.get('spriteFilter'));
+  if (spriteFilter) s.spriteFilter = spriteFilter;
 }
 
 async function sha1(data: Uint8Array): Promise<string> {

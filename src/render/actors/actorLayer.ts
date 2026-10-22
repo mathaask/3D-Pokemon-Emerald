@@ -20,8 +20,14 @@ import { SpriteColorCache, type SpritePixelSource, type SpriteSample } from './s
 import { ObjectModels, precompileScene, type ModelInstance } from './objectModels';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
-/** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. */
+/** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. The saved
+ *  setting and the URL override (?spriteFilter=) are read with parseSpriteFilter. */
 export type SpriteFilter = 'smooth' | 'pixel';
+
+/** A sprite filter from a saved setting or a URL value; null for anything else (the caller keeps its own). */
+export function parseSpriteFilter(v: unknown): SpriteFilter | null {
+  return v === 'smooth' || v === 'pixel' ? v : null;
+}
 
 /** Retro: every visible sprite is a card. Modern: decals/grass are cards, uprights inflate, mapped objects are models. */
 export function routeSprite(kind: SpriteKind, style: WorldStyle, mapped: boolean): ActorRoute {

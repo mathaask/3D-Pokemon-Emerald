@@ -1,5 +1,7 @@
 // Settings panel (Esc / O): view, world style, sprite edges, camera, graphics quality, effects, audio, save management.
 
+import { parseSpriteFilter, type SpriteFilter } from '../render/actors/actorLayer';
+
 export interface Settings {
   view: 'auto' | 'classic';
   worldStyle: 'modern' | 'retro';
@@ -9,7 +11,7 @@ export interface Settings {
   volume: number;
   camera: number;
   /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (nearest texels). Retro ignores it. */
-  spriteFilter: 'smooth' | 'pixel';
+  spriteFilter: SpriteFilter;
 }
 
 const KEY = 'emerald3d.settings';
@@ -26,7 +28,7 @@ export function parseSettings(raw: string | null): Settings {
   }
   // an unknown style would turn the kit off yet keep Modern's shadows and blur
   if (s.worldStyle !== 'modern' && s.worldStyle !== 'retro') s.worldStyle = 'modern';
-  if (s.spriteFilter !== 'smooth' && s.spriteFilter !== 'pixel') s.spriteFilter = 'smooth';
+  s.spriteFilter = parseSpriteFilter(s.spriteFilter) ?? 'smooth';
   return s;
 }
 

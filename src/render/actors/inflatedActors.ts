@@ -19,6 +19,7 @@ import { put, markRange } from '../instanceUpload';
 import { INFLATE } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { XBR_GLSL } from './xbr.glsl';
+import { afterChunk, glslFloat, patchChunk } from './glsl';
 
 /** Grid segments per actor (spec §6): one per sprite pixel of a 16×32 character. */
 export const ACTOR_GRID = { x: 16, y: 32 };
@@ -94,9 +95,6 @@ export const LAMP_CEILING = 9;
  *  under the bloom threshold, so sun-facing pale pixels never glow. Baked into the shader (compile-time). */
 export const SHOULDER = { knee: 0.8, max: 1.0 };
 
-/** A GLSL float literal of `v` at full precision. */
-const glsl = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
-
 // The field at an atlas uv, clamped to the sprite's own rectangle (texels, rows bottom-up): never
 // reads a neighbouring slot; its gradient in px per px (scale-free). The relief faces the viewer: each
 // point of the card rises along its own ray to the eye (uEye), so the camera sees exactly the sprite's
@@ -119,7 +117,7 @@ vec2 fieldGrad(vec2 uv, vec4 rect, float s) {
 }
 // SHADE_GAIN x the slope of (h / amp)^2 = SHADE_GAIN x 2 h grad(h) / amp^2, over ±SHADE_STEP texels
 vec2 shadeSlope(vec2 uv, vec4 rect) {
-  return ${glsl(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect, ${glsl(SHADE_STEP)});
+  return ${glslFloat(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect, ${glslFloat(SHADE_STEP)});
 }
 vec3 actorNormal(vec3 f, vec2 g) {
   vec3 r = normalize(uRight - dot(uRight, f) * f); // screen right, then screen up = f x r
@@ -168,7 +166,7 @@ const VERT_NORMAL = 'vec3 objectNormal = vFacing;';
 // in above the legs (RELIEF_FADE): they keep the card's depth, so 3D grass blades in front still hide them.
 const VERT_POSITION = /* glsl */ `
 float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);
-float relief = smoothstep(${glsl(RELIEF_FADE.from)}, ${glsl(RELIEF_FADE.to)}, local.y);
+float relief = smoothstep(${glslFloat(RELIEF_FADE.from)}, ${glslFloat(RELIEF_FADE.to)}, local.y);
 vec3 transformed = card + normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief);
 `;
 
@@ -225,24 +223,15 @@ totalEmissiveRadiance += diffuseColor.rgb * uRimColor * uRim * pow(1.0 - saturat
 // Point lights (the cave lantern, carried at the player's chest) reach an actor with a soft ceiling
 // (irradiance E -> E / (1 + E / LAMP_CEILING)): a face next to the lamp is lit warm, not blown out.
 const POINT_ATTENUATION = 'light.color *= getDistanceAttenuation( lightDistance, pointLight.distance, pointLight.decay );';
-const LAMP_GLSL = `\nlight.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${glsl(LAMP_CEILING)};`;
+const LAMP_GLSL = `\nlight.color /= 1.0 + max(light.color.r, max(light.color.g, light.color.b)) / ${glslFloat(LAMP_CEILING)};`;
 
-// Mean-preserving relief shading: Lambert on the unnormalised normal facing + slope, i.e. the tilted unit
-// normal's direct light × 1 / cos(tilt), and the sky's tilted share likewise. The slope's mean over a
-// sprite's opaque texels is 0 (the distance estimate is 0 on the outline), so the sprite's mean light stays
-// the flat card's: the centre brightens as much as the edges darken. Then the floor: the
-// diffuse light's luminance never drops below that of uFloor (LIGHT_FLOOR × the cards' light), so actors
-// stay readable in the dark (a cave beyond the lantern, deep shade) and never turn black. The lift keeps the
-// lit colour's hue, blending to the floor's own colour where almost no light arrives (its hue is noise).
-const FRAG_FLOOR = /* glsl */ `
+// The light floor (also the object models': objectModels.ts), after the lights: the diffuse light's luminance never
+// drops below that of uFloor (LIGHT_FLOOR × the cards' light), so actors stay readable in the dark (a cave beyond the
+// lantern, deep shade) and never turn black. The lift keeps the lit colour's hue, blending to the floor's own colour
+// where almost no light arrives (its hue is noise). Uniform-driven: no program per scene.
+export const LIGHT_FLOOR_GLSL = /* glsl */ `
 {
   const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-  reflectedLight.directDiffuse *= actorSec;
-  #if NUM_HEMI_LIGHTS > 0
-    reflectedLight.indirectDiffuse += BRDF_Lambert(material.diffuseContribution) * (actorSec - 1.0)
-      * 0.5 * (hemisphereLights[0].skyColor - hemisphereLights[0].groundColor) * dot(normal, hemisphereLights[0].direction);
-  #endif
-  reflectedLight.indirectDiffuse = max(reflectedLight.indirectDiffuse, vec3(0.0));
   vec3 lit = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
   vec3 floorLight = material.diffuseContribution * uFloor;
   float l = dot(lit, LUMA), lf = dot(floorLight, LUMA);
@@ -253,13 +242,26 @@ const FRAG_FLOOR = /* glsl */ `
 }
 `;
 
+// Mean-preserving relief shading, before the floor: Lambert on the unnormalised normal facing + slope, i.e. the
+// tilted unit normal's direct light × 1 / cos(tilt), and the sky's tilted share likewise. The slope ∝ h·∇h =
+// ∇(h²/2) sums to ~0 over a sprite's texels (antisymmetry: h = 0 outside the sprite, so the differences of h²
+// telescope), so the sprite's mean light stays the flat card's: the centre brightens as much as the edges darken.
+const FRAG_FLOOR = /* glsl */ `
+reflectedLight.directDiffuse *= actorSec;
+#if NUM_HEMI_LIGHTS > 0
+  reflectedLight.indirectDiffuse += BRDF_Lambert(material.diffuseContribution) * (actorSec - 1.0)
+    * 0.5 * (hemisphereLights[0].skyColor - hemisphereLights[0].groundColor) * dot(normal, hemisphereLights[0].direction);
+#endif
+reflectedLight.indirectDiffuse = max(reflectedLight.indirectDiffuse, vec3(0.0));
+${LIGHT_FLOOR_GLSL}`;
+
 // A soft shoulder on the actor's outgoing light (hue kept): above SHOULDER.knee it eases towards
 // SHOULDER.max, below the bloom threshold (post.ts: 1.05) — a sun-facing white crown would glow. (Also the object
 // models': objectModels.ts.)
 export const FRAG_SHOULDER = /* glsl */ `
 {
   float m = max(outgoingLight.r, max(outgoingLight.g, outgoingLight.b));
-  const float K = ${glsl(SHOULDER.knee)}, R = ${glsl(SHOULDER.max - SHOULDER.knee)};
+  const float K = ${glslFloat(SHOULDER.knee)}, R = ${glslFloat(SHOULDER.max - SHOULDER.knee)};
   if (m > K) outgoingLight *= (K + R * (1.0 - exp(-(m - K) / R))) / m;
 }
 `;
@@ -276,7 +278,7 @@ ${VERT_CARD}
 ${VERT_POSITION}
   vUv = vAtlasUv;
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-  mvPosition.z -= ${glsl(SHADOW_PUSH)}; // away from the light, along its rays
+  mvPosition.z -= ${glslFloat(SHADOW_PUSH)}; // away from the light, along its rays
   gl_Position = projectionMatrix * mvPosition;
 }
 `;
@@ -295,13 +297,6 @@ void main() {
   gl_FragColor = packDepthToRGBA(gl_FragCoord.z);
 }
 `;
-
-/** Replaces `chunk` in `src`; throws if three renamed it (the patch would silently do nothing). */
-function patch(src: string, chunk: string, by: string): string {
-  const include = `#include <${chunk}>`;
-  if (!src.includes(include)) throw new Error(`inflatedActors: three shader chunk <${chunk}> not found`);
-  return src.replace(include, by);
-}
 
 /** three's lights_pars_begin with the point lights' soft ceiling (LAMP_CEILING; also the object models'); throws if the
  *  attenuation line changed. */
@@ -369,17 +364,17 @@ export class InflatedActors {
     material.onBeforeCompile = (s) => {
       Object.assign(s.uniforms, u);
       let v = vertPrelude(instanceUniforms) + s.vertexShader;
-      v = patch(v, 'beginnormal_vertex', VERT_CARD + VERT_NORMAL);
-      v = patch(v, 'begin_vertex', VERT_POSITION);
+      v = patchChunk(v, 'beginnormal_vertex', VERT_CARD + VERT_NORMAL);
+      v = patchChunk(v, 'begin_vertex', VERT_POSITION);
       s.vertexShader = v;
       let f = FRAG_PRELUDE + s.fragmentShader;
-      f = patch(f, 'map_fragment', '#include <map_fragment>\n' + FRAG_COLOR);
-      f = patch(f, 'normal_fragment_maps', '#include <normal_fragment_maps>\n' + FRAG_NORMAL);
-      f = patch(f, 'emissivemap_fragment', '#include <emissivemap_fragment>\n' + FRAG_RIM);
-      f = patch(f, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
-      f = patch(f, 'lights_fragment_end', '#include <lights_fragment_end>\n' + FRAG_FLOOR);
-      f = patch(f, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
-      f = patch(f, 'dithering_fragment', '#include <dithering_fragment>\n' + MASK_GLSL);
+      f = afterChunk(f, 'map_fragment', FRAG_COLOR);
+      f = afterChunk(f, 'normal_fragment_maps', FRAG_NORMAL);
+      f = afterChunk(f, 'emissivemap_fragment', FRAG_RIM);
+      f = patchChunk(f, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
+      f = afterChunk(f, 'lights_fragment_end', FRAG_FLOOR);
+      f = patchChunk(f, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
+      f = afterChunk(f, 'dithering_fragment', MASK_GLSL);
       s.fragmentShader = f;
     };
     material.customProgramCacheKey = () => programKey(false, instanceUniforms);

@@ -26,6 +26,7 @@ import { buildPreviewActors } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
 import { SpriteField } from './actors/spriteField';
 import { instanceUniformsFit } from './actors/inflatedActors';
+import { parseSpriteFilter } from './actors/actorLayer';
 import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
 
 export class PreviewApp {
@@ -95,7 +96,7 @@ export class PreviewApp {
     this.view.quality = quality;
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
-    this.view.setSpriteFilter(params.get('spriteFilter') === 'pixel' ? 'pixel' : 'smooth');
+    this.view.setSpriteFilter(parseSpriteFilter(params.get('spriteFilter')) ?? 'smooth');
     // object models sample their colours where the atlas does: the scratch OBJ VRAM and palette (1D mapping)
     this.view.setActorPixelSource({ vram: bus.vram, palette, map2d: false });
     const mem = new Mem(bus);

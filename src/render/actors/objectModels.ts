@@ -19,7 +19,8 @@ import { TRUNK_FRAG, TRUNK_HEAD } from '../kit/trees';
 import { put, markRange } from '../instanceUpload';
 import type { ObjectModelKind } from './objectMap';
 import type { SpriteColors, SpriteTones } from './spriteColors';
-import { FRAG_SHOULDER, LIGHT_FLOOR, MASK_GLSL, lampCeiling } from './inflatedActors';
+import { FRAG_SHOULDER, LIGHT_FLOOR, LIGHT_FLOOR_GLSL, MASK_GLSL, lampCeiling } from './inflatedActors';
+import { afterChunk, patchChunk } from './glsl';
 import {
   berryFlowerGeo, berryFruitGeo, berryPlantGeo, boulderGeo, crackedRockGeo, cutTreeGeo, mirroredGeo, pokeBallGeo, truckGeo, truckLogoGeo,
   type BerryStage,
@@ -194,30 +195,6 @@ const TREE_HEAD = TRUNK_HEAD + 'uniform float uMask;\nuniform vec3 uFloor;\n';
 /** Gentle sway of the Cut tree (the bushy trees' at its size). */
 const TREE_WIND = { amp: 0.03, height: 1.15 };
 
-// The inflated actors' light floor (inflatedActors.ts FRAG_FLOOR, without their relief terms): the diffuse light's
-// luminance never drops below that of uFloor (LIGHT_FLOOR × the cards' light), keeping the lit colour's hue and
-// blending to the floor's own where almost no light arrives. Uniform-driven: no program per scene.
-const FLOOR_GLSL = /* glsl */ `
-{
-  const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-  vec3 lit = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
-  vec3 floorLight = material.diffuseContribution * uFloor;
-  float l = dot(lit, LUMA), lf = dot(floorLight, LUMA);
-  if (l < lf) {
-    float k = lf / max(l, 1e-5);
-    reflectedLight.indirectDiffuse += mix(lit * k, floorLight, smoothstep(1.5, 4.0, k)) - lit;
-  }
-}
-`;
-
-/** Replaces `#include <chunk>` with `code`; throws if three renamed it. */
-function include(src: string, chunk: string, code: string): string {
-  const line = `#include <${chunk}>`;
-  if (!src.includes(line)) throw new Error(`objectModels: three shader chunk <${chunk}> not found`);
-  return src.replace(line, code);
-}
-/** Replaces `#include <chunk>` with itself + `code`. */
-const after = (src: string, chunk: string, code: string) => include(src, chunk, `#include <${chunk}>\n${code}`);
 
 interface Part {
   spec: PartSpec;
@@ -392,10 +369,11 @@ export class ObjectModels {
       base.call(material, s, r);
       s.uniforms.uMask = this.mask;
       s.uniforms.uFloor = this.floor;
-      s.vertexShader = include(s.vertexShader, 'color_vertex', COLOR_VERTEX);
-      let fs = include(s.fragmentShader, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
-      fs = include(fs, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
-      s.fragmentShader = after(after(fs, 'lights_fragment_end', FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
+      s.vertexShader = patchChunk(s.vertexShader, 'color_vertex', COLOR_VERTEX);
+      let fs = patchChunk(s.fragmentShader, 'lights_pars_begin', lampCeiling(THREE.ShaderChunk.lights_pars_begin));
+      fs = patchChunk(fs, 'opaque_fragment', FRAG_SHOULDER + '#include <opaque_fragment>');
+      // (the inflated actors' light floor, without their relief terms)
+      s.fragmentShader = afterChunk(afterChunk(fs, 'lights_fragment_end', LIGHT_FLOOR_GLSL), 'dithering_fragment', MASK_GLSL);
     };
     // (these patches are not in the kit's program key: the models' programs get a key of their own, so a kit material
     // with the same options can never share them; the precompile compiles them all the same)

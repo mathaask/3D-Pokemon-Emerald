@@ -9,9 +9,7 @@
 // none of whose lines reaches the sample is skipped before its edge rule.
 
 import { XBR, XBR_TIE } from '../kit/upscale';
-
-/** A GLSL float literal of `v`. */
-const glsl = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+import { glslFloat } from './glsl';
 
 /**
  * Defines `vec4 xbrSample(sampler2D tex, vec2 p, vec4 rect, float delta)`: the xBR-smoothed colour of `tex`
@@ -20,9 +18,9 @@ const glsl = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
  * half-width across an edge. Blends with transparent texels come out premultiplied.
  */
 export const XBR_GLSL = /* glsl */ `
-const float XBR_EQ = ${glsl(XBR.eq)};
-const float XBR_COEF = ${glsl(XBR.coef)};
-const float XBR_TIE = ${glsl(XBR_TIE)};
+const float XBR_EQ = ${glslFloat(XBR.eq)};
+const float XBR_COEF = ${glslFloat(XBR.coef)};
+const float XBR_TIE = ${glslFloat(XBR_TIE)};
 // weighted distance of two keys (sqrt rgb, a): luma weights on the colour, alpha counted fully
 float xbrDf(vec4 a, vec4 b) {
   vec4 d = abs(a - b);

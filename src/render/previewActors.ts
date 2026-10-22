@@ -7,6 +7,7 @@ import type { RomReader } from '../game/rom/reader';
 import type { ObjectEventTemplate } from '../game/rom/maps';
 import { OBJ_SIZES, type ObjectEventSnap, type SpriteSnap } from '../game/state';
 import { applyComposition, needsComposition, readSubsprites } from '../game/subsprites';
+import { ANIM_REMOVE_OBSTACLE, GFX } from './actors/objectMap';
 import {
   NUM_OBJ_EVENT_GFX, firstAnimFrame, readFrameImage, readOamShape, readObjectGraphicsInfo, readObjectPalette,
 } from '../game/rom/objectGraphics';
@@ -19,12 +20,7 @@ const TILE_BYTES = 32;
 const OBJ_PALETTE = 256;
 const OBJ_PALETTE_SLOTS = 16;
 
-const GFX_BERRY_TREE = 60; // 60-62: berry tree, early stages, late stages
-const GFX_BERRY_TREE_LATE_STAGES = 62;
-const GFX_CUTTABLE_TREE = 82;
-const GFX_BREAKABLE_ROCK = 86;
 const BERRY_STAGES = 5;
-const ANIM_REMOVE_OBSTACLE = 1;
 const DIR_SOUTH = 1; // (frame 0 of a character faces south)
 const MOVEMENT_TYPE_INVISIBLE = 0x4c;
 const SUBSPRITES_OFF = 0;
@@ -39,7 +35,7 @@ const ELEVATION_TO_SUBSPRITE_TABLE = [1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 0, 
  * centre-to-corner and subsprite tables), BERRY_TREE_EARLY_STAGES (16×16) for the dirt pile and the
  * sprout, BERRY_TREE_LATE_STAGES (16×32) for the plants.
  */
-const BERRY_STAGE_GFX = [61, 61, 62, 62, 62];
+const BERRY_STAGE_GFX = [GFX.BERRY_TREE_EARLY, GFX.BERRY_TREE_EARLY, GFX.BERRY_TREE_LATE, GFX.BERRY_TREE_LATE, GFX.BERRY_TREE_LATE];
 /**
  * Palette tags of the berry tree stages. Tied to the images: berry graphics 60-62 carry the Pecha
  * tree's images (sPicTable_PechaBerryTree), which live play draws in OBJ palette slots {3, 4, 4, 4, 4}
@@ -113,10 +109,10 @@ export function buildPreviewActors(rom: RomReader, vram: Uint8Array, palette: Ui
     const what = `template ${n} (local id ${t.localId}, gfx ${t.graphicsId})`;
     // the graphics the object spawns with, and those it shows (a berry tree switches per stage)
     const spawnInfo = readObjectGraphicsInfo(rom, t.graphicsId);
-    const berry = t.graphicsId >= GFX_BERRY_TREE && t.graphicsId <= GFX_BERRY_TREE_LATE_STAGES;
+    const berry = t.graphicsId >= GFX.BERRY_TREE && t.graphicsId <= GFX.BERRY_TREE_LATE;
     let animNum = 0;
     if (berry) animNum = t.localId % BERRY_STAGES;
-    else if (opts.removing && (t.graphicsId === GFX_CUTTABLE_TREE || t.graphicsId === GFX_BREAKABLE_ROCK)) animNum = ANIM_REMOVE_OBSTACLE;
+    else if (opts.removing && (t.graphicsId === GFX.CUTTABLE_TREE || t.graphicsId === GFX.BREAKABLE_ROCK)) animNum = ANIM_REMOVE_OBSTACLE;
     const graphicsId = berry ? BERRY_STAGE_GFX[animNum] : t.graphicsId;
     const info = berry ? readObjectGraphicsInfo(rom, graphicsId) : spawnInfo;
     if (!spawnInfo || !info) {

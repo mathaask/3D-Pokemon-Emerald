@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { INFLATE, blurWeights, type InflateParams } from './inflateMath';
+import { glslFloat } from './glsl';
 
 const VERT = /* glsl */ `
   in vec3 position;     // unit quad 0..1
@@ -71,9 +72,6 @@ const FRAG = /* glsl */ `
     fragColor = vec4(v, 0.0, 0.0, 1.0);
   }
 `;
-
-/** A GLSL float literal. */
-const glslFloat = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
 interface Pass { scene: THREE.Scene; material: THREE.RawShaderMaterial; target: THREE.WebGLRenderTarget }
 
