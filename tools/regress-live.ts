@@ -35,7 +35,8 @@
 //     last restore, the quads after successive restores starting with "on" and "off" in turn; per quad
 //     (on₁ + on₂ − off₁ − off₂) / 2.
 //     A quad spans well under a second, so the iGPU's clock state (it drifts by several ms within seconds on the
-//     Intel/ANGLE machine) cancels. A/A runs (--ab-aa, r101) read −0.38 … +0.04 ms at 64 quads. (Settle 1 / timed 1, the
+//     Intel/ANGLE machine) cancels. A/A runs (--ab-aa) at 64 quads, every live entry (Phase 2 final
+//     wave): Δgpu idle −0.26 … +0.22, walking −0.16 … +0.11 ms, Δcpu −0.11 … +0.11 ms. (Settle 1 / timed 1, the
 //     pure frame interleave, under-reads costs that build up over consecutive frames: r101 walking +0.2 … +0.5 vs +0.8 …
 //     +1.2 at settle 4 before Task 12's fix.)
 //   block: --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot,
