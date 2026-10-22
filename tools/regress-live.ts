@@ -204,9 +204,11 @@ interface ActorLum { ratio: number; modern: number; retro: number; pixels: numbe
 /** Fewer visible actor pixels than this: no luminance (battle, an actor hidden in one style). */
 const ACTOR_LUM_MIN_PX = 200;
 /** The mask re-render guard: pixels within this distance of a mask's magenta are not compared with the shot
- *  (antialiasing, tilt-shift blur); a mismatch above this share of the frame flags the entry's luminance unreliable. */
+ *  (antialiasing, tilt-shift blur); a mismatch above this share of the frame flags the entry's luminance unreliable.
+ *  Same-frame masks stay under 0.5 % (the bloom halo of bright actors, e.g. rocks by the Flash lantern, reaches past the
+ *  guard: granite_rocks 0.44 %); a frame that moved on differs almost everywhere (the transition's zoom: 42 %). */
 const MASK_GUARD_PX = 4;
-const MASK_MISMATCH_MAX = 0.002;
+const MASK_MISMATCH_MAX = 0.02;
 /** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` = the least px the
  *  player walked in any timed block (walking). */
 interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
