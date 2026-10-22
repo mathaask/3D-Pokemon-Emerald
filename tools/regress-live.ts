@@ -4,7 +4,7 @@
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
 //     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]
-//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-feature actors|npcfade] [--ab-aa]]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -28,10 +28,13 @@
 // --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
 // same build with them off (every sprite a card, the pre-Task-5 path; the inflation field's passes run in both): after
 // the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
-//   frame (default): --ab-rounds ABBA quads (default 128) of single frames — each half switches the mode, renders one
-//     untimed settle frame and times the next one alone; the snapshot is restored every 60 frames; per quad
-//     (on₁ + on₂ − off₁ − off₂) / 2. Adjacent frames ~40 ms apart share the iGPU's clock state, which drifts by
-//     several ms within seconds on the Intel/ANGLE machine: A/A runs (--ab-aa) read within ±0.3 ms at 64 quads.
+//   frame (default): --ab-rounds ABBA quads (default 64; on off off on, then off on on off) of short halves: each half
+//     switches the mode, renders --ab-settle untimed frames (default 4) and times the next --ab-timed frames (default 4,
+//     back to back; their median); the snapshot is restored every 60 frames; per quad (on₁ + on₂ − off₁ − off₂) / 2.
+//     A quad spans well under a second, so the iGPU's clock state (it drifts by several ms within seconds on the
+//     Intel/ANGLE machine) cancels. A/A runs (--ab-aa, r101) read −0.38 … +0.04 ms at 64 quads. (Settle 1 / timed 1, the
+//     pure frame interleave, under-reads costs that build up over consecutive frames: r101 walking +0.2 … +0.5 vs +0.8 …
+//     +1.2 at settle 4 before Task 12's fix.)
 //   block: --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot,
 //     5 settle frames and gpuFrames(60); per round on − off. Steadier per block, but A/A runs at 16 rounds read
 //     +0.15 … +0.80 ms (Phase 2 Task 12): it cannot resolve the +1.0 / +0.3 ms budgets.
@@ -179,7 +182,7 @@ const ACTOR_LUM_MIN_PX = 200;
 /** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` = the least px the
  *  player walked in any timed block (walking). */
 interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
-/** --ab-method: `block` = rounds of 60-frame blocks per mode (abVariant), `frame` = ABBA quads of single frames
+/** --ab-method: `block` = rounds of 60-frame blocks per mode (abVariant), `frame` = ABBA quads of short halves
  *  (abVariantFrames, the default: it resolves the deltas better, see the header). */
 type AbMethod = 'block' | 'frame';
 interface EntryStats {
@@ -532,7 +535,7 @@ async function main(): Promise<void> {
   const ab = flag('ab');
   const abMethod = arg('ab-method', 'frame') as AbMethod;
   if (abMethod !== 'block' && abMethod !== 'frame') throw new Error(`unknown --ab-method ${abMethod} (block, frame)`);
-  const abRounds = parseInt(arg('ab-rounds', abMethod === 'frame' ? '128' : '8'), 10);
+  const abRounds = parseInt(arg('ab-rounds', abMethod === 'frame' ? '64' : '8'), 10);
   const abAa = flag('ab-aa');
   const abHalf: AbHalf = { settle: parseInt(arg('ab-settle', '4'), 10), timed: parseInt(arg('ab-timed', '4'), 10) };
   if (!(abHalf.settle >= 1 && abHalf.timed >= 1)) throw new Error('--ab-settle / --ab-timed must be positive integers');

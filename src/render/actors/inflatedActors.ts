@@ -3,9 +3,12 @@
 // lights with per-pixel normals from the field (SHADE_GAIN), a sky-tinted rim, a light floor and a
 // highlight shoulder. It casts its silhouette as a shadow (an alpha-tested depth twin with the same
 // displacement, pushed away from the light) and receives shadows (trees).
-// One instanced draw call; the instance layout is the cards' (Billboards): aFoot, aSize (width,
-// height, lift, 0), aUv. The front silhouette is the sprite's own (alpha test on the game's frame; with HD
-// edges, setSmoothing, on its xBR-smoothed outline — the shadow's too).
+// One instanced draw call; the instance data is the cards' (Billboards: foot, size (width, height, lift, 0), uv), read
+// from a uniform array by gl_InstanceID: on ANGLE (D3D11, Intel) the first draw of this grid that reads an instance
+// vertex buffer re-uploaded this frame cost ~0.3-0.5 ms of GPU time wherever it fell (the shadow twin, the main pass,
+// a 1×1 pre-draw: Phase 2 Task 12), a uniform array nothing measurable. The contact shadows keep instance attributes.
+// The front silhouette is the sprite's own (alpha test on the game's frame; with HD edges, setSmoothing, on its
+// xBR-smoothed outline — the shadow's too).
 // Not tied to the overworld: battles can reuse it with any atlas and field of the same layout.
 
 import * as THREE from 'three';
@@ -23,6 +26,8 @@ export const RIM = 0.6;
 export const CONTACT = { strength: 0.25, scale: 0.75 };
 /** Instances (gSprites has 64 entries). */
 export const MAX_ACTORS = 64;
+/** vec4s of instance data per actor in the uInst uniform array: foot, size, uv. */
+const INST_VEC4 = 3;
 /** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
  *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
@@ -84,9 +89,12 @@ vec3 actorNormal(vec3 f, vec2 g) {
 `;
 
 const VERT_PRELUDE = /* glsl */ `
-attribute vec3 aFoot;   // world position of the sprite's foot point
-attribute vec4 aSize;   // width, height, lift (world units), 0
-attribute vec4 aUv;     // u0, v0 (top), u1, v1 (bottom)
+// per actor (gl_InstanceID) INST_VEC4 vec4s: its foot point (world), size (width, height, lift; world units), atlas uv
+// (u0, v0 top, u1, v1 bottom) — the cards' (Billboards) instance layout, from a uniform array (see InflatedActors.set)
+uniform vec4 uInst[${MAX_ACTORS * INST_VEC4}];
+#define aFoot (uInst[gl_InstanceID * ${INST_VEC4}].xyz)
+#define aSize (uInst[gl_InstanceID * ${INST_VEC4} + 1])
+#define aUv (uInst[gl_InstanceID * ${INST_VEC4} + 2])
 varying vec2 vAtlasUv;
 varying vec4 vRect;     // the sprite's rectangle in atlas texels: x0, y0 (bottom), x1, y1 (top)
 ${FIELD_GLSL}
@@ -257,16 +265,17 @@ export class InflatedActors {
   readonly mesh: THREE.Mesh;
   private geometry = new THREE.InstancedBufferGeometry();
   private quad: THREE.BufferGeometry;
+  /** The contact shadows' instance attributes (BlobShadows): foot point, size (width, height, lift, 0). */
   private foot = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 3), 3);
   private size = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 4), 4);
-  private uv = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ACTORS * 4), 4);
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
-  /** The most instances ever set (the uploaded part of the instance buffers). */
+  /** The most instances ever set (the uploaded part of the contact shadows' instance buffers). */
   private used = 0;
   private uniforms: {
     tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
     uEye: { value: THREE.Vector3 }; uAtlasSize: { value: THREE.Vector2 }; uRimColor: { value: THREE.Color };
     uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number }; uSmooth: { value: number };
+    uInst: { value: Float32Array };
   };
 
   /**
@@ -281,17 +290,15 @@ export class InflatedActors {
     this.geometry.setAttribute('position', grid.getAttribute('position'));
     // (unused by the shader, which builds its own normal: its presence enables the shadow normal bias)
     this.geometry.setAttribute('normal', grid.getAttribute('normal'));
-    for (const a of [this.foot, this.size, this.uv]) a.setUsage(THREE.DynamicDrawUsage);
-    this.geometry.setAttribute('aFoot', this.foot);
-    this.geometry.setAttribute('aSize', this.size);
-    this.geometry.setAttribute('aUv', this.uv);
     this.geometry.instanceCount = 0;
+    for (const a of [this.foot, this.size]) a.setUsage(THREE.DynamicDrawUsage);
     this.quad = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
 
     const u = this.uniforms = {
       tAtlas: { value: atlas }, tField: { value: field }, uRight: { value: new THREE.Vector3(1, 0, 0) },
       uEye: { value: new THREE.Vector3(0, 0, 1e5) }, uAtlasSize: { value: atlasSize.clone() }, uRimColor: rimColor,
       uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) }, uMask: { value: 0 }, uSmooth: { value: 1 },
+      uInst: { value: new Float32Array(MAX_ACTORS * INST_VEC4 * 4) },
     };
     const material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
     // the sun may light the sheet from behind: its depth twin draws both faces
@@ -317,7 +324,7 @@ export class InflatedActors {
     const depth = new THREE.ShaderMaterial({
       vertexShader: DEPTH_VERT,
       fragmentShader: DEPTH_FRAG,
-      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth },
+      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst },
       side: THREE.DoubleSide,
     });
     this.mesh = new THREE.Mesh(this.geometry, material);
@@ -334,6 +341,11 @@ export class InflatedActors {
     return this.geometry.instanceCount;
   }
 
+  /** The actors' instance data as the shaders read it (uInst: per actor INST_VEC4 vec4s, see VERT_PRELUDE). */
+  get instances(): Float32Array {
+    return this.uniforms.uInst.value;
+  }
+
   /**
    * This frame's actors, in the cards' placement (`flat` and `tint` are ignored). `cameraRight`: the
    * camera's right vector on XZ (unit); `eye`: the camera's position (world), which the relief rises
@@ -341,22 +353,21 @@ export class InflatedActors {
    */
   set(list: readonly BillboardSpec[], cameraRight: THREE.Vector3, eye?: THREE.Vector3): void {
     const n = Math.min(MAX_ACTORS, list.length);
-    const foot = this.foot.array as Float32Array, size = this.size.array as Float32Array, uv = this.uv.array as Float32Array;
-    let dFoot = 0, dSize = 0, dUv = 0;
+    const inst = this.uniforms.uInst.value, foot = this.foot.array as Float32Array, size = this.size.array as Float32Array;
+    let dFoot = 0, dSize = 0;
     for (let i = 0; i < n; i++) {
-      const s = list[i];
+      const s = list[i], k = i * INST_VEC4 * 4;
+      inst[k] = s.footX; inst[k + 1] = s.footY; inst[k + 2] = s.footZ; inst[k + 3] = 0;
+      inst[k + 4] = s.width; inst[k + 5] = s.height; inst[k + 6] = s.lift; inst[k + 7] = 0;
+      inst[k + 8] = s.slot.u0; inst[k + 9] = s.slot.v0; inst[k + 10] = s.slot.u1; inst[k + 11] = s.slot.v1;
       dFoot |= put(foot, i * 3, s.footX) | put(foot, i * 3 + 1, s.footY) | put(foot, i * 3 + 2, s.footZ);
       dSize |= put(size, i * 4, s.width) | put(size, i * 4 + 1, s.height) | put(size, i * 4 + 2, s.lift) | put(size, i * 4 + 3, 0);
-      dUv |= put(uv, i * 4, s.slot.u0) | put(uv, i * 4 + 1, s.slot.v0) | put(uv, i * 4 + 2, s.slot.u1) | put(uv, i * 4 + 3, s.slot.v1);
     }
-    // Upload only the attributes that changed: on ANGLE (D3D11, Intel) each draw reading an instance
-    // buffer re-uploaded this frame cost ~0.3-0.5 ms of GPU time (measured), so a still scene uploads
-    // nothing. (Up to the most instances ever set: the GPU copy mirrors the arrays there, whatever the
-    // instance count did in between.)
+    // The contact shadows' attributes upload only when they changed (instanceUpload.ts), up to the most instances ever
+    // set: the GPU copy mirrors the arrays there, whatever the instance count did in between.
     this.used = Math.max(this.used, n);
     if (dFoot) markRange(this.foot, this.used);
     if (dSize) markRange(this.size, this.used);
-    if (dUv) markRange(this.uv, this.used);
     this.geometry.instanceCount = n;
     for (const g of this.shadowGeometries) g.instanceCount = n;
     this.uniforms.uRight.value.copy(cameraRight);
@@ -380,7 +391,8 @@ export class InflatedActors {
     this.uniforms.uSmooth.value = on ? 1 : 0;
   }
 
-  /** A 4-vertex quad geometry sharing this mesh's aFoot / aSize instance attributes (BlobShadows). */
+  /** A 4-vertex quad geometry with the actors' aFoot / aSize instance attributes (BlobShadows; every such geometry
+   *  shares them), drawing as many instances as the actors. */
   geometryForShadows(): THREE.InstancedBufferGeometry {
     const g = new THREE.InstancedBufferGeometry();
     g.index = this.quad.index;

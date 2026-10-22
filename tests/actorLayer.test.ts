@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { SpriteKind, type SpriteClassifier } from '../src/game/spriteKinds';
 import type { GameState, ObjectEventSnap, SpriteSnap } from '../src/game/state';
-import { routeSprite, cardSpec, uprightFoot, ActorLayer, type ActorFrame } from '../src/render/actors/actorLayer';
+import { routeSprite, cardSpec, uprightFoot, ActorLayer, skipOverridePasses, type ActorFrame } from '../src/render/actors/actorLayer';
 import { inflateMax } from '../src/render/actors/inflateMath';
 import type { SpritePixelSource } from '../src/render/actors/spriteColors';
 import { createKitUniforms } from '../src/render/kit/materials';
@@ -46,6 +46,33 @@ describe('cardSpec', () => {
       const c = cardSpec(sp, SpriteKind.Upright, slot, heightAt);
       expect(uprightFoot(sp, heightAt)).toEqual({ x: c.footX, y: c.footY, z: c.footZ });
     }
+  });
+});
+
+describe('skipOverridePasses', () => {
+  it('draws no instance in a pass with an override material (the GTAO prepass), its own material untouched', () => {
+    const g = new THREE.InstancedBufferGeometry();
+    g.instanceCount = 3;
+    const own = new THREE.MeshBasicMaterial(), override = new THREE.MeshNormalMaterial();
+    const mesh = new THREE.Mesh(g, own);
+    skipOverridePasses(mesh);
+    const r = {} as THREE.WebGLRenderer, scene = new THREE.Scene(), cam = new THREE.Camera();
+    mesh.onBeforeRender(r, scene, cam, g, override, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(0);
+    mesh.onAfterRender(r, scene, cam, g, override, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(3);
+    mesh.onBeforeRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(3);
+    g.instanceCount = 5; // (the next frame's count, set between passes)
+    mesh.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(5);
+  });
+  it('covers every mesh of the layer that places its instances in its own shader (not the models)', () => {
+    const layer = new ActorLayer({ slots: new Map(), target: { texture: new THREE.Texture() } }, { field: { texture: new THREE.Texture() }, kit: createKitUniforms() });
+    const meshes: THREE.Mesh[] = [];
+    layer.group.traverse((o) => { if ((o as THREE.Mesh).isMesh && !(o as THREE.InstancedMesh).isInstancedMesh) meshes.push(o as THREE.Mesh); });
+    expect(meshes.length).toBe(4);
+    for (const m of meshes) expect(m.onBeforeRender).not.toBe(THREE.Object3D.prototype.onBeforeRender);
   });
 });
 

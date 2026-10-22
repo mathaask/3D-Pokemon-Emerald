@@ -129,6 +129,28 @@ function placeCard(out: BillboardSpec, s: SpriteSnap, kind: SpriteKind, slot: Sl
   return out;
 }
 
+/**
+ * Leaves an instanced mesh whose own shader places its instances (cards, their blob shadows, inflated actors, contact
+ * shadows) out of the passes that draw the scene with an override material — GTAO's normal/depth prepass at High
+ * quality: without the mesh's shader every instance is the bare quad / grid at the world origin, a dark AO patch
+ * there. That pass draws 0 instances of it (onBeforeRender sees the override material; onAfterRender restores the
+ * count). Shadow passes call onBeforeShadow instead, so the mesh keeps casting.
+ */
+export function skipOverridePasses(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  let saved = -1;
+  mesh.onBeforeRender = (_r, _s, _c, _g, material) => {
+    if (material === mesh.material) return;
+    saved = geometry.instanceCount;
+    geometry.instanceCount = 0;
+  };
+  mesh.onAfterRender = () => {
+    if (saved < 0) return;
+    geometry.instanceCount = saved;
+    saved = -1;
+  };
+}
+
 const blankSpec = (): BillboardSpec =>
   ({ footX: 0, footY: 0, footZ: 0, width: 0, height: 0, lift: 0, flat: false, slot: { u0: 0, v0: 0, u1: 0, v1: 0 } });
 
@@ -176,6 +198,8 @@ export class ActorLayer {
     this.billboards = new Billboards(atlas);
     this.blobs = new BlobShadows(this.billboards);
     this.group.add(this.billboards.mesh, this.blobs.mesh);
+    skipOverridePasses(this.billboards.mesh);
+    skipOverridePasses(this.blobs.mesh);
     if (opts.field) {
       // the rim takes the sky's colour (the kit's, updated by the view's lighting)
       const rim = opts.kit?.uSky ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
@@ -186,6 +210,8 @@ export class ActorLayer {
       this.contact.setScale(CONTACT.scale);
       this.contact.mesh.name = 'contactShadows';
       this.group.add(this.inflated.mesh, this.contact.mesh);
+      skipOverridePasses(this.inflated.mesh);
+      skipOverridePasses(this.contact.mesh);
     }
     if (opts.kit) {
       this.models = new ObjectModels(opts.kit);

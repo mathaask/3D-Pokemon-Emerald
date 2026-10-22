@@ -10,49 +10,58 @@ const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2
 const make = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() });
 
 describe('InflatedActors', () => {
-  it('draws one instanced 16x32 grid per actor', () => {
+  it('draws one instanced 16x32 grid per actor, its instance data in a uniform array (no instance vertex buffer)', () => {
     const a = make();
-    a.set([spec(1), spec(2)], new THREE.Vector3(1, 0, 0));
+    a.set([spec(1), { ...spec(2), lift: 0.25 }], new THREE.Vector3(1, 0, 0));
     const g = a.mesh.geometry as THREE.InstancedBufferGeometry;
     expect(g.instanceCount).toBe(2);
     expect(g.getAttribute('position').count).toBe((ACTOR_GRID.x + 1) * (ACTOR_GRID.y + 1));
-    expect(g.getAttribute('aFoot').getX(1)).toBe(2);
+    // per actor 3 vec4s: foot, size (width, height, lift, 0), uv (u0, v0, u1, v1)
+    expect(Array.from(a.instances.slice(12, 24))).toEqual([2, 0, 3, 0, 1, 2, 0.25, 0, 0, 32 / 512, 16 / 1024, 0].map(Math.fround));
+    expect(Object.keys(g.attributes).sort()).toEqual(['normal', 'position']);
+    // the main and the depth twin read the same array, by instance (the cards' layout names kept as macros)
+    const depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+    expect(depth.uniforms.uInst.value).toBe(a.instances);
+    expect(depth.vertexShader).toContain('#define aFoot (uInst[gl_InstanceID * 3].xyz)');
   });
-  it('shares its instance buffers with a 4-vertex contact-shadow geometry', () => {
+  it('shares its contact shadows\' instance attributes (foot, size) between their 4-vertex geometries', () => {
     const a = make();
-    const s = a.geometryForShadows();
+    const s = a.geometryForShadows(), t = a.geometryForShadows();
     a.set([spec(1)], new THREE.Vector3(1, 0, 0));
     expect(s.instanceCount).toBe(1);
-    expect(s.getAttribute('aFoot')).toBe((a.mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aFoot'));
+    expect(s.getAttribute('aFoot')).toBe(t.getAttribute('aFoot'));
+    expect(s.getAttribute('aSize')).toBe(t.getAttribute('aSize'));
+    expect(s.getAttribute('aFoot').getX(0)).toBe(1);
     expect(s.getAttribute('position').count).toBe(4);
   });
-  it('re-uploads only the instance attributes that changed, over every instance ever set', () => {
+  it('re-uploads only the contact shadows\' attributes that changed, over every instance ever set', () => {
     const a = make();
-    const g = a.mesh.geometry as THREE.InstancedBufferGeometry;
+    const g = a.geometryForShadows();
     const attr = (k: string) => g.getAttribute(k) as THREE.InstancedBufferAttribute;
     const right = new THREE.Vector3(1, 0, 0);
     a.set([spec(1), spec(2)], right);
-    const v = () => ['aFoot', 'aSize', 'aUv'].map((k) => attr(k).version);
+    const v = () => ['aFoot', 'aSize'].map((k) => attr(k).version);
     const first = v();
     a.set([spec(1), spec(2)], right); // a still scene: nothing to upload
     expect(v()).toEqual(first);
     a.set([spec(1)], right);          // fewer actors, same data
     expect(v()).toEqual(first);
     a.set([spec(1.5)], right);        // one moved: its feet only, over both instances ever set
-    expect(v()).toEqual([first[0] + 1, first[1], first[2]]);
+    expect(v()).toEqual([first[0] + 1, first[1]]);
     expect(attr('aFoot').updateRanges).toEqual([{ start: 0, count: 6 }]);
   });
-  it('re-uploads only the attribute a change touches (a new animation frame: uv; a jump: size)', () => {
+  it('re-uploads only the attribute a change touches (a new animation frame: none; a jump: size)', () => {
     const a = make();
-    const g = a.mesh.geometry as THREE.InstancedBufferGeometry;
-    const v = () => ['aFoot', 'aSize', 'aUv'].map((k) => (g.getAttribute(k) as THREE.BufferAttribute).version);
+    const g = a.geometryForShadows();
+    const v = () => ['aFoot', 'aSize'].map((k) => (g.getAttribute(k) as THREE.BufferAttribute).version);
     const right = new THREE.Vector3(1, 0, 0);
     a.set([spec(1)], right);
     const first = v();
     a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 } }], right);
-    expect(v()).toEqual([first[0], first[1], first[2] + 1]);
+    expect(v()).toEqual(first);
+    expect(a.instances[8]).toBe(Math.fround(16 / 1024));
     a.set([{ ...spec(1), slot: { u0: 16 / 1024, v0: 32 / 512, u1: 32 / 1024, v1: 0 }, lift: 0.5 }], right);
-    expect(v()).toEqual([first[0], first[1] + 1, first[2] + 1]);
+    expect(v()).toEqual([first[0], first[1] + 1]);
   });
   it('casts and receives shadows through a depth twin drawn on both faces with the same relief', () => {
     const a = make();
