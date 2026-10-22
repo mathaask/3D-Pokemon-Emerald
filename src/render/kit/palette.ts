@@ -91,6 +91,46 @@ export function lush(c: RGB, maxSat = 0.42): RGB {
   return [_rgb.r, _rgb.g, _rgb.b];
 }
 
+/** Turned earth's hue, saturation and lightness range (earthTone). */
+const EARTH = { hue: 25 / 360, sat: 0.18, l0: 0.4, l1: 0.6 };
+/** Art direction for turned earth (berry soil beds, the berry plants' mounds): a tile's soil colour at its own
+ *  lightness (kept within EARTH's 0.4..0.6: a mid-tone, never near-black or pale), its hue moved to a warm earth brown
+ *  and its saturation set low. The GBA's berry soil is a mauve, (156, 115, 115): as it is, it read pink by day and
+ *  magenta under the night's blue light; darker earth went near-black at night. sRGB. */
+export function earthTone(c: RGB): RGB {
+  _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
+  const l = Math.min(EARTH.l1, Math.max(EARTH.l0, _hsl.l));
+  _c.setHSL(EARTH.hue, EARTH.sat, l, THREE.SRGBColorSpace).getRGB(_rgb, THREE.SRGBColorSpace);
+  return [_rgb.r, _rgb.g, _rgb.b];
+}
+/** The berry soil tiles' colour (General and secondary tilesets alike: (156, 115, 115)) as turned earth, linear: the
+ *  colour of the berry plants' own mounds (actors: they do not know the map), which the beds derive alike. */
+export const SOIL_LINEAR: RGB = toLinear(earthTone(bgr555ToSrgb(19 | (14 << 5) | (14 << 10))));
+/** Moonlit soil (the berry beds and the plants' mounds, in their shaders): after sunset their colour turns this far
+ *  (× uNight) to a neutral of `lift` × its luminance. Under the night's blue light warm earth reflects next to
+ *  nothing (the beds went near-black, the darkest surface in the frame); as a light neutral they read as the kit's
+ *  paths do at night. */
+export const NIGHT_SOIL = { mix: 0.85, lift: 1.7 };
+/**
+ * NIGHT_SOIL as a colour factor, linear: per channel mix(soil, luminance(soil) × lift, night × mix) / soil. A surface
+ * whose vertex colours are all `soil` × k (k varying: the berry beds) with this as its material colour comes out as
+ * NIGHT_SOIL_GLSL would turn it (the luminance of soil × k is k × that of soil), without a shader hook of its own.
+ * Into `out` (a channel of `soil` at 0 keeps factor 1).
+ */
+export function nightSoilScale(soil: RGB, night: number, out: RGB = [1, 1, 1]): RGB {
+  // (the shader's luminance: Rec. 709 weights on linear colour)
+  const l = (0.2126 * soil[0] + 0.7152 * soil[1] + 0.0722 * soil[2]) * NIGHT_SOIL.lift, t = night * NIGHT_SOIL.mix;
+  for (let i = 0; i < 3; i++) out[i] = soil[i] > 0 ? (soil[i] + (l - soil[i]) * t) / soil[i] : 1;
+  return out;
+}
+/** GLSL: NIGHT_SOIL applied to `diffuseColor` (needs the kit's uNight). */
+export const NIGHT_SOIL_GLSL = /* glsl */ `
+{
+  float soilL = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(soilL * ${NIGHT_SOIL.lift.toFixed(2)}), uNight * ${NIGHT_SOIL.mix.toFixed(2)});
+}
+`;
+
 /** Water is blue by more than this over red (and above green): see classifyGroundColor. */
 const WATER_BLUE_OVER_RED = 0.2;
 

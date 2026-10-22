@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { classifyGroundColor, soften, dominantColor, bgr555ToSrgb, saturation, luma, wetGround, type RGB } from '../src/render/kit/palette';
+import {
+  classifyGroundColor, soften, dominantColor, bgr555ToSrgb, saturation, luma, wetGround, nightSoilScale, NIGHT_SOIL, SOIL_LINEAR, type RGB,
+} from '../src/render/kit/palette';
 
 describe('classifyGroundColor', () => {
   const cases: [RGB, string][] = [
@@ -55,5 +57,26 @@ describe('wetGround', () => {
       expect(luma(w)).toBeCloseTo(luma(c), 3);
       expect(w[2]).toBe(Math.max(...w)); // still cool
     }
+  });
+});
+
+describe('nightSoilScale', () => {
+  // NIGHT_SOIL_GLSL on a diffuse colour c (linear): mix(c, luminance(c) × lift, uNight × mix)
+  const hook = (c: RGB, night: number): RGB => {
+    const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], t = night * NIGHT_SOIL.mix;
+    return c.map((v) => v + (l * NIGHT_SOIL.lift - v) * t) as RGB;
+  };
+  it("turns every soil × k vertex colour (the berry beds') into what the night-soil hook made of it, as a material colour", () => {
+    for (const night of [0, 0.3, 1]) {
+      const scale = nightSoilScale(SOIL_LINEAR, night);
+      for (const k of [0.62, 0.9, 1.1]) {
+        const vertex = SOIL_LINEAR.map((v) => v * k) as RGB;
+        const want = hook(vertex, night);
+        for (let i = 0; i < 3; i++) expect(scale[i] * vertex[i], `night ${night} k ${k}`).toBeCloseTo(want[i], 12);
+      }
+    }
+    expect(nightSoilScale(SOIL_LINEAR, 0)).toEqual([1, 1, 1]);   // by day: the vertex colours as they are
+    const out: RGB = [0, 0, 0];
+    expect(nightSoilScale(SOIL_LINEAR, 0.5, out)).toBe(out);     // (per frame: no allocation)
   });
 });

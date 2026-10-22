@@ -356,10 +356,10 @@ function treeGeo(style: TreeStyle, variant: number, detail: number): THREE.Buffe
 }
 
 /** Trunk vertices (alpha < 0.5) take the bark colour; everything is opaque again afterwards. */
-const TRUNK_HEAD = /* glsl */ `
+export const TRUNK_HEAD = /* glsl */ `
 uniform vec3 uTrunk;
 `;
-const TRUNK_FRAG = /* glsl */ `
+export const TRUNK_FRAG = /* glsl */ `
 #ifdef USE_COLOR_ALPHA
 if (vColor.a < 0.5) diffuseColor.rgb = uTrunk * mix(0.7, 1.15, (vColor.a - 0.1) / 0.3);
 diffuseColor.a = 1.0;

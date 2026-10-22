@@ -1,24 +1,29 @@
 // The 3D overworld: world mesh, sprite billboards, sky, sun/moon lighting, camera rig.
 
 import * as THREE from 'three';
-import { MAP_OFFSET, type GameState, type SpriteSnap } from '../../game/state';
+import { MAP_OFFSET, type GameState } from '../../game/state';
 import type { Mem } from '../../game/mem';
 import type { Bus } from '../../gba/bus';
 import { RomReader } from '../../game/rom/reader';
 import type { GbaTextures } from '../gbaTextures';
 import type { SpriteAtlas } from '../spriteAtlas';
+import type { SpriteField } from '../actors/spriteField';
 import type { Quality } from '../post';
 import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldStyle } from './world';
-import { Billboards, BlobShadows, type BillboardSpec } from './billboards';
 import { analyzeMetatiles } from './tileInfo';
-import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
+import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
-import { createKitUniforms, setKitActors, setKitFocus, type KitUniforms } from '../kit/materials';
+import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
+import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
+import type { SpritePixelSource } from '../actors/spriteColors';
+import type { ProgramInfo } from '../actors/inflatedActors';
+
+export { hidesGrassOverlay } from '../actors/actorLayer';
 
 export interface CameraPreset {
   name: string;
@@ -33,15 +38,6 @@ export const CAMERA_PRESETS: CameraPreset[] = [
   { name: 'Wide', pitch: 0.95, distance: 23, fov: 30 },
   { name: 'Low', pitch: 0.36, distance: 9.5, fov: 45 },
 ];
-
-/**
- * Whether the GBA's grass overlay sprite (drawn over the legs of a character in grass) is left out:
- * in Modern where 3D grass blades stand on its cell (kit/grass.ts: they hide the legs and part around
- * them). Elsewhere (short grass, tall grass the grass family did not draw, Retro) it is drawn.
- */
-export function hidesGrassOverlay(kind: SpriteKind, style: WorldStyle, bladesOnCell: boolean): boolean {
-  return kind === SpriteKind.Grass && style === 'modern' && bladesOnCell;
-}
 
 /** Half-width of the sun shadow camera (world units): the map covers 2x this. */
 const SHADOW_SPAN = 24;
@@ -60,6 +56,8 @@ export function shadowSettings(q: Quality, style: WorldStyle): { size: number; r
   return { size, radius: (SHADOW_SOFTNESS * size) / (2 * SHADOW_SPAN) };
 }
 
+const NO_FEET: readonly { x: number; y: number; z: number }[] = [];
+
 const MAP_TYPE_INDOOR = 8;
 const MAP_TYPE_UNDERGROUND = 4;
 const MAP_TYPE_SECRET_BASE = 9;
@@ -70,8 +68,8 @@ export class OverworldView {
   readonly camera = new THREE.PerspectiveCamera(32, 1.5, 0.1, 500);
   readonly atlas: MetatileAtlas;
   private world: World;
-  private billboards: Billboards;
-  private blobs: BlobShadows;
+  /** The world sprites: cards, blob shadows (inflated actors, object models). */
+  private actors: ActorLayer;
   private sun = new THREE.DirectionalLight(0xffffff, 2.2);
   private hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6b7f4a, 1.1);
   /** Light carried by the player in dark caves (Flash). */
@@ -100,6 +98,7 @@ export class OverworldView {
   private target = new THREE.Vector3();
   private targetValid = false;
   private lastPlayerWorld = new THREE.Vector3();
+  private playerFoot = new THREE.Vector3();
   private mapType = 0;
   private cave = 0;
   private charBase = 0;
@@ -109,6 +108,10 @@ export class OverworldView {
   overrideTarget: THREE.Vector3 | null = null;
   /** When set (map preview `&focus=1`), the occlusion fade centres on this point instead of the player. */
   focusOverride: THREE.Vector3 | null = null;
+  /** The occlusion fade also clears the nearest inflated NPCs (setNpcFade). */
+  private npcFade = true;
+  /** The NPCs the occlusion fade clears this frame (pickFadeActors's reused list). */
+  private fadeNpcs: FadeFoot[] = [];
   private bufferW = 1;
   private bufferH = 1;
   /** Sprite classifier (set once the ROM tables are readable). */
@@ -116,18 +119,35 @@ export class OverworldView {
   /** 0..1 progress of the battle-entry effect (pushes the camera in and twists it). */
   battleZoom = 0;
   private charLight = new THREE.Color(1, 1, 1);
+  /** What the actor layer reads each frame (one object, updated in place). */
+  private actorFrame: ActorFrame = {
+    style: 'modern',
+    classifier: null,
+    heightAt: (x, y) => this.world.heightAt(x, y),
+    hasGrassBlades: (x, y) => this.world.hasGrassBlades(x, y),
+    cameraRight: this.cameraRight,
+    cameraPosition: this.camera.position,
+    charLight: this.charLight,
+  };
 
-  constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number) {
+  /** The Phase 2 programs' compile (precompile), started once. */
+  private precompiled: Promise<void> | null = null;
+  /** Live play's sprite pixel source (object model colours), updated in place at every sync. */
+  private livePixels: SpritePixelSource | null = null;
+
+  /** `field`: the sprite atlas's inflation field (Modern), kept up to date by the owner after each atlas bake. */
+  /** `instanceUniforms`: the inflated actors read their instance data from a uniform array (default; false: instance
+   *  attributes, for a device with too few vertex uniform vectors — instanceUniformsFit). */
+  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
+    instanceUniforms = true) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
-    this.billboards = new Billboards(spriteAtlas);
+    this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms, instanceUniforms });
     this.scene.add(this.world.group);
-    this.scene.add(this.billboards.mesh);
-    this.blobs = new BlobShadows(this.billboards);
-    this.scene.add(this.blobs.mesh);
+    this.scene.add(this.actors.group);
 
     this.sun.castShadow = true;
     this.applyShadowSettings();
@@ -226,8 +246,42 @@ export class OverworldView {
     return last[last.length - 1] !== grid.cells[grid.cells.length - 1];
   }
 
+  /**
+   * Compiles the Phase 2 programs once, whatever the style (a Retro session switching to Modern must not
+   * hitch): the inflation field's passes, the inflated actors (main and shadow twin) and the object models
+   * (main and shadow-depth). Live play starts it at the first sync, the map preview after its build.
+   */
+  precompile(renderer: THREE.WebGLRenderer): Promise<void> {
+    // (an async body: a synchronous throw becomes the rejection; a failure is logged once, never retried)
+    return this.precompiled ??= (async () => {
+      await Promise.all([
+        this.field?.compile(renderer),
+        this.actors.precompile(renderer, this.scene, this.camera, this.precompileFrame ?? undefined),
+      ]);
+      // (the precompile frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
+      this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[]);
+    })().catch((e) => { console.warn('[overworld] precompile failed (programs compile on first use instead)', e); });
+  }
+
+  /** Draws one frame as it is presented (the owner's PostFX: its passes, GTAO's override materials at High
+   *  quality): the precompile draws it with every Phase 2 mesh shown. null: the scene alone, into a 1×1 target. */
+  precompileFrame: (() => void) | null = null;
+
+  /** Where the object models sample their sprites' colours (the map preview: its scratch VRAM and palette). */
+  setActorPixelSource(src: SpritePixelSource | null): void {
+    this.actors.setPixelSource(src);
+  }
+
   /** Synchronises with the emulated state; call after each emulated frame. */
   sync(state: GameState, renderer: THREE.WebGLRenderer): void {
+    // Object model colours: OBJ VRAM and exactly the palette the sprite atlas samples (the unfaded buffer
+    // in the overworld: a fade darkens the whole frame afterwards, models included), its tile mapping.
+    const bus = state.mem.bus;
+    const pixels = this.livePixels ??= { vram: bus.vram, palette: bus.pram16, map2d: false };
+    pixels.palette = this.gbaTex.paletteSource ?? bus.pram16;
+    pixels.map2d = (bus.io16[0] & 0x40) === 0;
+    this.actors.setPixelSource(pixels);
+    void this.precompile(renderer);
     if (!state.layout || !state.header) return;
     this.mapType = state.header.mapType;
     this.cave = state.header.cave;
@@ -278,6 +332,11 @@ export class OverworldView {
     this.atlas.render(renderer, this.charBase);
   }
 
+  /** Ground height (world Y) under grid point (x, y) of the built world, where sprites stand. */
+  heightAt(x: number, y: number): number {
+    return this.world.heightAt(x, y);
+  }
+
   private onMapChanged(state: GameState): void {
     // When crossing a map connection the backup-map origin shifts; move the camera
     // target by the same amount so the transition is seamless.
@@ -290,50 +349,36 @@ export class OverworldView {
     }
   }
 
-  private spriteHeight(_state: GameState, _s: SpriteSnap, cellX: number, cellY: number): number {
-    return this.world.heightAt(cellX + 0.5, cellY + 0.5);
-  }
-
+  /** The player's foot point: where the actor layer stands its sprite (the camera's target). One reused
+   *  vector: valid until the next call. */
   private playerWorld(state: GameState): THREE.Vector3 | null {
     const p = state.player;
     if (!p) return null;
     const s = state.sprites.find((sp) => sp.index === p.spriteId);
     if (!s) return null;
-    const fx = s.worldX / 16;
-    const fy = s.worldY / 16 - 0.5;
-    const h = this.spriteHeight(state, s, Math.floor(fx), Math.floor(fy));
-    return new THREE.Vector3(fx, h, fy + h);
+    return uprightFoot(s, this.actorFrame.heightAt, this.playerFoot);
   }
 
-  private buildBillboards(state: GameState): BillboardSpec[] {
-    const list: BillboardSpec[] = [];
-    for (const s of state.sprites) {
-      if (!s.coordOffset || s.invisible) continue;
-      const kind = this.classifier ? this.classifier.kind(s) : SpriteKind.Upright;
-      if (kind === SpriteKind.Hidden) continue;
-      const fx = s.worldX / 16;
-      const flat = kind === SpriteKind.Flat;
-      // Upright cards stand on the cell centre; flat decals cover their GBA rectangle.
-      let fy = flat ? s.worldY / 16 : s.worldY / 16 - 0.5;
-      const cellX = Math.floor(fx);
-      const cellY = Math.floor(flat ? fy - 0.5 : fy);
-      if (hidesGrassOverlay(kind, this.worldStyle, this.world.hasGrassBlades(cellX + 0.5, cellY + 0.5))) continue;
-      const slot = this.spriteAtlas.slots.get(s.index);
-      if (!slot) continue;
-      const h = this.spriteHeight(state, s, cellX, cellY);
-      if (kind === SpriteKind.Grass) fy += 0.06; // in front of the legs it covers
-      list.push({
-        footX: fx,
-        footY: h,
-        footZ: fy + h,
-        width: (s.width * s.scaleX) / 16,
-        height: (s.height * s.scaleY) / 16,
-        lift: flat ? 0 : Math.max(0, -s.y2 / 16),
-        flat,
-        slot,
-      });
-    }
-    return list;
+  /** Modern's Phase 2 actors: inflated characters and object models (false: every sprite a card, as in Retro —
+   *  the harness's `--ab` baseline). */
+  setActorInflation(on: boolean): void {
+    this.actors.inflation = on;
+  }
+
+  /** Whether the occlusion fade also clears the nearest inflated NPCs (Modern; false: the player only, as in
+   *  Phase 1 — the harness's `--ab-feature npcfade` baseline). */
+  setNpcFade(on: boolean): void {
+    this.npcFade = on;
+  }
+
+  /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (Retro's cards are unaffected). */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.actors.setSpriteFilter(f);
+  }
+
+  /** Draws the world sprites flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.actors.setMask(on);
   }
 
   private updateLighting(state: GameState): void {
@@ -458,7 +503,7 @@ export class OverworldView {
     const fogFar = indoor ? 45 : underwater ? 38 : (w === 6 || w === 9 || w === 8) ? 32 : 64;
     fogObj.near = fogNear * this.zoom;
     fogObj.far = fogFar * this.zoom;
-    this.sky.setColors(skyColor, fog, indoor || underground);
+    this.sky.setColors(skyColor, fog, indoor || underground, this.time);
     // Characters are lit with a simplified model (no normal): ambient + part of the sun.
     // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI.
     const k = 1 / Math.PI;
@@ -506,6 +551,8 @@ export class OverworldView {
     const dist = preset.distance * this.zoom * (1 - 0.55 * bz);
     const look = this.target.clone().add(new THREE.Vector3(0, 0.9, 0));
     const yawFx = this.yaw + bz * 1.2;
+    // (the camera's horizontal back direction: "in front of" for the NPC occlusion fade)
+    this.kitUniforms.uCamBack.value.set(Math.sin(yawFx), Math.cos(yawFx));
     const offset = new THREE.Vector3(
       Math.sin(yawFx) * Math.cos(pitch),
       Math.sin(pitch),
@@ -517,16 +564,21 @@ export class OverworldView {
     this.camera.updateProjectionMatrix();
     this.camera.updateMatrixWorld();
     // Occlusion fade (Modern only): trees/roofs between the camera and the player dither out.
-    const focus = this.focusOverride ?? (this.overrideTarget ? null : this.playerWorld(state));
-    setKitFocus(this.kitUniforms, this.worldStyle === 'modern' ? focus : null, this.camera, this.bufferW, this.bufferH);
+    const modern = this.worldStyle === 'modern';
+    const focus = modern ? this.focusOverride ?? (this.overrideTarget ? null : this.playerWorld(state)) : null;
+    setKitFocus(this.kitUniforms, focus, this.camera, this.bufferW, this.bufferH);
     this.cameraRight.set(Math.cos(yawFx), 0, -Math.sin(yawFx));
 
     this.updateLighting(state);
-    const specs = this.buildBillboards(state);
-    this.billboards.set(specs, this.cameraRight, this.charLight);
-    // The feet of the upright sprites (characters, objects) bend the kit's grass.
-    const feet = specs.filter((b) => !b.flat).map((b) => ({ x: b.footX, y: b.footY, z: b.footZ }));
+    this.actorFrame.style = this.worldStyle;
+    this.actorFrame.classifier = this.classifier;
+    // The feet of the upright sprites (characters, objects) and grass overlays bend the kit's grass.
+    const feet = this.actors.update(state, this.actorFrame);
     setKitActors(this.kitUniforms, feet, this.target);
+    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none), each fade's
+    // strength ramping up as they come within reach (fadeActorRamp)
+    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus, { out: this.fadeNpcs }) : NO_FEET;
+    setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH, focus ?? undefined);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;
     this.weather.update(state.weather, indoorish, dt, this.target, this.cameraRight);

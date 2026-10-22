@@ -7,10 +7,26 @@ import { kvGet, kvSet } from './ui/storage';
 import { Shell } from './ui/shell';
 import { Renderer } from './render/renderer';
 import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/settings';
+import { keyMask } from './input/keyNames';
+import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
+import { frameGuard } from './render/frameGuard';
+import { parseSpriteFilter } from './render/actors/actorLayer';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
 const FAST_FORWARD = 4;
+/** Emulated RTC in manual mode (local time): the game's clock re-reads replay identically. */
+const MANUAL_RTC = '2026-01-01T10:00:00';
+
+/** Setting overrides from the URL (?style=modern|retro, ?camera=0..3, ?spriteFilter=smooth|pixel): applied, never saved. */
+function urlOverrides(params: URLSearchParams, s: Settings): void {
+  const style = params.get('style');
+  if (style === 'modern' || style === 'retro') s.worldStyle = style;
+  const camera = params.get('camera');
+  if (camera !== null && /^[0-3]$/.test(camera)) s.camera = Number(camera);
+  const spriteFilter = parseSpriteFilter(params.get('spriteFilter'));
+  if (spriteFilter) s.spriteFilter = spriteFilter;
+}
 
 async function sha1(data: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-1', data as unknown as BufferSource);
@@ -25,6 +41,40 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
     /* fall through to manual selection */
   }
   return shell.askForRom();
+}
+
+/**
+ * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
+ * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n, keys?)` times n
+ * frames on the GPU, idle or with `keys` held (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
+ * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames.
+ */
+function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
+  renderer.setFixedTimestep(1 / 60);
+  const gl = renderer.webgl.getContext() as WebGL2RenderingContext;
+  const emulate = (mask: number): void => {
+    gba.keys = mask;
+    gba.runFrame();
+    renderer.onEmulatedFrame();
+  };
+  const render = (): void => renderer.render(1000 / 60);
+  const step = (keys: string, frames: number): number[] => {
+    const mask = keyMask(keys);
+    const times: number[] = [];
+    for (let i = 0; i < frames; i++) {
+      emulate(mask);
+      const t0 = performance.now();
+      render();
+      times.push(performance.now() - t0);
+    }
+    return times;
+  };
+  // (keys held during the timed frames: the harness's walking A/B)
+  const gpuFrames = (n: number, keys = ''): Promise<GpuTiming> => {
+    const mask = keyMask(keys);
+    return timeGpuFrames(gl, n, render, () => emulate(mask));
+  };
+  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
 }
 
 function debounce(fn: () => void, ms: number): () => void {
@@ -44,9 +94,11 @@ async function boot(): Promise<void> {
   if (preview) {
     const [g, n] = preview.split('.').map(Number);
     const { PreviewApp } = await import('./render/preview');
-    const app = new PreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, g, n, new URLSearchParams(location.search));
+    const previewParams = new URLSearchParams(location.search);
+    const app = new PreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, g, n, previewParams);
     shell.hideLoader();
-    shell.toast(`Preview: ${app.name}`);
+    // (no wall-clock toast in manual mode: harness shots stay deterministic)
+    if (previewParams.get('manual') !== '1') shell.toast(`Preview: ${app.name}`);
     (window as unknown as { preview: unknown }).preview = app;
     return;
   }
@@ -62,7 +114,11 @@ async function boot(): Promise<void> {
     console.warn('Audio unavailable', e);
   }
 
-  const gba = new Gba(rom, { sampleRate: audio.sampleRate });
+  // Debug/testing hooks: ?state=<url> loads a save state, ?autostart skips the start gate,
+  // ?manual=1 (implies autostart) stops the frame loop: frames advance only through emu.step.
+  const params = new URLSearchParams(location.search);
+  const manual = params.get('manual') === '1';
+  const gba = new Gba(rom, { sampleRate: audio.sampleRate, now: manual ? () => new Date(MANUAL_RTC) : undefined });
   const save = await kvGet<Uint8Array>('flash');
   if (save) gba.loadSave(save);
   const persist = debounce(() => {
@@ -77,6 +133,7 @@ async function boot(): Promise<void> {
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const input = new Input(canvas);
   const settings = loadSettings();
+  urlOverrides(params, settings);
   const renderer = new Renderer(canvas, gba, settings.quality);
 
   const quickSave = () => {
@@ -94,6 +151,7 @@ async function boot(): Promise<void> {
     renderer.mode = s.view;
     renderer.overworld.presetIndex = s.camera;
     renderer.setWorldStyle(s.worldStyle);
+    renderer.setSpriteFilter(s.spriteFilter);
     renderer.setEffects(s.tiltShift, s.bloom);
     audio.setVolume(s.volume);
   };
@@ -150,18 +208,29 @@ async function boot(): Promise<void> {
   input.on('quickSave', quickSave);
   input.on('quickLoad', quickLoad);
 
-  // Debug/testing hooks: ?state=<url> loads a save state, ?autostart skips the start gate.
-  const params = new URLSearchParams(location.search);
   const stateUrl = params.get('state');
   if (stateUrl) {
     const res = await fetch(stateUrl);
     if (res.ok) gba.loadState(new Uint8Array(await res.arrayBuffer()));
   }
-  if (!params.has('autostart')) await shell.waitForGesture('Press any key to start');
+  if (!params.has('autostart') && !manual) await shell.waitForGesture('Press any key to start');
   audio.resume();
   shell.hideLoader();
   canvas.focus();
 
+  // actor self-test (between frames, Modern overworld: the inflation field, the xBR shader) and the field's slots as a PNG data URL
+  const debug = { gba, renderer, input, selfTest: () => renderer.actorSelfTest(), fieldDump: () => renderer.actorFieldDump() };
+  if (manual) {
+    exposeManual(gba, renderer, debug);
+    return;
+  }
+
+  // per-frame render code never stops the frame loop: its first exception is reported, emulation and audio go on, and
+  // V (the classic 2D view) stays the universal fallback (spec §11)
+  const guarded = frameGuard((e) => {
+    console.warn('[render] a frame failed to render; emulation goes on (V switches to the classic 2D view)', e);
+    shell.toast('3D view error — press V for the classic 2D view', 5000);
+  });
   let acc = 0;
   let last = performance.now();
   const stats = { fps: 0, emuFps: 0, emuMs: 0, renderMs: 0 };
@@ -195,7 +264,7 @@ async function boot(): Promise<void> {
     renderer.cameraInput.zoom += input.cameraZoom;
     input.cameraYaw = input.cameraPitch = input.cameraZoom = 0;
     const r0 = performance.now();
-    renderer.render(dt);
+    guarded(() => renderer.render(dt));
     renderTime += performance.now() - r0;
     statFrames++;
     if (now - statStart >= 1000) {
@@ -211,7 +280,7 @@ async function boot(): Promise<void> {
   requestAnimationFrame(tick);
 
   // Expose for debugging in the console.
-  (window as unknown as { emu: unknown }).emu = { gba, renderer, input, stats };
+  (window as unknown as { emu: unknown }).emu = { ...debug, stats };
 }
 
 void boot();

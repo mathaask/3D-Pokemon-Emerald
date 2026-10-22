@@ -14,6 +14,10 @@ import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
+import { SpriteField } from './actors/spriteField';
+import { instanceUniformsFit } from './actors/inflatedActors';
+import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
+import type { SpriteFilter } from './actors/actorLayer';
 
 export type ViewMode = 'auto' | 'classic';
 
@@ -25,6 +29,8 @@ export class Renderer {
   private screen: ScreenView;
   private gbaTex: GbaTextures;
   private spriteAtlas: SpriteAtlas;
+  /** Inflation field of the sprite atlas (Modern overworld only). */
+  private spriteField: SpriteField;
   readonly overworld: OverworldView;
   readonly battle: BattleView;
   private hud: Hud;
@@ -40,6 +46,10 @@ export class Renderer {
   private fadeScene = new THREE.Scene();
   private fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private lastTime = performance.now();
+  /** Fixed seconds per render() (deterministic stepping), or null: wall-clock time. */
+  private fixedDt: number | null = null;
+  /** Virtual clock in ms, advanced by fixedDt per render() while a fixed timestep is set. */
+  private virtualNow = 0;
   /** Scene actually presented (transition frames keep the previous one). */
   presented: 'overworld' | 'battle' | 'screen2d' = 'screen2d';
   private transitionFx = new BattleTransitionFx();
@@ -61,12 +71,17 @@ export class Renderer {
     this.webgl.toneMapping = THREE.NeutralToneMapping;
     this.webgl.toneMappingExposure = 1.0;
     this.webgl.outputColorSpace = THREE.SRGBColorSpace;
+    // whole-frame totals (every pass of a render() call): reset at its start, see stats()
+    this.webgl.info.autoReset = false;
 
     this.state = new GameState(gba.bus);
     this.screen = new ScreenView(gba.ppu.framebuffer);
     this.gbaTex = new GbaTextures(gba.bus);
     this.spriteAtlas = new SpriteAtlas(this.gbaTex);
-    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy());
+    this.spriteField = new SpriteField();
+    // (the inflated actors' instance data: a uniform array where the device has the vertex uniform vectors; ?actorUniforms=0|1)
+    const actorUniforms = instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, new URLSearchParams(location.search).get('actorUniforms'));
+    this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField, actorUniforms);
     this.battle = new BattleView(this.spriteAtlas);
     this.classifier = new SpriteClassifier(this.state.mem);
     this.overworld.classifier = this.classifier;
@@ -77,6 +92,11 @@ export class Renderer {
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
+    // the overworld's precompile (at its first sync) draws one frame through PostFX, as frames are presented
+    this.overworld.precompileFrame = () => {
+      this.post.setCamera(this.overworld.scene, this.overworld.camera);
+      this.post.render(0);
+    };
     this.applyTiltShift(this.overworld.worldStyle);
     this.fade.frustumCulled = false;
     this.fadeScene.add(this.fade);
@@ -121,6 +141,11 @@ export class Renderer {
     this.post.setEnabled(tiltShift, bloom);
   }
 
+  /** Sprite edges of the Modern overworld's actors: HD smooth (xBR) or Pixel. Retro ignores it. */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.overworld.setSpriteFilter(f);
+  }
+
   /** Called after every emulated frame (possibly several per displayed frame). */
   onEmulatedFrame(): void {
     this.emulatedSinceRender++;
@@ -143,6 +168,10 @@ export class Renderer {
       this.overworld.sync(st, this.webgl);
       const dispcnt = this.gba.bus.io16[0];
       this.spriteAtlas.update(this.webgl, st.sprites, (dispcnt & 0x40) === 0);
+      // the inflation field of this same atlas (the actors sample both); Retro draws cards only
+      if (this.overworld.worldStyle === 'modern') {
+        this.spriteField.update(this.webgl, this.spriteAtlas.target.texture, this.spriteAtlas.slotRects, this.spriteAtlas.slotCount);
+      }
       this.hud.updateOverlay();
       this.hud.setSprites(st.sprites.filter((s) => !s.coordOffset && !s.invisible && this.classifier.kind(s) !== SpriteKind.Hidden), this.spriteAtlas);
     } else if (this.presented === 'battle') {
@@ -173,10 +202,56 @@ export class Renderer {
     r.autoClear = true;
   }
 
+  /**
+   * Deterministic stepping: every render() advances `dt` seconds and a virtual clock (for the
+   * battle transition) instead of reading performance.now(). null restores wall-clock time.
+   */
+  setFixedTimestep(dt: number | null): void {
+    this.fixedDt = dt;
+    this.lastTime = performance.now();
+  }
+
+  /** Render statistics of the last render() call, all passes together. */
+  stats(): { calls: number; triangles: number; programs: number } {
+    const info = this.webgl.info;
+    return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0 };
+  }
+
+  /** The field is computed in the Modern overworld only: the self-test and the dump need it current. */
+  private checkFieldLive(): void {
+    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
+      throw new Error(`the inflation field is computed in the Modern overworld only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+    }
+  }
+
+  /** Actor self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas, and the
+   *  xBR shader vs its CPU reference on a fixture. */
+  actorSelfTest(): Promise<ActorSelfTest> {
+    this.checkFieldLive();
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+  }
+
+  /** The used slots of the inflation field as a grey PNG data URL (harness --selftest: _field_<entry>.png). */
+  actorFieldDump(): string {
+    this.checkFieldLive();
+    return fieldDump(this.webgl, this.spriteAtlas, this.spriteField);
+  }
+
   render(_dtMs: number): void {
-    const now = performance.now();
-    const dt = Math.min(0.1, (now - this.lastTime) / 1000);
-    this.lastTime = now;
+    this.webgl.info.reset();
+    // a throw inside an earlier frame's PostFX pass leaves its offscreen target bound and autoClear off:
+    // start every frame from the canvas, so classic 2D (V) still shows up after such a failure
+    this.webgl.setRenderTarget(null);
+    this.webgl.autoClear = true;
+    let now: number, dt: number;
+    if (this.fixedDt !== null) {
+      dt = this.fixedDt;
+      now = this.virtualNow += dt * 1000;
+    } else {
+      now = performance.now();
+      dt = Math.min(0.1, (now - this.lastTime) / 1000);
+      this.lastTime = now;
+    }
     if (this.emulatedSinceRender > 0 || this.resync) {
       this.syncFromEmulator();
       this.emulatedSinceRender = 0;

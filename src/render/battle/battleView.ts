@@ -257,7 +257,7 @@ export class BattleView {
     this.arena.update(this.time, night);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(this.arena.horizon);
-    this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor);
+    this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor, this.time);
     this.sky.mesh.position.copy(this.camera.position);
 
     this.billboards.set(this.buildBillboards(state, hudSprites), this.cameraRight, this.charLight);

@@ -9,11 +9,13 @@ import { cliffFamily } from './cliffs';
 import { grassFamily } from './grass';
 import { flowerFamily } from './flowers';
 import { waterFamily } from './water';
+import { soilFamily } from './soil';
 import { terrainFamily } from './terrain';
 import { installGeneralTables } from './tables/general';
 
 installGeneralTables();
 
+// (the berry soil claims last of the objects: the other families see the claims they always did)
 export const FAMILIES: readonly Family<unknown>[] = [
-  buildingFamily, propFamily, treeFamily, cliffFamily, grassFamily, flowerFamily, waterFamily, terrainFamily,
+  buildingFamily, propFamily, treeFamily, cliffFamily, grassFamily, flowerFamily, waterFamily, soilFamily, terrainFamily,
 ];

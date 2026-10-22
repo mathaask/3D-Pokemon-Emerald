@@ -1,10 +1,26 @@
 // Stylised material factory: MeshStandardMaterial with injected wind sway, actor bending,
-// camera-to-player occlusion fade, night glow and procedural surface patterns.
+// occlusion fade (between the camera and the player, and the nearest NPCs), night glow and procedural surface patterns.
 
 import * as THREE from 'three';
 import { KIT_NOISE_GLSL } from './noise.glsl';
 
 export const MAX_ACTORS = 8;
+/** NPCs the occlusion fade also clears (besides the player): the nearest ones, those you talk to. */
+export const MAX_FADE_ACTORS = 3;
+/** How near the player (XZ, world units = cells) an NPC must stand for the occlusion fade to clear it. */
+export const FADE_ACTOR_RADIUS = 4;
+/** Within this distance of the player an NPC's fade has its full strength; it weakens to 0 at FADE_ACTOR_RADIUS
+ *  (smoothstep), so an NPC's window never pops in or out as it crosses the reach. */
+export const FADE_ACTOR_FULL = 3;
+/** An NPC's circle only clears what stands in front of it in the world: beyond its foot by this much along the
+ *  camera's horizontal back direction (uCamBack), i.e. past the near edge of the NPC's own cell. Occluders less than
+ *  half a cell in front stay by design; crowns of the rows behind it or beside it, nearer the pitched camera along its
+ *  view axis only because they rise high, stay whole. */
+export const FADE_FRONT_MARGIN = 0.5;
+/** An NPC's circle only clears the band of the screen its sprite card spans (its projected half-width, leaning with
+ *  the card's projected vertical): the half-width plus this share of the circle's radius, then the circle's soft edge
+ *  (1 - FADE_CORE of the radius). Crowns beside an NPC stay whole. */
+export const FADE_SIDE_PAD = 0.02;
 
 /** Shared, per-frame uniforms (owned by OverworldView; referenced by every kit material). */
 export interface KitUniforms {
@@ -18,6 +34,18 @@ export interface KitUniforms {
   uFocusDepth: { value: number };
   /** Occlusion-fade radius in pixels (0 disables). */
   uFadeRadius: { value: number };
+  /** The occlusion fade's NPC circles (MAX_FADE_ACTORS, filled in order): (px.x, px.y, depth, radius) as the
+   *  player's uFocusPx / uFocusDepth / uFadeRadius; radius 0 = unused (the rest are unused too). */
+  uFocusExtra: { value: THREE.Vector4[] };
+  /** Pixel rectangle (x0, y0, x1, y1) holding every used uFocusExtra circle (none: empty): the fragments outside it
+   *  (most of them) skip the NPC circles with one test. */
+  uFocusExtraBox: { value: THREE.Vector4 };
+  /** Per used uFocusExtra circle, its NPC: (foot · uCamBack, sprite half-width in px, lean = px x per px y of the
+   *  card's projected vertical, strength 0..1). Only what lies in front of the foot (see FADE_FRONT_MARGIN) and over the
+   *  sprite's band of the screen (see FADE_SIDE_PAD) fades, by the strength (fadeActorRamp). */
+  uFocusExtraFoot: { value: THREE.Vector4[] };
+  /** The camera's horizontal back direction (world XZ, unit; (sin yaw, cos yaw)): "in front" for the NPC circles. */
+  uCamBack: { value: THREE.Vector2 };
   /** Feet of characters that bend grass (unused slots far away). */
   uActors: { value: THREE.Vector3[] };
   /** Sky colour (linear) for water reflections. */
@@ -32,6 +60,10 @@ export function createKitUniforms(): KitUniforms {
     uFocusPx: { value: new THREE.Vector2(-1e4, -1e4) },
     uFocusDepth: { value: 0 },
     uFadeRadius: { value: 0 },
+    uFocusExtra: { value: Array.from({ length: MAX_FADE_ACTORS }, () => new THREE.Vector4(-1e4, -1e4, 0, 0)) },
+    uFocusExtraBox: { value: new THREE.Vector4(1, 1, 0, 0) },
+    uFocusExtraFoot: { value: Array.from({ length: MAX_FADE_ACTORS }, () => new THREE.Vector4()) },
+    uCamBack: { value: new THREE.Vector2(0, 1) },
     uActors: { value: Array.from({ length: MAX_ACTORS }, () => new THREE.Vector3(1e4, 0, 1e4)) },
     uSky: { value: new THREE.Color(0.75, 0.88, 1.0) },
   };
@@ -44,13 +76,65 @@ const SPRITE_H = 2;
  *  the camera zooms in (or the battle zoom pushes it in) or out. */
 export const FADE_PER_SPRITE_PX = 0.69;
 /** Share of the fade radius that is fully faded (the rest is the soft edge). Centred on the sprite's
- *  middle, the core (0.85 x 0.69 = 0.59 of its projected height) holds all of it, feet to head top:
- *  whatever stands in front, the character is never hidden. */
+ *  middle, the core (0.85 x 0.69 = 0.59 of its projected height) holds all of it, feet to head top: the kit
+ *  geometry that fades (trees, roofs, props) dithers out over the whole sprite where it stands more than 0.6
+ *  nearer the camera than the character's chest. (An NPC's circle grows until its core holds the card's corners
+ *  too: setKitFocusExtra.) */
 export const FADE_CORE = 0.85;
 /** Warm light of lit windows at night (GLSL, linear RGB): house windows (KIT_GLOW), special facades'
  *  panes and the legacy walls' glass. */
 export const WARM_GLOW_GLSL = 'vec3(1.0, 0.72, 0.38)';
-const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3();
+const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3(), _circle = new THREE.Vector4();
+const _right = new THREE.Vector3(), _edge = new THREE.Vector3(), _band = new THREE.Vector3();
+// (reused by pickFadeActors / setKitActors: distances, the nearest feet)
+const _pickD: number[] = [], _nearD: number[] = [], _near: { x: number; y: number; z: number }[] = [];
+
+type Foot = { x: number; y: number; z: number };
+/** An NPC's foot for the occlusion fade, with its sprite's half-width in world units (default: a 16-px sprite's, 0.5). */
+export type FadeFoot = Foot & { halfWidth?: number };
+
+/**
+ * The occlusion-fade circle of a character standing at `feet` (world space), seen by `camera` in a
+ * `w`×`h`-pixel render target, into `out`: (centre px x, centre px y, depth, radius px). The camera's
+ * matrices must be current.
+ */
+function fadeCircle(feet: Foot, camera: THREE.Camera, w: number, h: number, out: THREE.Vector4): THREE.Vector4 {
+  // the character as projected: feet and the top of its sprite (NDC)
+  const f = _feet.set(feet.x, feet.y, feet.z).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
+  // the circle centres on the sprite's middle on screen; what is nearer the camera than its chest fades
+  out.x = ((f.x + t.x) * 0.25 + 0.5) * w;
+  out.y = ((f.y + t.y) * 0.25 + 0.5) * h;
+  out.z = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
+  // its projected height, in target pixels
+  const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
+  out.w = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
+  return out;
+}
+
+/** Half the px distance between the projections of `at` ± `right` × `half` (both at one screen height: no roll). */
+function halfSpan(at: THREE.Vector3, right: THREE.Vector3, half: number, camera: THREE.Camera, w: number): number {
+  const a = _edge.copy(at).addScaledVector(right, half).project(camera).x;
+  const b = _edge.copy(at).addScaledVector(right, -half).project(camera).x;
+  return Math.abs(a - b) * 0.25 * w;
+}
+
+/**
+ * The screen band of a character's sprite card standing at `feet` (world space; the card faces the camera: it spans
+ * the camera's right, `halfWidth` world units each way, and SPRITE_H up): into `out`, (its half-width in px — the
+ * larger of its feet's and its head's, nearer the camera —, its lean: px x per px y of its projected vertical, and its
+ * reach: how far its corners lie from its middle on screen, px — at most; the card's half-diagonal).
+ */
+function spriteBand(feet: Foot, halfWidth: number, camera: THREE.Camera, w: number, h: number, out: THREE.Vector3): THREE.Vector3 {
+  const right = _right.setFromMatrixColumn(camera.matrixWorld, 0);
+  const f = _feet.set(feet.x, feet.y, feet.z), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z);
+  const half = Math.max(halfSpan(f, right, halfWidth, camera, w), halfSpan(t, right, halfWidth, camera, w));
+  f.project(camera);
+  t.project(camera);
+  const dy = (t.y - f.y) * h;
+  // (the middle is half way between feet and head; a corner half the vertical away, and `half` across)
+  const reach = Math.hypot(Math.abs(t.x - f.x) * 0.25 * w + half, (t.y - f.y) * 0.25 * h);
+  return out.set(half, Math.abs(dy) > 1e-9 ? ((t.x - f.x) * w) / dy : 0, reach);
+}
 
 /**
  * Aims the occlusion fade at a character standing at `feet` (world space), seen by `camera`
@@ -61,26 +145,108 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
     u.uFadeRadius.value = 0;
     return;
   }
-  // the character as projected: feet and the top of its sprite (NDC)
-  const f = _feet.copy(feet).project(camera), t = _head.set(feet.x, feet.y + SPRITE_H, feet.z).project(camera);
-  // the circle centres on the sprite's middle on screen; what is nearer the camera than its chest fades
-  u.uFocusPx.value.set(((f.x + t.x) * 0.25 + 0.5) * w, ((f.y + t.y) * 0.25 + 0.5) * h);
-  u.uFocusDepth.value = -_chest.set(feet.x, feet.y + 0.7, feet.z).applyMatrix4(camera.matrixWorldInverse).z;
-  // its projected height, in target pixels
-  const spritePx = Math.hypot((t.x - f.x) * 0.5 * w, (t.y - f.y) * 0.5 * h);
-  u.uFadeRadius.value = Math.min(FADE_PER_SPRITE_PX * spritePx, 0.5 * h);
+  const c = fadeCircle(feet, camera, w, h, _circle);
+  u.uFocusPx.value.set(c.x, c.y);
+  u.uFocusDepth.value = c.z;
+  u.uFadeRadius.value = c.w;
+}
+
+/** pickFadeActors's options: at most `max` feet (MAX_FADE_ACTORS) within `radius` (FADE_ACTOR_RADIUS); `out`: a list to
+ *  fill and return (reused across frames, see pickFadeActors). */
+export interface FadePickOptions<T> { max?: number; radius?: number; out?: T[] }
+
+/** No NPC to clear (pickFadeActors with `out`, nothing in reach). */
+const NO_PICKS: readonly never[] = Object.freeze([]);
+
+/**
+ * Nearest `max` feet within `radius` (XZ, world units) of the player, excluding the player itself (a foot
+ * closer than 0.01): the NPCs the occlusion fade also clears, nearest first (the feet's own objects).
+ * With `out`, the picks are written into it and it is returned truncated to them; with none in reach the shared empty
+ * list is returned and `out` keeps its storage (V8 drops an array's backing store when its length is set to 0): no
+ * allocation per frame once `out` grew.
+ */
+export function pickFadeActors<T extends Foot>(feet: readonly T[], player: THREE.Vector3,
+  { max = MAX_FADE_ACTORS, radius = FADE_ACTOR_RADIUS, out }: FadePickOptions<T> = {}): readonly T[] {
+  const list = out ?? [];
+  let n = 0;
+  for (let i = 0; i < feet.length; i++) {
+    const p = feet[i];
+    const d = (p.x - player.x) ** 2 + (p.z - player.z) ** 2;
+    if (d >= 0.01 ** 2 && d <= radius * radius) n = insertNearest(list, _pickD, n, max, p, d);
+  }
+  if (n === 0) return out ? NO_PICKS : list;
+  if (list.length !== n) list.length = n; // (n ≥ 1: truncated in place)
+  return list;
+}
+
+/** Inserts `p` at squared distance `d` into the first `n` entries of `out`, kept ascending by `ds` (their distances) and at
+ *  most `max` long; after the equal distances already there (as a stable sort of the input order). Returns the new
+ *  count. Entries past it are stale (never read); the arrays' lengths only grow, so nothing allocates once they grew. */
+function insertNearest<T>(out: T[], ds: number[], n: number, max: number, p: T, d: number): number {
+  let k = n;
+  if (k >= max) {
+    if (!(d < ds[max - 1])) return n;
+    k = max - 1; // (drops the farthest)
+  } else n++;
+  for (; k > 0 && d < ds[k - 1]; k--) {
+    out[k] = out[k - 1];
+    ds[k] = ds[k - 1];
+  }
+  out[k] = p;
+  ds[k] = d;
+  return n;
+}
+
+/** Strength of an NPC's fade at XZ distance `d` from the player: 1 up to FADE_ACTOR_FULL, 0 from FADE_ACTOR_RADIUS. */
+export function fadeActorRamp(d: number): number {
+  return 1 - THREE.MathUtils.smoothstep(d, FADE_ACTOR_FULL, FADE_ACTOR_RADIUS);
+}
+
+/**
+ * Aims the occlusion fade's NPC circles at `feet` (the first MAX_FADE_ACTORS; world space), with the same
+ * projection as setKitFocus: one (px.x, px.y, depth, radius) per NPC, filled in order (the radius grown, where it
+ * must, until the core holds the card's corners); unused slots radius 0 (empty: off). Per NPC, uFocusExtraFoot gets
+ * its foot along the camera's back direction (uCamBack, set first), its sprite band (spriteBand: half-width px, lean)
+ * and its strength: with `player`, fadeActorRamp of the NPC's XZ distance (one ramped to 0 is left out), else 1. The
+ * rectangle holding what the circles can clear (each cut to its sprite's band) goes into uFocusExtraBox (none: an
+ * empty one).
+ */
+export function setKitFocusExtra(u: KitUniforms, feet: readonly FadeFoot[], camera: THREE.Camera, w: number, h: number,
+  player?: THREE.Vector3): void {
+  const slots = u.uFocusExtra.value, foot = u.uFocusExtraFoot.value, back = u.uCamBack.value;
+  const box = u.uFocusExtraBox.value.set(Infinity, Infinity, -Infinity, -Infinity);
+  let n = 0;
+  for (let i = 0; i < feet.length && n < slots.length; i++) {
+    const p = feet[i];
+    const ramp = player ? fadeActorRamp(Math.hypot(p.x - player.x, p.z - player.z)) : 1;
+    if (ramp <= 0) continue;
+    const c = fadeCircle(p, camera, w, h, slots[n]);
+    const band = spriteBand(p, p.halfWidth ?? 0.5, camera, w, h, _band);
+    // the core (FADE_CORE of the radius) holds the whole card, its corners too: wider than the player's circle where
+    // the card is wide for its projected height (a steep pitch, a 32-px wide sprite); still capped, the band cuts it
+    c.w = Math.max(c.w, Math.min(band.z / FADE_CORE, 0.5 * h));
+    foot[n++].set(p.x * back.x + p.z * back.y, band.x, band.y, ramp);
+    // the band's reach across the circle (it leans by |lean| px per px of height)
+    const side = Math.min(c.w, band.x + (FADE_SIDE_PAD + 1 - FADE_CORE + Math.abs(band.y)) * c.w);
+    box.set(Math.min(box.x, c.x - side), Math.min(box.y, c.y - c.w), Math.max(box.z, c.x + side), Math.max(box.w, c.y + c.w));
+  }
+  for (let k = n; k < slots.length; k++) slots[k].w = 0;
+  if (n === 0) box.set(1, 1, 0, 0);
 }
 
 /**
  * Feet (world space) of the characters that bend the grass: the MAX_ACTORS nearest `target` (the
  * camera's focus) fill the slots, unused slots go far away.
  */
-export function setKitActors(u: KitUniforms, feet: readonly { x: number; y: number; z: number }[], target: THREE.Vector3): void {
-  const d2 = (p: { x: number; y: number; z: number }) => (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2;
-  const near = [...feet].sort((p, q) => d2(p) - d2(q));
-  const slots = u.uActors.value;
+export function setKitActors(u: KitUniforms, feet: readonly Foot[], target: THREE.Vector3): void {
+  const slots = u.uActors.value, near = _near;
+  let n = 0;
+  for (let i = 0; i < feet.length; i++) {
+    const p = feet[i];
+    n = insertNearest(near, _nearD, n, slots.length, p, (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2);
+  }
   for (let k = 0; k < slots.length; k++) {
-    if (k < near.length) slots[k].set(near[k].x, near[k].y, near[k].z);
+    if (k < n) slots[k].set(near[k].x, near[k].y, near[k].z);
     else slots[k].set(1e4, 0, 1e4);
   }
 }
@@ -202,15 +368,44 @@ uniform vec3 uSky;
 uniform vec2 uFocusPx;
 uniform float uFocusDepth;
 uniform float uFadeRadius;
+uniform vec4 uFocusExtra[${MAX_FADE_ACTORS}];
+uniform vec4 uFocusExtraBox;
+uniform vec4 uFocusExtraFoot[${MAX_FADE_ACTORS}];
+uniform vec2 uCamBack;
 uniform float uGlow;
 varying vec3 vKitWorld;
 ${KIT_NOISE_GLSL}
 `;
 
+// The player's circle (Phase 1, unchanged), then the nearby NPCs' (same core / edge / Bayer rule: a fragment goes where
+// any circle dithers it out). An NPC circle clears only what covers the NPC: fragments in front of it in the world
+// (beyond its foot along the camera's horizontal back direction, uCamBack: FADE_FRONT_MARGIN; high crowns behind it
+// pass the view-axis test) and over its sprite card's band of the screen (half-width + FADE_SIDE_PAD, leaning with the
+// card's projected vertical, then the same soft edge; crowns beside it stay whole), by its strength (the ramp over the
+// last cell of reach). Most fragments lie outside the NPC circles' rectangle (an empty one: Retro, nobody near) and skip
+// them with one test; inside it, the slots fill in order (an empty one ends them) and a fragment outside a circle pays
+// a squared distance only.
 const FADE = /* glsl */ `
 #ifdef KIT_FADE
-if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
-  float kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
+{
+  float kf = 0.0;
+  if (uFadeRadius > 0.0 && vViewPosition.z < uFocusDepth - 0.6) {
+    kf = 1.0 - smoothstep(uFadeRadius * ${FADE_CORE.toFixed(2)}, uFadeRadius, length(gl_FragCoord.xy - uFocusPx));
+  }
+  if (all(greaterThan(gl_FragCoord.xy, uFocusExtraBox.xy)) && all(lessThan(gl_FragCoord.xy, uFocusExtraBox.zw))) {
+    for (int k = 0; k < ${MAX_FADE_ACTORS}; k++) {
+      vec4 e = uFocusExtra[k];
+      if (e.w <= 0.0) break;
+      vec2 dp = gl_FragCoord.xy - e.xy;
+      float d2 = dot(dp, dp);
+      vec4 f = uFocusExtraFoot[k];
+      if (d2 < e.w * e.w && vViewPosition.z < e.z - 0.6 && dot(vKitWorld.xz, uCamBack) > f.x + ${FADE_FRONT_MARGIN.toFixed(2)}) {
+        float side = f.y + e.w * ${FADE_SIDE_PAD.toFixed(2)};
+        kf = max(kf, f.w * (1.0 - smoothstep(e.w * ${FADE_CORE.toFixed(2)}, e.w, sqrt(d2)))
+          * (1.0 - smoothstep(side, side + e.w * ${(1 - FADE_CORE).toFixed(2)}, abs(dp.x - f.z * dp.y))));
+      }
+    }
+  }
   if (kf > 0.0 && kitBayer4(gl_FragCoord.xy) < kf * 0.9) discard;
 }
 #endif
@@ -262,7 +457,9 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
   o: Hooks, full: boolean): void {
   Object.assign(s.uniforms, {
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
-    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, ...local, ...slots,
+    uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, uFocusExtra: u.uFocusExtra,
+    uFocusExtraBox: u.uFocusExtraBox, uFocusExtraFoot: u.uFocusExtraFoot,
+    uCamBack: u.uCamBack, ...local, ...slots,
   });
   s.vertexShader = VERT_PRELUDE + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))

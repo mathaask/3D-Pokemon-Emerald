@@ -11,6 +11,9 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
   review fix wave). **Phase 1 is complete; final whole-branch review clean.** The full execution ledger (every
   controller ruling + the deferred-minor backlog per task) is preserved in
   `docs/superpowers/progress/phase1-sdd-ledger.md`; the final review in `phase1-final-review.md`.
+- 2026-10-20 → 2026-10-22: Phase 2 plan `docs/superpowers/plans/2026-10-20-phase2-characters.md` (12 tasks), executed
+  subagent-driven on branch `phase2-characters`. **Phase 2 is complete** (see "Phase 2 result"); its ledger is in
+  `docs/superpowers/progress/phase2-sdd-ledger.md`.
 - Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
   max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
   NOTE: route119's legacy build already exceeds the 150 ms budget before Phase 1 (see ledger ruling).
@@ -286,17 +289,61 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
     (e.g. a Battle Frontier West special changes size on crossing).
   - Stern's Shipyard's back pier floats behind its 3D roof (the height solver lifts the elevation-1 pier to 4).
   - Rain streaks show below the water surface (the water no longer writes depth).
-  - Only the player gets the occlusion fade: NPCs behind tree crowns or roofs stay hidden (Phase 2).
+  - ~~Only the player gets the occlusion fade~~ — **fixed in Phase 2 (Task 11)**: the 3 nearest NPCs within 4 cells too.
   - The first 1–2 map rebuilds after boot may hitch (98–193 ms, JIT warm-up); a boot-time warm-up build would fix it.
   - A kit material kind's shader program compiles the first time it is drawn in a session (then never again): the
     first visit to a map with water stalls one frame (Oldale: 558 ms on the dev iGPU), signs/emblems/flowers less.
     Pre-compiling every kit program at boot (e.g. `compileAsync` over a sample of each kind) would remove it.
   - Pixel-water squares can return under palette effects (drought weather, fades: the Dry cut follows live colours).
-  - Characters, Pokémon, field objects (the moving truck, item balls) are still billboards (Phase 2).
+  - ~~Characters, Pokémon, field objects are still billboards~~ — **done in Phase 2** (see "Phase 2 result").
+
+## Phase 2 result (2026-10-22)
+Modern style draws the player, NPCs and overworld Pokémon as **inflated sprites** (GPU height field from each live
+sprite frame, mean-preserving volume shading, sky rim light, silhouette sun shadows via an alpha-tested depth twin,
+contact shadows), with **HD sprite edges** (scale-free xBR; Settings → Sprite edges: HD smooth / Pixel). Poké Balls,
+Strength boulders, breakable rocks, Cut trees, the moving truck and berry trees (5 growth stages, Modern berry-soil
+beds) are **procedural 3D models** coloured from their own sprite's pixels. The truck is composed from its subsprite
+pieces in both styles. Nearby NPCs behind crowns/roofs get the occlusion fade. Retro 3D is unchanged except the
+(now correct) truck. Executed subagent-driven on branch `phase2-characters`: 12 tasks, per-task reviews + fix rounds,
+final whole-branch review ("ready with fixes", 0 critical) + one fix wave + re-review. Full ledger (every ruling,
+deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
+- **Numbers (Medium, 1280×800, harness `regress:live` labels `p2`/`p2c-final`):** max 117 draw calls, max 466 K
+  triangles (budgets 150 / 1.5 M; High with GTAO 140–153 calls, ruled acceptable). Same-session interleaved A/B vs
+  flat cards (64 quads): worst +0.45 ms GPU idle, +0.39 ms walking, CPU ≤ +0.18 ms (A/A floor ±0.26 ms), plus the
+  field passes 0.13–0.18 ms (budget +1.0 / +0.5 ms). New GPU memory ≈ 9.2 MB (field 8 MB). Phase 2 programs are
+  precompiled at the first sync (Medium and High): +0 programs when actors/models first appear or on Retro→Modern.
+- **Gates:** Retro 0.00 % vs `out/regress-live/p2-base` on every entry except the composed truck (`lr_truck`,
+  `littleroot_npcs`, `lr_truck_switch`). GPU-vs-CPU self-tests: field ≤ 0.02 px, xBR ≤ 2/255.
+- **Tests:** `npm test` 37 files / 625 tests; smoke golden + semantics + objectGraphics 26; `tsc` clean.
+- **Known gaps:**
+  - Objects that stay inflated sprites: boats (Briney's, gfx 88), moving boxes, dolls/cushions, every unmapped object.
+  - Oversize multi-piece sprites (S.S. Tidal 96×40, submarine shadow 88×32) still drawn garbled from their base OAM.
+  - The silhouette shadow is a camera-facing sheet: its shape changes as the camera orbits.
+  - NPC fade uses a fixed sprite height (2) and ignores jumps (lift).
+  - Berry soil alone turns moonlit after sunset (art-direction rule); other ground keeps its albedo. 18 berry-soil
+    cells on cliff tops (Routes 103/111/120/121) are taken by the cliff family and get no bed (pinned in smoke).
+  - xBR merges 1-texel concavities (Zigzagoon's spikes, leg gaps); eyes are kept.
+  - Model luminance above 1.15× Retro on rocks / Cut tree (accepted: the Retro cards average in black outlines).
+  - The flat-card path (Retro, battles) still re-uploads instance buffers every walking frame (~0.1 ms); the atlas
+    and the 4 field passes run on every synced frame even when no sprite changed (0.13–0.18 ms).
+  - GTAO's prepass ignores the kit's vertex hooks (Phase 1) and skips actors (no actor AO).
+  - First visits still compile Phase 1 world programs (Littleroot flowers 90–150 ms, Oldale water 558 ms) and a map
+    crossing rebuilds the world (≈ 52–72 ms) — Phase 1 follow-up.
+  - No live save state covers night, surfing or battles-with-actors; night/dusk are verified on static previews only.
 
 ## Next step
-- Phase 2 (characters, Pokémon, field objects — spec §6): write its plan in `docs/superpowers/plans/`, then execute.
-  Optional first: the Phase 1 follow-up above (terrain height solver v2; connected-map events done in Task 17b).
+- **Phase 2 is complete (2026-10-22)** and merged to `main`.
+- Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
+  programs and a cheaper map crossing (the hitches listed in both phases' gaps). Then Phase 3 (battles): reuse
+  `InflatedActors` + `SpriteField` for battlers (pass `instanceUniformsFit(renderer.capabilities.maxVertexUniforms)`;
+  the battle path may want a smaller `MAX_ACTORS`). Write each plan first (`docs/superpowers/plans/`), then execute
+  subagent-driven (only `opus` subagents work on this deployment); show the user a progress bar in every update.
+
+## Phase 2 status
+- [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)
+- [x] 1 live regress harness · [x] 2 preview actors · [x] 3 ActorLayer · [x] 4 inflation field
+- [x] 5 inflated actors · [x] 6 xBR edges · [x] 7 gfx mapping · [x] 8 models I · [x] 9 berry plants
+- [x] 10 multi-piece sprites · [x] 11 NPC fade · [x] 12 perf/robustness/docs
 
 ## Phase 1 tasks
 - [x] 1 regress harness · [x] 2 golden + split · [x] 3 style/events · [x] 4 kit foundation
@@ -306,7 +353,7 @@ special facades) and props (signs, mailboxes, lamps, fences, rocks) on every out
 
 ## Phases
 - [x] Phase 1 — Foundation + Outdoor environment (done 2026-10-20, branch `phase1-outdoor`)
-- [ ] Phase 2 — Characters, Pokémon, field objects
+- [x] Phase 2 — Characters, Pokémon, field objects (done 2026-10-22, branch `phase2-characters`)
 - [ ] Phase 3 — Battles
 - [ ] Phase 4 — Interiors
 

@@ -2,9 +2,10 @@
 // One instanced draw call; images come from the SpriteAtlas.
 
 import * as THREE from 'three';
-import type { SpriteAtlas } from '../spriteAtlas';
+import { put, markRange } from '../instanceUpload';
 
 const MAX = 128;
+const WHITE = [1, 1, 1, 1] as const;
 
 const VERT = /* glsl */ `
   #include <common>
@@ -40,12 +41,14 @@ const FRAG = /* glsl */ `
   #include <fog_pars_fragment>
   uniform sampler2D tAtlas;
   uniform vec3 uLight;       // ambient + sun contribution for characters
+  uniform float uMask;       // 1: flat magenta (the harness's actor mask)
   varying vec2 vUv;
   varying vec4 vTint;
   varying vec3 vWorld;
   void main() {
     vec4 c = texture2D(tAtlas, vUv);
     if (c.a < 0.5) discard;
+    if (uMask > 0.5) { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
     gl_FragColor = vec4(c.rgb * uLight * vTint.rgb, vTint.a);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -53,7 +56,8 @@ const FRAG = /* glsl */ `
   }
 `;
 
-const DEPTH_FRAG = /* glsl */ `
+/** Shadow-depth fragment of an alpha-tested atlas sprite (varying `vUv`): the cards' and the inflated actors' twins. */
+export const DEPTH_FRAG = /* glsl */ `
   #include <common>
   #include <packing>
   uniform sampler2D tAtlas;
@@ -86,7 +90,8 @@ export class Billboards {
   readonly material: THREE.ShaderMaterial;
   private depthMaterial: THREE.ShaderMaterial;
 
-  constructor(atlas: SpriteAtlas) {
+  /** `atlas`: the sprite atlas (SpriteAtlas) whose render target the cards sample. */
+  constructor(atlas: { target: { texture: THREE.Texture } }) {
     const quad = new THREE.PlaneGeometry(1, 1);
     quad.translate(0, 0.5, 0);
     this.geometry = new THREE.InstancedBufferGeometry();
@@ -110,6 +115,7 @@ export class Billboards {
         tAtlas: { value: null },
         uRight: { value: new THREE.Vector3(1, 0, 0) },
         uLight: { value: new THREE.Vector3(1, 1, 1) },
+        uMask: { value: 0 },
       },
     ]);
     uniforms.tAtlas.value = atlas.target.texture;
@@ -145,20 +151,40 @@ export class Billboards {
   }
 
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
+  /** The most cards ever set (the uploaded part of the instance buffers). */
+  private used = 0;
 
-  set(list: BillboardSpec[], cameraRight: THREE.Vector3, light: THREE.Color): void {
+  /** Draws the cards flat magenta (the harness's visible-actor mask) or normally. */
+  setMask(on: boolean): void {
+    this.material.uniforms.uMask.value = on ? 1 : 0;
+  }
+
+  /** Cards drawn (instances). */
+  get count(): number {
+    return this.geometry.instanceCount;
+  }
+
+  /** This frame's cards. Only the attributes whose values changed are uploaded (instanceUpload.ts). */
+  set(list: readonly BillboardSpec[], cameraRight: THREE.Vector3, light: THREE.Color): void {
     const n = Math.min(MAX, list.length);
+    const foot = this.foot.array as Float32Array, size = this.size.array as Float32Array;
+    const uv = this.uv.array as Float32Array, tint = this.tint.array as Float32Array;
+    let dFoot = 0, dSize = 0, dUv = 0, dTint = 0;
     for (let i = 0; i < n; i++) {
-      const s = list[i];
-      this.foot.setXYZ(i, s.footX, s.footY, s.footZ);
-      this.size.setXYZW(i, s.width, s.height, s.lift, s.flat ? 1 : 0);
-      this.uv.setXYZW(i, s.slot.u0, s.slot.v0, s.slot.u1, s.slot.v1);
-      const t = s.tint ?? [1, 1, 1, 1];
-      this.tint.setXYZW(i, t[0], t[1], t[2], t[3]);
+      const s = list[i], j = i * 4;
+      dFoot |= put(foot, i * 3, s.footX) | put(foot, i * 3 + 1, s.footY) | put(foot, i * 3 + 2, s.footZ);
+      dSize |= put(size, j, s.width) | put(size, j + 1, s.height) | put(size, j + 2, s.lift) | put(size, j + 3, s.flat ? 1 : 0);
+      dUv |= put(uv, j, s.slot.u0) | put(uv, j + 1, s.slot.v0) | put(uv, j + 2, s.slot.u1) | put(uv, j + 3, s.slot.v1);
+      const t = s.tint ?? WHITE;
+      dTint |= put(tint, j, t[0]) | put(tint, j + 1, t[1]) | put(tint, j + 2, t[2]) | put(tint, j + 3, t[3]);
     }
+    this.used = Math.max(this.used, n);
+    if (dFoot) markRange(this.foot, this.used);
+    if (dSize) markRange(this.size, this.used);
+    if (dUv) markRange(this.uv, this.used);
+    if (dTint) markRange(this.tint, this.used);
     this.geometry.instanceCount = n;
     for (const g of this.shadowGeometries) g.instanceCount = n;
-    for (const a of [this.foot, this.size, this.uv, this.tint]) a.needsUpdate = true;
     this.material.uniforms.uRight.value.copy(cameraRight);
     this.material.uniforms.uLight.value.set(light.r, light.g, light.b);
   }
@@ -169,12 +195,13 @@ const SHADOW_VERT = /* glsl */ `
   #include <fog_pars_vertex>
   attribute vec3 aFoot;
   attribute vec4 aSize;   // width, height, lift, flat
+  uniform float uScale;   // size multiplier (1 under cards)
   varying vec2 vLocal;
   varying float vFade;
   void main() {
     // Shrink and fade the shadow as the sprite lifts off the ground (jumps).
     float k = 1.0 / (1.0 + aSize.z * 0.8);
-    vec2 r = vec2(aSize.x * 0.42, aSize.x * 0.24) * k;
+    vec2 r = vec2(aSize.x * 0.42, aSize.x * 0.24) * k * uScale;
     vec3 p = aFoot + vec3(position.x * r.x * 2.0, 0.015, (position.y - 0.5) * r.y * 2.0);
     vLocal = vec2(position.x * 2.0, (position.y - 0.5) * 2.0);
     vFade = k * (aSize.w > 0.5 ? 0.0 : 1.0);
@@ -199,17 +226,21 @@ const SHADOW_FRAG = /* glsl */ `
   }
 `;
 
-/** Soft elliptical contact shadows under billboards (shares their instance buffers). */
+/**
+ * Soft elliptical contact shadows under sprites, sharing their instance buffers: under the cards
+ * (Billboards) or the inflated actors — any source of a 4-vertex quad with the aFoot / aSize
+ * instance attributes (aSize.w = 1 marks a flat decal, which gets none).
+ */
 export class BlobShadows {
   readonly mesh: THREE.Mesh;
   readonly material: THREE.ShaderMaterial;
 
-  constructor(source: Billboards) {
+  constructor(source: { geometryForShadows(): THREE.InstancedBufferGeometry }) {
     const g = source.geometryForShadows();
     this.material = new THREE.ShaderMaterial({
       vertexShader: SHADOW_VERT,
       fragmentShader: SHADOW_FRAG,
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uStrength: { value: 0.45 } }]),
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uStrength: { value: 0.45 }, uScale: { value: 1 } }]),
       transparent: true,
       depthWrite: false,
       fog: true,
@@ -221,5 +252,10 @@ export class BlobShadows {
 
   setStrength(v: number): void {
     this.material.uniforms.uStrength.value = v;
+  }
+
+  /** Size of the ellipse relative to the sprite's width (default 1). */
+  setScale(k: number): void {
+    this.material.uniforms.uScale.value = k;
   }
 }

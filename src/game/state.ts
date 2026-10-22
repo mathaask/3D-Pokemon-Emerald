@@ -4,6 +4,9 @@
 import type { Bus } from '../gba/bus';
 import { Mem } from './mem';
 import { SYM } from './symbols';
+import { OBJ_SIZES, SUBSPRITE_TABLE_SIZE, applyComposition, readSubsprites, type PlacedPiece, type SubspritePiece } from './subsprites';
+
+export { OBJ_SIZES };
 
 export type Scene = 'overworld' | 'battle' | 'screen2d' | 'transition' | 'battleTransition';
 
@@ -68,6 +71,19 @@ export interface SpriteSnap {
   scaleX: number;
   scaleY: number;
   rotation: number;
+  /** Current anim of the sprite's anim table (a berry tree's growth stage, an obstacle breaking). */
+  animNum: number;
+  /** ROM pointer of the sprite's SpriteFrameImage table: identifies a berry type / object graphics. */
+  images: number;
+  /** ROM pointer of the sprite's SubspriteTable array (0: none), the table in use and the mode
+   *  (0 off, 1 on, 2 on ignoring priority): pieces drawn as several OAM entries (the truck). */
+  subspriteTables: number;
+  subspriteTableNum: number;
+  subspriteMode: number;
+  /** A world sprite whose subsprite table builds an image other than its base OAM's (the 48×48 truck on a 32×32
+   *  OAM), composed (subsprites.ts applyComposition): its pieces, offsets inside the composed image; width/height,
+   *  c2cX/c2cY, screen and world position are then the composed image's. null: the sprite's own OAM image. */
+  pieces: readonly PlacedPiece[] | null;
 }
 
 export interface MapHeaderSnap {
@@ -106,12 +122,6 @@ export interface BattlerSnap {
 
 const SPRITE_SIZE = 0x44;
 const OBJECT_EVENT_SIZE = 0x24;
-const OBJ_SIZES: [number, number][][] = [
-  [[8, 8], [16, 16], [32, 32], [64, 64]], // square
-  [[16, 8], [32, 8], [32, 16], [64, 32]], // horizontal
-  [[8, 16], [8, 32], [16, 32], [32, 64]], // vertical
-  [[8, 8], [8, 8], [8, 8], [8, 8]],
-];
 
 const OVERWORLD_CB2 = new Set<number>([SYM.CB2_Overworld]);
 const TRANSITION_CB2 = new Set<number>([
@@ -169,6 +179,9 @@ export class GameState {
   attacker = 0;
   target = 0;
   animActive = false;
+
+  /** Subsprite tables read so far, by table address (ROM tables only: they never change). */
+  private subspriteCache = new Map<number, SubspritePiece[] | null>();
 
   constructor(bus: Bus) {
     this.mem = new Mem(bus);
@@ -255,9 +268,13 @@ export class GameState {
     this.cameraY = 80 - this.spriteCoordOffsetY + this.spriteToMapY;
 
     for (const s of this.sprites) {
-      if (s.coordOffset) {
-        s.worldX = s.x + s.x2 + this.spriteToMapX;
-        s.worldY = s.y + s.c2cY + s.height + this.spriteToMapY;
+      if (!s.coordOffset) continue;
+      s.worldX = s.x + s.x2 + this.spriteToMapX;
+      s.worldY = s.y + s.c2cY + s.height + this.spriteToMapY;
+      // a multi-piece image (the truck): its composed size, placement and pieces
+      if (s.subspriteMode !== 0 && s.subspriteTables !== 0) {
+        const pieces = this.subsprites(s.subspriteTables, s.subspriteTableNum);
+        if (pieces) applyComposition(s, pieces);
       }
     }
 
@@ -328,6 +345,7 @@ export class GameState {
       }
       const data = new Int16Array(8);
       for (let k = 0; k < 8; k++) data[k] = m.s16(a + 0x2e + k * 2);
+      const subsprites = m.u8(a + 0x42); // subspriteTableNum:6 | subspriteMode:2
       this.sprites.push({
         index: i, attr0, attr1, attr2, width, height,
         tileNum: attr2 & 0x3ff,
@@ -351,8 +369,26 @@ export class GameState {
         worldY: 0,
         data,
         scaleX, scaleY, rotation,
+        animNum: m.u8(a + 0x2a),
+        images: m.u32(a + 0x0c),
+        subspriteTables: m.u32(a + 0x18),
+        subspriteTableNum: subsprites & 0x3f,
+        subspriteMode: subsprites >>> 6,
+        pieces: null,
       });
     }
+  }
+
+  /** The pieces of table `tableNum` of a SubspriteTable array (null: none), cached per table address. */
+  private subsprites(tables: number, tableNum: number): SubspritePiece[] | null {
+    const address = tables + SUBSPRITE_TABLE_SIZE * tableNum;
+    let pieces = this.subspriteCache.get(address);
+    if (pieces === undefined) {
+      pieces = readSubsprites(this.mem, tables, tableNum);
+      const region = tables >>> 24;
+      if (region === 8 || region === 9) this.subspriteCache.set(address, pieces);
+    }
+    return pieces;
   }
 
   private readBattle(): void {

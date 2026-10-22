@@ -36,7 +36,7 @@ root and it loads automatically. Otherwise you can drag and drop it onto the pag
 | C | Cycle camera style (Classic / Close / Wide / Low) |
 | V | Toggle 3D / classic 2D |
 | F5 / F9 | Quick save / load state |
-| Esc / O | Settings (world style, quality, effects, volume, `.sav` import/export) |
+| Esc / O | Settings (world style, sprite edges, quality, effects, volume, `.sav` import/export) |
 | H / F1 | Help overlay |
 
 Gamepads use the standard mapping. In-game saves (Start → Save) go to your browser
@@ -58,6 +58,20 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   edits appear immediately.
   **Settings → World style → Retro 3D** switches the whole world back to that pixel-art
   reconstruction. NPCs, the player, and field effects are lit billboards with soft shadows.
+- **Characters and objects (Modern).** The player, NPCs and Pokémon in the overworld are their
+  own animated sprites, inflated into soft relief: each sprite frame (decoded live from video
+  memory, so every walking and turning frame is the game's) is lifted towards the camera by a
+  height field computed on the GPU from its silhouette, shaded by the scene's sun, sky and
+  lantern with a rim of sky light, and casts its true silhouette as a shadow. They keep facing
+  the camera as it orbits. **Settings → Sprite edges** chooses **HD smooth** (default: the pixel
+  edges are smoothed by an xBR-style filter at any zoom) or **Pixel** (crisp texels).
+  Poké Balls, Strength boulders, breakable rocks, Cut trees, the moving truck and berry trees
+  (one model per growth stage, with soft tilled beds) are real 3D models, coloured from their
+  own sprite's pixels; they follow the game's objects live and show the game's own animation
+  while a rock breaks or a tree is cut. Everything else stays an inflated sprite (boats, the
+  S.S. Tidal, moving boxes, dolls and cushions), and shadows under feet, ripples, footprints
+  and grass overlays are flat as before. NPCs standing behind tree crowns or roofs near the
+  player are cleared by the same dithered fade as the player. Retro 3D keeps the flat cards.
 - **Lighting.** The sun and sky follow the in-game clock. Building windows glow at night.
   Caves that need Flash are lit only by the player's light. Rain, thunderstorms (with
   lightning), volcanic ash, sandstorms, and underwater bubbles are real 3D particles.
@@ -90,9 +104,21 @@ npx tsx tools/shot3d.ts --state s.state --wait 3000               # screenshot t
 npx tsx tools/shot3d.ts --query "map=0.9&hour=21"                  # 3D preview of any map
 node --import tsx tools/map-atlas.ts       # render every map to out/atlas/
 npm run regress -- --label mine            # 16 maps at day + night → out/regress/mine/ (add --style retro)
+npm run regress:live -- --label mine --static --gpu --selftest
+                                           # live save-state scenes + map previews with actors, both styles
+                                           # (add --compare <label> to diff against an earlier run)
 npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.test.ts tests/smoke/semantics.test.ts
                                            # ROM-driven smoke tests; coverage report → out/coverage*.txt
 ```
+
+`npm run regress:live` (`tools/regress-live.ts`) replays save states frame by frame in manual
+mode (`?manual=1`: no frame loop, fixed clock; `emu.step(keys, frames)` emulates and renders,
+returning each frame's renderer CPU ms) and screenshots each scene in Modern and Retro, plus,
+with `--static`, map previews showing the map's object events (`?map=…&actors=1&focusGfx=<id>`).
+`--compare <label>` diffs every shot against an earlier run, `--gpu` times 60 frames with GPU
+timer queries, `--selftest` checks the GPU inflation field and the HD edge filter against CPU
+references, and `--ab` measures what the Modern characters and objects cost over flat cards in
+the same session. The header of the tool documents every flag and the `stats.json` fields.
 
 `npm run regress` writes one PNG per map and hour, a contact sheet per hour
 (`_sheet_h11.png`, `_sheet_h21.png`) and render stats (`stats.json`: draw calls, triangles,
@@ -101,7 +127,9 @@ need the ROM in the project root and a local Chrome (or Edge) install, which the
 headless; the smoke tests need the ROM.
 
 `/?map=<group>.<num>` opens a static 3D preview of any map (WASD/mouse to fly; `&hour=`,
-`&weather=`, `&flash=` change the conditions).
+`&weather=`, `&flash=` change the conditions; `&actors=1` adds the map's object events from
+their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one of them, and
+`&style=retro`, `&quality=`, `&spriteFilter=pixel` override the settings).
 
 ## Notes and limitations
 
@@ -112,4 +140,7 @@ headless; the smoke tests need the ROM.
   ridges (Mt Chimney, Route 112, Jagged Pass), much of Ever Grande City's rock, the crater
   walls of Sootopolis and Lavaridge's cliffs, and a few special buildings (Devon Corp, the
   Battle Pyramid, Pike and Palace) still use the pixel-art reconstruction.
+- The two largest multi-piece world sprites, the S.S. Tidal and the submarine's shadow, are still
+  drawn from their base sprite shape (garbled) in both 3D styles; the moving truck is composed
+  correctly.
 - Audio needs one key press or click before it can start (a browser requirement).

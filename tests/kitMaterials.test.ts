@@ -244,4 +244,12 @@ describe('setKitActors', () => {
     expect(u.uActors.value[0].toArray()).toEqual([3, 1, 4]);
     for (const v of u.uActors.value.slice(1)) expect(v.x).toBeGreaterThan(1000);
   });
+  it('orders the slots as a stable sort by 3D distance (equal distances in input order), the input untouched', () => {
+    const u = createKitUniforms();
+    const feet = [{ x: 0, y: 3, z: 0 }, { x: 2, y: 0, z: 0 }, { x: 0, y: 0, z: -2 }, { x: 1, y: 0, z: 0 }];
+    const copy = feet.map((f) => ({ ...f }));
+    setKitActors(u, feet, new THREE.Vector3(0, 0, 0));
+    expect(u.uActors.value.slice(0, 4).map((v) => v.toArray())).toEqual([[1, 0, 0], [2, 0, 0], [0, 0, -2], [0, 3, 0]]);
+    expect(feet).toEqual(copy);
+  });
 });
