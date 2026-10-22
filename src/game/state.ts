@@ -83,7 +83,7 @@ export interface SpriteSnap {
   /** A world sprite whose subsprite table builds an image other than its base OAM's (the 48×48 truck on a 32×32
    *  OAM), composed (subsprites.ts applyComposition): its pieces, offsets inside the composed image; width/height,
    *  c2cX/c2cY, screen and world position are then the composed image's. null: the sprite's own OAM image. */
-  pieces: PlacedPiece[] | null;
+  pieces: readonly PlacedPiece[] | null;
 }
 
 export interface MapHeaderSnap {

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { composeBounds, needsComposition } from '../src/game/subsprites';
-import { applyComposition, type SubspritePiece } from '../src/game/subsprites';
+import { applyComposition, composeBounds, compositionOf, needsComposition, type SubspritePiece } from '../src/game/subsprites';
 import type { SpriteSnap } from '../src/game/state';
 import { blankSprite } from '../src/render/previewActors';
 import { SpriteAtlas } from '../src/render/spriteAtlas';
@@ -90,6 +89,30 @@ describe('applyComposition', () => {
       expect(s).toEqual(before);
       expect(s.pieces).toBeNull();
     }
+  });
+});
+
+describe('compositionOf', () => {
+  it('computes a table\'s composition once per base size and flips (no allocation per frame)', () => {
+    const a = compositionOf(truckTable, 32, 32, false, false);
+    expect(a).toMatchObject({ minX: -24, minY: -24, width: 48, height: 48 });
+    expect(compositionOf(truckTable, 32, 32, false, false)).toBe(a);
+    const flipped = compositionOf(truckTable, 32, 32, true, false);
+    expect(flipped).not.toBe(a);
+    expect(flipped!.placed[1]).toMatchObject({ x: 0, y: 0, width: 16 });
+    expect(compositionOf(truckTable, 32, 32, true, false)).toBe(flipped);
+    // two sprites of one table share the cached pieces
+    const s1 = liveTruck(), s2 = liveTruck();
+    applyComposition(s1, truckTable);
+    applyComposition(s2, truckTable);
+    expect(s1.pieces).toBe(s2.pieces);
+  });
+  it('caches the verdict of a same-image multi-piece table (long grass: 2-piece tables) as null', () => {
+    const rows: SubspritePiece[] = [{ x: -8, y: -8, width: 16, height: 8, tileOffset: 0 }, { x: -8, y: 0, width: 16, height: 8, tileOffset: 2 }];
+    expect(compositionOf(rows, 16, 16, false, false)).toBeNull();
+    expect(compositionOf(rows, 16, 16, false, false)).toBeNull();
+    // the same pieces on another base size compose
+    expect(compositionOf(rows, 16, 32, false, false)).toMatchObject({ width: 16, height: 16 });
   });
 });
 

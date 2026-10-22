@@ -18,7 +18,7 @@ import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { createWorldMaterials } from './materials';
-import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type KitUniforms } from '../kit/materials';
+import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
 
@@ -109,6 +109,8 @@ export class OverworldView {
   focusOverride: THREE.Vector3 | null = null;
   /** The occlusion fade also clears the nearest inflated NPCs (setNpcFade). */
   private npcFade = true;
+  /** The NPCs the occlusion fade clears this frame (pickFadeActors's reused list). */
+  private fadeNpcs: FadeFoot[] = [];
   private bufferW = 1;
   private bufferH = 1;
   /** Sprite classifier (set once the ROM tables are readable). */
@@ -567,9 +569,9 @@ export class OverworldView {
     // The feet of the upright sprites (characters, objects) and grass overlays bend the kit's grass.
     const feet = this.actors.update(state, this.actorFrame);
     setKitActors(this.kitUniforms, feet, this.target);
-    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none), their circles
-    // growing as they come within reach
-    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus) : NO_FEET;
+    // ... and between the camera and the inflated NPCs nearest the player (Retro, no player: none), each fade's
+    // strength ramping up as they come within reach (fadeActorRamp)
+    const npcs = focus && this.npcFade ? pickFadeActors(this.actors.inflatedFeet, focus, undefined, undefined, this.fadeNpcs) : NO_FEET;
     setKitFocusExtra(this.kitUniforms, npcs, this.camera, this.bufferW, this.bufferH, focus ?? undefined);
     this.world.treeCards?.setCameraRight(this.cameraRight);
     const indoorish = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE || this.mapType === MAP_TYPE_UNDERGROUND;

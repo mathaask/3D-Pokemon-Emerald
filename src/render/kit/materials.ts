@@ -85,6 +85,8 @@ export const FADE_CORE = 0.85;
 export const WARM_GLOW_GLSL = 'vec3(1.0, 0.72, 0.38)';
 const _chest = new THREE.Vector3(), _feet = new THREE.Vector3(), _head = new THREE.Vector3(), _circle = new THREE.Vector4();
 const _right = new THREE.Vector3(), _edge = new THREE.Vector3(), _band = new THREE.Vector2();
+// (reused by pickFadeActors / setKitActors: distances, the nearest feet)
+const _pickD: number[] = [], _nearD: number[] = [], _near: { x: number; y: number; z: number }[] = [];
 
 type Foot = { x: number; y: number; z: number };
 /** An NPC's foot for the occlusion fade, with its sprite's half-width in world units (default: a 16-px sprite's, 0.5). */
@@ -150,11 +152,30 @@ export function setKitFocus(u: KitUniforms, feet: THREE.Vector3 | null, camera: 
  * closer than 0.01): the NPCs the occlusion fade also clears, nearest first (the feet's own objects).
  */
 export function pickFadeActors<T extends Foot>(feet: readonly T[], player: THREE.Vector3, max = MAX_FADE_ACTORS,
-  radius = FADE_ACTOR_RADIUS): T[] {
-  const d2 = (p: Foot) => (p.x - player.x) ** 2 + (p.z - player.z) ** 2;
-  return feet.filter((p) => { const d = d2(p); return d >= 0.01 ** 2 && d <= radius * radius; })
-    .sort((p, q) => d2(p) - d2(q))
-    .slice(0, max);
+  radius = FADE_ACTOR_RADIUS, out: T[] = []): T[] {
+  out.length = 0;
+  for (let i = 0; i < feet.length; i++) {
+    const p = feet[i];
+    const d = (p.x - player.x) ** 2 + (p.z - player.z) ** 2;
+    if (d >= 0.01 ** 2 && d <= radius * radius) insertNearest(out, _pickD, max, p, d);
+  }
+  return out;
+}
+
+/** Inserts `p` at squared distance `d` into `out`, kept ascending by `ds` (its distances) and at most `max` long; after
+ *  the equal distances already in it (as a stable sort of the input order). Allocates nothing once `out` / `ds` grew. */
+function insertNearest<T>(out: T[], ds: number[], max: number, p: T, d: number): void {
+  let k = out.length;
+  if (k >= max) {
+    if (!(d < ds[max - 1])) return;
+    k = max - 1; // (drops the farthest)
+  }
+  for (; k > 0 && d < ds[k - 1]; k--) {
+    out[k] = out[k - 1];
+    ds[k] = ds[k - 1];
+  }
+  out[k] = p;
+  ds[k] = d;
 }
 
 /** Strength of an NPC's fade at XZ distance `d` from the player: 1 up to FADE_ACTOR_FULL, 0 from FADE_ACTOR_RADIUS. */
@@ -195,13 +216,17 @@ export function setKitFocusExtra(u: KitUniforms, feet: readonly FadeFoot[], came
  * camera's focus) fill the slots, unused slots go far away.
  */
 export function setKitActors(u: KitUniforms, feet: readonly Foot[], target: THREE.Vector3): void {
-  const d2 = (p: Foot) => (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2;
-  const near = [...feet].sort((p, q) => d2(p) - d2(q));
-  const slots = u.uActors.value;
+  const slots = u.uActors.value, near = _near;
+  near.length = 0;
+  for (let i = 0; i < feet.length; i++) {
+    const p = feet[i];
+    insertNearest(near, _nearD, slots.length, p, (p.x - target.x) ** 2 + (p.y - target.y) ** 2 + (p.z - target.z) ** 2);
+  }
   for (let k = 0; k < slots.length; k++) {
     if (k < near.length) slots[k].set(near[k].x, near[k].y, near[k].z);
     else slots[k].set(1e4, 0, 1e4);
   }
+  near.length = 0; // (holds no feet between frames)
 }
 
 export type KitPattern = 'none' | 'roofTiles' | 'planks' | 'stone';

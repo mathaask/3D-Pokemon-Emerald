@@ -163,8 +163,8 @@ export class SpriteField {
   }
 
   /**
-   * Frees the targets, materials and quad. The last `slots` attribute belongs to the caller (the atlas's,
-   * shared, still drawn by it): its GL buffer is kept unless `releaseSlots` (a caller's own, e.g. a fixture).
+   * Frees the targets, materials and quad. The last `slots` attribute belongs to the caller (the atlas's
+   * slotRects, which the atlas keeps filling): its GL buffer is kept unless `releaseSlots` (a caller's own, e.g. a fixture).
    */
   dispose(releaseSlots = false): void {
     if (!releaseSlots) this.geometry.deleteAttribute('aSlotSize');

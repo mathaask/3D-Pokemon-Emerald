@@ -3,7 +3,8 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--ab [--ab-rounds n] [--ab-feature actors|npcfade]]
+//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-feature actors|npcfade] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -25,15 +26,22 @@
 // rounding grows with the field's height). The same call checks the HD sprite-edge shader (XBR_GLSL) against
 // its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
 // --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
-// same build with them off (every sprite a card, the pre-Task-5 path): after the steps it snapshots the emulator, then
-// --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot
-// (both modes emulate the same frames), 5 settle frames and gpuFrames(60). Two variants: idle, and
-// walking (entries with a `walk` key held through the block; `moved` = the least px the player walked in
-// any timed block, so a block that did not walk shows). Reported per entry: medians of on, off and of the
-// per-round paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging the cell over
-// +1.0 ms GPU / +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-feature npcfade switches the NPC
-// occlusion fade instead (Task 11: the player's circle only as the baseline; flagged over +0.3 ms GPU), on the
-// live entries and, idle only, the static ones with a stand-in player (&focus; the preview's same frames, no snapshot).
+// same build with them off (every sprite a card, the pre-Task-5 path; the inflation field's passes run in both): after
+// the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
+//   frame (default): --ab-rounds ABBA quads (default 128) of single frames — each half switches the mode, renders one
+//     untimed settle frame and times the next one alone; the snapshot is restored every 60 frames; per quad
+//     (on₁ + on₂ − off₁ − off₂) / 2. Adjacent frames ~40 ms apart share the iGPU's clock state, which drifts by
+//     several ms within seconds on the Intel/ANGLE machine: A/A runs (--ab-aa) read within ±0.3 ms at 64 quads.
+//   block: --ab-rounds rounds (default 8) of on/off pairs in alternating order, each block restoring the snapshot,
+//     5 settle frames and gpuFrames(60); per round on − off. Steadier per block, but A/A runs at 16 rounds read
+//     +0.15 … +0.80 ms (Phase 2 Task 12): it cannot resolve the +1.0 / +0.3 ms budgets.
+// Two variants: idle, and walking (entries with a `walk` key held throughout; `moved` = the least px the player walked
+// in any timed block / restore window, so one that did not walk shows). Reported per entry: medians of on, off and of
+// the paired deltas (on − off), GPU and CPU ms, into stats (`ab`) and a table flagging the cell over +1.0 ms GPU /
+// +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-aa runs both arms on (A/A: the method's noise floor).
+// --ab-feature npcfade switches the NPC occlusion fade instead (Task 11: the player's circle only as the baseline;
+// flagged over +0.3 ms GPU), on the live entries and, idle only, the static ones with a stand-in player (&focus; the
+// preview's same frames, no snapshot).
 // Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
@@ -171,11 +179,16 @@ const ACTOR_LUM_MIN_PX = 200;
 /** One --ab variant: medians of on, off and of the per-round paired deltas (ms); `moved` = the least px the
  *  player walked in any timed block (walking). */
 interface AbVariant { gpuOn: number; gpuOff: number; dGpu: number; cpuOn: number; cpuOff: number; dCpu: number; moved?: number }
+/** --ab-method: `block` = rounds of 60-frame blocks per mode (abVariant), `frame` = ABBA quads of single frames
+ *  (abVariantFrames, the default: it resolves the deltas better, see the header). */
+type AbMethod = 'block' | 'frame';
 interface EntryStats {
   calls: number; triangles: number; programs: number; stepMsMax?: number; buildMs?: number;
   gpuMs?: number; gpuP90?: number; cpuMs?: number;
   diff?: Diff; selftest?: SelfTest; selftestMid?: SelfTest;
-  ab?: { rounds: number; idle: AbVariant; walk?: AbVariant };
+  /** `rounds`: blocks per mode (block) or ABBA quads (frame, `half`: its settle / timed frames per half); `aa`: an A/A
+   *  run (both arms on: the noise floor). */
+  ab?: { method: AbMethod; rounds: number; half?: AbHalf; idle: AbVariant; walk?: AbVariant; aa?: boolean };
   /** On the Modern key: Modern / Retro actor luminance (both styles in the run). */
   actorLum?: ActorLum;
 }
@@ -376,7 +389,7 @@ const median = (xs: number[]) => {
  * and timing gpuFrames(60). Live: each block restores the snapshot `window.__abSnap` first, `keys` held through it.
  * Static (the preview): the same frames, idle.
  */
-async function abVariant(page: Page, rounds: number, keys: string, feature: AbFeature, live: boolean): Promise<AbVariant> {
+async function abVariant(page: Page, rounds: number, keys: string, feature: AbFeature, live: boolean, aa = false): Promise<AbVariant> {
   type T = { gpuMs: number; cpuMs: number };
   const on: T[] = [], off: T[] = [];
   let moved = Infinity;
@@ -384,11 +397,11 @@ async function abVariant(page: Page, rounds: number, keys: string, feature: AbFe
   for (let r = 0; r < rounds; r++) {
     for (const mode of r % 2 === 0 ? [true, false] : [false, true]) {
       if (!live) {
-        await page.evaluate(`${feature.preview!(mode)}; preview.frames(5)`);
+        await page.evaluate(`${feature.preview!(mode || aa)}; preview.frames(5)`);
         (mode ? on : off).push(await page.evaluate('preview.gpuFrames(60)') as T);
         continue;
       }
-      await page.evaluate(`${feature.live(mode)}; emu.gba.loadState(window.__abSnap)`);
+      await page.evaluate(`${feature.live(mode || aa)}; emu.gba.loadState(window.__abSnap)`);
       await page.evaluate(`emu.gpuFrames(5, ${k})`);
       const p0 = await page.evaluate(PLAYER_POS) as number[] | null;
       const g = await page.evaluate(`emu.gpuFrames(60, ${k})`) as T;
@@ -407,22 +420,94 @@ async function abVariant(page: Page, rounds: number, keys: string, feature: AbFe
   return v;
 }
 
-/** --ab on a live entry after its steps: idle and (with `walk`) walking variants; leaves the entry as found. */
-async function abMeasure(page: Page, e: LiveEntry, rounds: number, feature: AbFeature): Promise<NonNullable<EntryStats['ab']>> {
-  await page.evaluate('window.__abSnap = emu.gba.saveState()');
+/** Frames emulated between snapshot restores in an interleaved --ab variant (live; settle frames included). */
+const FRAME_AB_WINDOW = 60;
+
+/** One half of an interleaved --ab quad: untimed settle frames after the switch, then timed frames back to back. */
+interface AbHalf { settle: number; timed: number }
+
+/**
+ * One interleaved --ab variant (`--ab-method frame`): `quads` ABBA quads (on off off on, then off on on off). Each half
+ * switches the mode, emulates and renders `half.settle` untimed frames back to back (a switch re-uploads the instance
+ * buffers the modes share, and the iGPU ramps its clock after the harness's idle waits: the settle frames take both),
+ * then times `half.timed` frames back to back (gpuFrames: their median). Live: the snapshot `window.__abSnap` is
+ * restored before a half once FRAME_AB_WINDOW frames ran since the last restore, `keys` held throughout. Per quad the
+ * delta is (on₁ + on₂ − off₁ − off₂) / 2: a quad spans well under a second, so the iGPU's clock and thermal drift
+ * (several ms within seconds) cancel, and so do a linear trend and the half's place in the quad. Medians over the quads.
+ * `aa`: both arms on (an A/A run: the method's noise floor).
+ */
+async function abVariantFrames(page: Page, quads: number, keys: string, feature: AbFeature, live: boolean, aa: boolean,
+  half: AbHalf): Promise<AbVariant> {
+  const k = JSON.stringify(keys);
+  const on = live ? feature.live(true) : feature.preview!(true);
+  const off = live ? feature.live(aa) : feature.preview!(aa);
+  const script = `(async () => {
+    const out = []; let moved = Infinity, frames = ${FRAME_AB_WINDOW}, p0 = null, restores = 0;
+    const pos = () => ${live ? PLAYER_POS : 'null'};
+    for (let q = 0; q < ${quads}; q++) {
+      for (const m of q % 2 === 0 ? [1, 0, 0, 1] : [0, 1, 1, 0]) {
+        ${live ? `if (frames >= ${FRAME_AB_WINDOW}) {
+          if (restores++ > 0) { const p1 = pos(); moved = Math.min(moved, p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0); }
+          emu.gba.loadState(window.__abSnap); frames = 0; p0 = undefined;
+        }` : ''}
+        if (m) { ${on}; } else { ${off}; }
+        ${live ? `emu.step(${k}, ${half.settle})` : `preview.frames(${half.settle})`};
+        ${live ? 'if (p0 === undefined) p0 = pos();' : ''}
+        const g = await ${live ? `emu.gpuFrames(${half.timed}, ${k})` : `preview.gpuFrames(${half.timed})`};
+        frames += ${half.settle + half.timed};
+        out.push(m, g.gpuMs, g.cpuMs);
+      }
+    }
+    return { out, moved };
+  })()`;
   try {
-    const idle = await abVariant(page, rounds, '', feature, true);
-    const walk = e.walk ? await abVariant(page, rounds, e.walk, feature, true) : undefined;
-    return { rounds, idle, walk };
+    const r = await page.evaluate(script) as { out: number[]; moved: number | null };
+    const on: number[][] = [[], []], off: number[][] = [[], []], dG: number[] = [], dC: number[] = [];
+    for (let q = 0; q < quads; q++) {
+      let g = 0, c = 0;
+      for (let h = 0; h < 4; h++) {
+        const [m, gpu, cpu] = r.out.slice((q * 4 + h) * 3, (q * 4 + h) * 3 + 3);
+        (m ? on : off)[0].push(gpu);
+        (m ? on : off)[1].push(cpu);
+        g += m ? gpu : -gpu;
+        c += m ? cpu : -cpu;
+      }
+      dG.push(g / 2);
+      dC.push(c / 2);
+    }
+    const v: AbVariant = {
+      gpuOn: round(median(on[0]), 3), gpuOff: round(median(off[0]), 3), dGpu: round(median(dG), 3),
+      cpuOn: round(median(on[1]), 3), cpuOff: round(median(off[1]), 3), dCpu: round(median(dC), 3),
+    };
+    // (a window that never completed: no walking shown, Infinity → null over JSON)
+    if (keys && live) v.moved = round(r.moved ?? 0, 1);
+    return v;
+  } finally {
+    await page.evaluate(on);
+  }
+}
+
+/** --ab on a live entry after its steps: idle and (with `walk`) walking variants; leaves the entry as found. */
+async function abMeasure(page: Page, e: LiveEntry, rounds: number, feature: AbFeature, method: AbMethod, aa: boolean, half: AbHalf):
+  Promise<NonNullable<EntryStats['ab']>> {
+  await page.evaluate('window.__abSnap = emu.gba.saveState()');
+  const run = (keys: string) => method === 'frame' ? abVariantFrames(page, rounds, keys, feature, true, aa, half)
+    : abVariant(page, rounds, keys, feature, true, aa);
+  try {
+    const idle = await run('');
+    const walk = e.walk ? await run(e.walk) : undefined;
+    return { method, rounds, ...(method === 'frame' ? { half } : {}), idle, walk, ...(aa ? { aa } : {}) };
   } finally {
     await page.evaluate(`${feature.live(true)}; emu.gba.loadState(window.__abSnap)`);
   }
 }
 
 /** --ab on a static entry (a feature with a preview switch): idle only; leaves the feature on. */
-async function abMeasureStatic(page: Page, rounds: number, feature: AbFeature): Promise<NonNullable<EntryStats['ab']>> {
+async function abMeasureStatic(page: Page, rounds: number, feature: AbFeature, method: AbMethod, aa: boolean, half: AbHalf):
+  Promise<NonNullable<EntryStats['ab']>> {
   try {
-    return { rounds, idle: await abVariant(page, rounds, '', feature, false) };
+    const idle = method === 'frame' ? await abVariantFrames(page, rounds, '', feature, false, aa, half) : await abVariant(page, rounds, '', feature, false, aa);
+    return { method, rounds, ...(method === 'frame' ? { half } : {}), idle, ...(aa ? { aa } : {}) };
   } finally {
     await page.evaluate(feature.preview!(true));
   }
@@ -445,7 +530,12 @@ async function main(): Promise<void> {
   const gpu = flag('gpu');
   const selftest = flag('selftest');
   const ab = flag('ab');
-  const abRounds = parseInt(arg('ab-rounds', '8'), 10);
+  const abMethod = arg('ab-method', 'frame') as AbMethod;
+  if (abMethod !== 'block' && abMethod !== 'frame') throw new Error(`unknown --ab-method ${abMethod} (block, frame)`);
+  const abRounds = parseInt(arg('ab-rounds', abMethod === 'frame' ? '128' : '8'), 10);
+  const abAa = flag('ab-aa');
+  const abHalf: AbHalf = { settle: parseInt(arg('ab-settle', '4'), 10), timed: parseInt(arg('ab-timed', '4'), 10) };
+  if (!(abHalf.settle >= 1 && abHalf.timed >= 1)) throw new Error('--ab-settle / --ab-timed must be positive integers');
   if (ab && !(abRounds >= 1)) throw new Error('--ab-rounds must be a positive integer');
   const abFeatureName = arg('ab-feature', 'actors');
   const abFeature = AB_FEATURES[abFeatureName];
@@ -573,7 +663,8 @@ async function main(): Promise<void> {
             entry.cpuMs = round(g.cpuMs, 3);
           }
           if (ab && style === 'modern' && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
-            const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature) : await abMeasureStatic(page, abRounds, abFeature);
+            const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature, abMethod, abAa, abHalf)
+              : await abMeasureStatic(page, abRounds, abFeature, abMethod, abAa, abHalf);
             const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
               + `${v.dCpu >= 0 ? '+' : ''}${v.dCpu.toFixed(3)}${v.dCpu > abFeature.cpuMs ? ' OVER' : ''}` : '- | -');
             abRows.push(`| ${e.name} | ${r.idle.gpuOn.toFixed(2)} / ${r.idle.gpuOff.toFixed(2)} | ${cell(r.idle)} | `
@@ -646,7 +737,9 @@ async function main(): Promise<void> {
     console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`);
   }
   if (abRows.length) {
-    console.log(`\n--ab: ${abFeature.what}, ${abRounds} paired rounds, medians (ms); OVER = Δgpu > +${abFeature.gpuMs} or Δcpu > +${abFeature.cpuMs}`);
+    const how = abMethod === 'frame' ? `${abRounds} ABBA quads (per half ${abHalf.settle} settle + ${abHalf.timed} timed frames)`
+      : `${abRounds} paired rounds of 60-frame blocks`;
+    console.log(`\n--ab${abAa ? ' (A/A: both arms on, the noise floor)' : ''}: ${abFeature.what}, ${how}, medians (ms); OVER = Δgpu > +${abFeature.gpuMs} or Δcpu > +${abFeature.cpuMs}`);
     console.log('| entry | idle gpu on / off | idle Δgpu | idle Δcpu | walk gpu on / off | walk Δgpu | walk Δcpu | walk moved px |');
     console.log('|---|---|---|---|---|---|---|---|');
     console.log(abRows.join('\n'));

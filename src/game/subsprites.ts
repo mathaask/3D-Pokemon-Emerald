@@ -46,7 +46,8 @@ export function readSubsprites(read: { u8(a: number): number; u16(a: number): nu
 }
 
 /** True when the pieces draw something other than the base OAM image (more than one piece covering a different
- *  shape than width×height in row-major 1D order) — only those sprites are composed. */
+ *  shape than width×height in row-major 1D order) — only those sprites are composed. (The tile order checked is
+ *  that of 1D-mapped 4bpp OBJ tiles, which every object event uses: tileOffset counts 4bpp tiles.) */
 export function needsComposition(pieces: readonly SubspritePiece[], width: number, height: number): boolean {
   if (pieces.length === 0) return false;
   if (pieces.length === 1) {
@@ -91,15 +92,48 @@ export function composeBounds(pieces: readonly SubspritePiece[], hflip: boolean,
   return { minX, minY, width: maxX - minX, height: maxY - minY, placed };
 }
 
+/** A composed image: the pieces' bounds after flips (from the sprite centre) and the pieces placed inside it. */
+export interface Composition {
+  readonly minX: number; readonly minY: number; readonly width: number; readonly height: number;
+  readonly placed: readonly PlacedPiece[];
+}
+
+/** Per pieces array (GameState keeps one per ROM table: the same array every frame), per base size and flips. */
+const compositions = new WeakMap<readonly SubspritePiece[], Map<number, Composition | null>>();
+
+/**
+ * The image `applyComposition` gives a sprite of base OAM size `width`×`height` drawing `pieces` with these flips:
+ * null when it draws its base image (`needsComposition` false) or the bounds pass 64×64. Cached with the pieces array
+ * (by size and flips), so a multi-piece table — sprites in long grass draw 2-piece ones, the truck composes twice per
+ * frame — allocates once, not every frame. The result is shared: never modify it.
+ */
+export function compositionOf(pieces: readonly SubspritePiece[], width: number, height: number, hflip: boolean,
+  vflip: boolean): Composition | null {
+  let byShape = compositions.get(pieces);
+  if (!byShape) compositions.set(pieces, byShape = new Map());
+  const key = ((width * 1024 + height) << 2) | (hflip ? 2 : 0) | (vflip ? 1 : 0);
+  let c = byShape.get(key);
+  if (c === undefined) {
+    c = null;
+    if (needsComposition(pieces, width, height)) {
+      const b = composeBounds(pieces, hflip, vflip);
+      if (b.width <= MAX_COMPOSED && b.height <= MAX_COMPOSED) c = b; // (S.S. Tidal, submarine shadow: base OAM, as today)
+    }
+    byShape.set(key, c);
+  }
+  return c;
+}
+
 /** Composes a world sprite in place when `needsComposition` and the bounds fit 64×64 (else leaves it as today):
  *  sets `pieces`, `width/height` = bounds, `c2cY = minY`, and moves `worldX/worldY` from the base-OAM placement to
  *  the composed image. Shared by `GameState` (live) and `previewActors.ts` (static preview). (`c2cX = minX` and
- *  `screenX/Y` follow too, so the snapshot describes the composed image throughout; the raw OAM attributes stay.) */
+ *  `screenX/Y` follow too, so the snapshot describes the composed image throughout; the raw OAM attributes stay.)
+ *  The composition comes from `compositionOf` (cached; `pieces` is its shared, read-only list). */
 export function applyComposition(s: SpriteSnap, pieces: readonly SubspritePiece[]): void {
   // world sprites drawing their tables only (HUD and battle sprites stay as they are)
-  if (!s.coordOffset || s.subspriteMode === 0 || !needsComposition(pieces, s.width, s.height)) return;
-  const b = composeBounds(pieces, s.hflip, s.vflip);
-  if (b.width > MAX_COMPOSED || b.height > MAX_COMPOSED) return; // (S.S. Tidal, submarine shadow: base OAM, as today)
+  if (!s.coordOffset || s.subspriteMode === 0) return;
+  const b = compositionOf(pieces, s.width, s.height, s.hflip, s.vflip);
+  if (!b) return;
   // the GBA draws each piece at the sprite's centre (oam.x − centerToCornerVecX, likewise y) plus its offset:
   // worldX = x + x2 + spriteToMapX + minX + width / 2, worldY = y + spriteToMapY + minY + height (the bottom)
   s.worldX += b.minX + b.width / 2;
