@@ -131,6 +131,20 @@ describe('semantic core', () => {
     expect(world.group.children.filter((o) => o.name === 'kit')).toHaveLength(0);
   });
 
+  it('a World counts its builds and times the last one (the renderer\'s stats().builds, .lastBuildMs)', () => {
+    const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
+    const u = createKitUniforms();
+    const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u, [claimer('box', 5, CLAIM_OBJECT)]);
+    expect([world.builds, world.lastBuildMs]).toEqual([0, 0]);
+    const opts = { info: fakeInfo(), generalPrimary: false, indoor: false, underground: false, underwater: false };
+    const modern = { style: 'modern' as const, events: NO_EVENTS, quality: 'medium' as const };
+    world.build(fakeGrid(['....', '.#..', '....']), opts, modern);
+    expect(world.builds).toBe(1);
+    world.build(fakeGrid(['....', '....']), opts, { ...modern, style: 'retro' });
+    expect(world.builds).toBe(2);
+    expect(world.lastBuildMs).toBeGreaterThan(0);
+  });
+
   it("rebuilding a World keeps its kit materials (their shader programs) and frees each build's own resources", () => {
     // A family as the real ones are built: a kit material with a per-build data texture (kit.disposables),
     // a geometry of its own and an instanced mesh over a shared one.

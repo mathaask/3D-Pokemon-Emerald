@@ -130,6 +130,23 @@ const TRANSITION_CB2 = new Set<number>([
   SYM.CB2_ReturnToFieldLink, SYM.CB2_ReturnToFieldWithOpenMenu, SYM.CB2_WhiteOut, SYM.CB2_ContinueSavedGame,
 ]);
 
+/** The scene a main callback 2 (gMain.callback2, as stored) shows, `inBattle` the gMain flag. */
+export function sceneOf(callback2: number, inBattle: boolean): Scene {
+  // Stored THUMB function pointers have bit 0 set; symbol addresses are even.
+  const cb2 = (callback2 & ~1) >>> 0;
+  if (cb2 === SYM.BattleMainCB2 || (inBattle && cb2 !== SYM.CB2_Overworld)) return 'battle';
+  if (OVERWORLD_CB2.has(cb2)) return 'overworld';
+  // Only used while a battle transition plays over the field (battle_transition.c).
+  if (cb2 === SYM.CB2_OverworldBasic) return 'battleTransition';
+  if (TRANSITION_CB2.has(cb2)) return 'transition';
+  return 'screen2d';
+}
+
+/** The scene the game shows now (as GameState.update reads it; nothing else read). */
+export function currentScene(mem: Mem): Scene {
+  return sceneOf(mem.u32(SYM.gMain + 4), (mem.u8(SYM.gMain + 0x439) & 2) !== 0);
+}
+
 export class GameState {
   readonly mem: Mem;
   scene: Scene = 'screen2d';
@@ -193,21 +210,7 @@ export class GameState {
     this.callback1 = m.u32(SYM.gMain);
     this.callback2 = m.u32(SYM.gMain + 4);
     this.inBattle = (m.u8(SYM.gMain + 0x439) & 2) !== 0;
-
-    // Stored THUMB function pointers have bit 0 set; symbol addresses are even.
-    const cb2 = (this.callback2 & ~1) >>> 0;
-    if (cb2 === SYM.BattleMainCB2 || (this.inBattle && cb2 !== SYM.CB2_Overworld)) {
-      this.scene = 'battle';
-    } else if (OVERWORLD_CB2.has(cb2)) {
-      this.scene = 'overworld';
-    } else if (cb2 === SYM.CB2_OverworldBasic) {
-      // Only used while a battle transition plays over the field (battle_transition.c).
-      this.scene = 'battleTransition';
-    } else if (TRANSITION_CB2.has(cb2)) {
-      this.scene = 'transition';
-    } else {
-      this.scene = 'screen2d';
-    }
+    this.scene = sceneOf(this.callback2, this.inBattle);
 
     this.readFade();
     this.readSprites();

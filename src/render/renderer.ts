@@ -14,6 +14,8 @@ import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
+import { mapLoadInProgress } from '../game/mapLoad';
+import { SyncGate } from './syncGate';
 import { SpriteField } from './actors/spriteField';
 import { instanceUniformsFit } from './actors/inflatedActors';
 import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
@@ -59,6 +61,11 @@ export class Renderer {
   private emulatedSinceRender = 0;
   /** Sync with the emulator at the next render even if no frame was emulated (a world style change). */
   private resync = false;
+  /** Skips a frame's sync that would rebuild the world from a map load in progress (the world is built once, from
+   *  the finished map). */
+  private syncGate = new SyncGate();
+  /** The emulated state read ahead of a sync while the game is loading a map: would the sync rebuild the world? */
+  private probe: GameState | null = null;
   cameraInput = { yaw: 0, pitch: 0, zoom: 0 };
 
   constructor(private canvas: HTMLCanvasElement, private gba: Gba, quality: Quality = 'medium') {
@@ -211,10 +218,32 @@ export class Renderer {
     this.lastTime = performance.now();
   }
 
-  /** Render statistics of the last render() call, all passes together. */
-  stats(): { calls: number; triangles: number; programs: number } {
+  /** Render statistics of the last render() call, all passes together; the session's world builds, the last one's ms
+   *  and the syncs deferred during map loads. */
+  stats(): { calls: number; triangles: number; programs: number; builds: number; lastBuildMs: number; deferredSyncs: number } {
     const info = this.webgl.info;
-    return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0 };
+    return {
+      calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0,
+      builds: this.overworld.builds, lastBuildMs: this.overworld.lastBuildMs, deferredSyncs: this.syncGate.deferred,
+    };
+  }
+
+  /**
+   * Whether this render skips its sync with the emulator: the overworld is presented, the game is loading a map
+   * (crossing a connection, or a warp's loading frames) and the sync would rebuild the world from it — the previous
+   * frame's state is drawn once more instead, the world built once, from the finished map (SyncGate: at most
+   * MAX_DEFERRED_SYNCS frames in a row).
+   */
+  private deferSync(): boolean {
+    return this.syncGate.defer(
+      () => this.presented === 'overworld' && this.mode !== 'classic' && mapLoadInProgress(this.gba.cpu, this.state.mem),
+      () => {
+        const p = (this.probe ??= new GameState(this.gba.bus));
+        p.update();
+        // (a scene the overworld is not synced in builds nothing)
+        return p.scene !== 'battle' && p.scene !== 'screen2d' && this.overworld.wouldRebuild(p);
+      },
+    );
   }
 
   /** The field is computed in the Modern overworld only: the self-test and the dump need it current. */
@@ -252,7 +281,8 @@ export class Renderer {
       dt = Math.min(0.1, (now - this.lastTime) / 1000);
       this.lastTime = now;
     }
-    if (this.emulatedSinceRender > 0 || this.resync) {
+    // (a deferred sync stays due: the next render syncs)
+    if ((this.emulatedSinceRender > 0 || this.resync) && !this.deferSync()) {
       this.syncFromEmulator();
       this.emulatedSinceRender = 0;
       this.resync = false;

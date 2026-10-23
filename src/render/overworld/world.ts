@@ -86,6 +86,9 @@ export class World {
   private kitGroup: THREE.Group | null = null;
   /** Per-family outcome of the last build (empty when the kit did not run). */
   kitReport: FamilyReport[] = [];
+  /** Builds so far, and the last one's ms (the renderer's stats: a map crossing builds once). */
+  builds = 0;
+  lastBuildMs = 0;
   /** Walkable surface heights the kit draws instead of the analysis' (per grid cell, NaN = none;
    *  null: Retro, or the kit did not run). */
   private surfaceY: Float32Array | null = null;
@@ -124,6 +127,13 @@ export class World {
   }
 
   build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
+    const t0 = performance.now();
+    this.buildMeshes(grid, opts, ctx);
+    this.builds++;
+    this.lastBuildMs = performance.now() - t0;
+  }
+
+  private buildMeshes(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
     this.dispose();
     const a = analyze(grid, { ...opts, margin: this.margin });
     let claims: Claims | null = null;

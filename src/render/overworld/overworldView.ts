@@ -290,9 +290,9 @@ export class OverworldView {
     const bgcnt = m.bus.io16[0x0c >>> 1]; // BG2CNT
     this.charBase = ((bgcnt >>> 2) & 3) * 0x4000;
 
-    const key = `${state.mapGroup}.${state.mapNum}.${state.header.layout}.${state.backupWidth}x${state.backupHeight}`;
+    const key = OverworldView.mapKey(state);
     const grid = this.readGrid(state);
-    if (grid && (key !== this.gridKey || tsChanged || this.gridChanged(grid))) {
+    if (this.rebuildPending(state, tsChanged, grid)) {
       const mapChanged = key !== this.gridKey;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
       this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state),
@@ -303,6 +303,33 @@ export class OverworldView {
       if (mapChanged) this.onMapChanged(state);
     }
     this.atlas.render(renderer, this.charBase);
+  }
+
+  /** What the world is built for: map, layout, backup grid size. */
+  private static mapKey(state: GameState): string {
+    return `${state.mapGroup}.${state.mapNum}.${state.header?.layout}.${state.backupWidth}x${state.backupHeight}`;
+  }
+
+  /** A sync with `state` rebuilds the world: its grid read, and the map, the tilesets (`tsChanged`) or a cell changed. */
+  private rebuildPending(state: GameState, tsChanged: boolean, grid: GridData | null): grid is GridData {
+    return !!grid && (OverworldView.mapKey(state) !== this.gridKey || tsChanged || this.gridChanged(grid));
+  }
+
+  /** Whether sync(state) would rebuild the world (as it decides; reads, changes nothing): the renderer defers a sync
+   *  that would rebuild from a map load in progress (SyncGate). */
+  wouldRebuild(state: GameState): boolean {
+    if (!state.layout || !state.header) return false;
+    const tsChanged = this.atlas.tilesetsDiffer(state.layout.primaryTileset, state.layout.secondaryTileset);
+    return this.rebuildPending(state, tsChanged, this.readGrid(state));
+  }
+
+  /** World builds so far (live and preview) and the last one's ms. */
+  get builds(): number {
+    return this.world.builds;
+  }
+
+  get lastBuildMs(): number {
+    return this.world.lastBuildMs;
   }
 
   /** Classifies a grid and rebuilds the world mesh (shared by live play and the map preview);
