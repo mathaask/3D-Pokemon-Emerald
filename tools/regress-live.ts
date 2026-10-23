@@ -9,8 +9,9 @@
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
 // ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
-// selftest?, selftestMid? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
-// cold one; static entries report the preview's cold world build ms instead).
+// selftest?, selftestMid?, crossing? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
+// cold one; static entries report the preview's cold world build ms instead; `crossing`: the map-crossing entries' walk,
+// gated — see CROSSING_MARGIN_MS).
 // --static adds the static map-preview entries (object events from ROM templates; STATIC below);
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
@@ -80,7 +81,22 @@ interface LiveEntry {
   /** The entry must look exactly like this one (0 px against its shot of the same style in this run's folder: run it
    *  first) and --compare diffs it against that entry's reference. */
   sameAs?: string;
+  /** A map-crossing walk: its steps after the first (an idle settle of ≥ 30 frames) cross this many map connections.
+   *  See CROSSING below: what it records and gates. */
+  crossings?: number;
 }
+
+/**
+ * Crossing entries (`crossings`) render their frames one by one with the GPU drained after each (a 1-pixel readPixels,
+ * untimed): manual stepping otherwise queues GPU frames and a later frame's CPU time absorbs the backlog (100-500 ms
+ * stalls with no work of its own on the dev iGPU). Recorded per walk (the steps after the settle), into stats
+ * (`crossing`): every frame's renderer CPU ms (max, its frame, median, the slowest five), the world builds and the
+ * shader programs after the settle and at the end (stats().builds / .programs), the last build's ms (.lastBuildMs).
+ * Gated (a failure is reported and fails the run, the shot stays): no program compiles during the walk, exactly one
+ * build per crossing, and no frame slower than the crossing's build + CROSSING_MARGIN_MS (the build frame also draws
+ * the new world for the first time: uploads, the atlas, sprites).
+ */
+const CROSSING_MARGIN_MS = 25;
 
 /** A step's switch: the world style to the other one (Modern ↔ Retro; the world rebuilds on the next sync). */
 const TOGGLE_STYLE = "emu.renderer.setWorldStyle(emu.renderer.overworld.worldStyle === 'modern' ? 'retro' : 'modern')";
@@ -112,6 +128,14 @@ const LIVE: LiveEntry[] = [
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
   { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // gated 0.00 % in Retro only
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
+  // Map crossings (hitch fix): Route 101 → Littleroot after 30 idle frames (that crossing's frame ends inside the game's
+  // map load, CameraMove: the new map's header over the old map's grid — built twice before the fix), and Route 101 →
+  // Oldale Town (its water: a 558 ms first visit before the boot-time program catalogue; 38 idle frames: the RNG then
+  // meets no wild Pokémon in the grass on the way). (Added in the hitch fix: their p2-base Retro and Modern references
+  // were captured at 963d9db, before it, with --label p2-base --only cross_lr,cross_oldale)
+  { name: 'cross_lr', state: 'out/r101.state', steps: [['', 30], ['DOWN', 300]], crossings: 1 },
+  { name: 'cross_oldale', state: 'out/r101.state', steps: [['', 38], ['LEFT', 72], ['UP', 64], ['RIGHT', 176], ['UP', 64], ['LEFT', 16],
+    ['UP', 32], ['LEFT', 32], ['UP', 32], ['LEFT', 64], ['UP', 120]], crossings: 1 },
 ];
 
 /**
@@ -225,7 +249,26 @@ interface EntryStats {
   ab?: { method: AbMethod; rounds: number; half?: AbHalf; idle: AbVariant; walk?: AbVariant; aa?: boolean };
   /** On the Modern key: Modern / Retro actor luminance (both styles in the run). */
   actorLum?: ActorLum;
+  /** Crossing entries: the walk's frames (CROSSING). */
+  crossing?: CrossingStats;
 }
+
+/** A crossing entry's walk (the steps after the settle): frame CPU ms with the GPU drained, builds and programs after the
+ *  settle → at the end (null: the page exposes no build counter), the last world build's ms. */
+interface CrossingStats {
+  frames: number; maxMs: number; maxAt: number; medianMs: number; slowest: [number, number][];
+  builds: [number | null, number | null]; programs: [number, number]; lastBuildMs: number | null;
+}
+
+/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms. */
+const drainedStep = (keys: string, frames: number) => `(() => {
+  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), out = [];
+  for (let i = 0; i < ${frames}; i++) {
+    out.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  }
+  return out;
+})()`;
 
 function arg(name: string, def: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -636,6 +679,7 @@ async function main(): Promise<void> {
   const errored: string[] = []; // entries that logged page errors
   const missingRefs: string[] = [];
   const selftestFailures: string[] = [];
+  const crossingFailures: string[] = [];
   let pageErrors = 0;
   const diffs: string[] = [];
   try {
@@ -676,6 +720,9 @@ async function main(): Promise<void> {
             console.log(`GPU: ${gpuName}`);
           }
           let stepMsMax: number | undefined;
+          // (crossing entries: the renderer's stats after the settle, and the walk's)
+          let settled: { programs: number; builds?: number; lastBuildMs?: number } | undefined;
+          let crossing: CrossingStats | undefined;
           const selfTests = selftest && e.selftest === true && style === 'modern';
           let mid: { result: SelfTest; ok: boolean; text: string } | undefined;
           if (e.kind === 'live') {
@@ -687,11 +734,23 @@ async function main(): Promise<void> {
             // the entry's first frame builds the world and compiles programs (seconds, varying with
             // Chrome's program cache): stepMsMax is the largest frame time after it
             stepMsMax = 0;
+            const walk: number[] = [];
             for (const [n, [keys, frames, before]] of e.steps.entries()) {
               if (before) await page.evaluate(before);
-              const times = await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
+              const times = await page.evaluate(e.crossings ? drainedStep(keys, frames) : `emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
               if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
+              if (e.crossings && n === 0) settled = await page.evaluate('emu.renderer.stats()') as typeof settled;
+              if (n > 0) walk.push(...times);
+            }
+            if (e.crossings) {
+              if (e.steps[0][1] < 30 || e.steps.length < 2) throw new Error('a crossing entry starts with an idle settle of ≥ 30 frames, then walks');
+              const end = await page.evaluate('emu.renderer.stats()') as NonNullable<typeof settled>;
+              const order = walk.map((t, i) => [i + 1, round(t, 2)] as [number, number]).sort((a, b) => b[1] - a[1]);
+              crossing = {
+                frames: walk.length, maxMs: order[0][1], maxAt: order[0][0], medianMs: round(median(walk), 2), slowest: order.slice(0, 5),
+                builds: [settled!.builds ?? null, end.builds ?? null], programs: [settled!.programs, end.programs], lastBuildMs: end.lastBuildMs ?? null,
+              };
             }
           } else {
             // a focus naming no template would frame the map centre instead: never a baseline
@@ -707,6 +766,20 @@ async function main(): Promise<void> {
             { calls: number; triangles: number; programs: number; buildMs?: number };
           const entry: EntryStats = { ...s };
           if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
+          let crossLine = '';
+          if (crossing && e.kind === 'live') {
+            entry.crossing = crossing;
+            const c = crossing, [b0, b1] = c.builds;
+            const builds = b0 !== null && b1 !== null ? b1 - b0 : null;
+            const limit = c.lastBuildMs !== null ? round(c.lastBuildMs + CROSSING_MARGIN_MS, 2) : null;
+            const broken: string[] = [];
+            if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
+            if (builds !== e.crossings) broken.push(`${builds ?? 'no build counter:'} builds for ${e.crossings} crossing(s)`);
+            if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > build ${c.lastBuildMs ?? '?'} + ${CROSSING_MARGIN_MS} ms`);
+            crossLine = ` | walk ${c.frames} frames: max ${c.maxMs} ms (frame ${c.maxAt}, build ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms),`
+              + ` median ${c.medianMs}, builds ${builds ?? '?'}, programs ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
+            if (broken.length) crossingFailures.push(`${key} (${broken.join('; ')})`);
+          }
           // the actor mask of this frame: drawn again without advancing time, actors flat magenta
           const [maskOn, maskOff] = e.kind === 'live'
             ? ['emu.renderer.overworld.setActorMask(true); emu.renderer.setFixedTimestep(0); emu.renderer.render(0)',
@@ -749,7 +822,7 @@ async function main(): Promise<void> {
           line += stepMsMax !== undefined ? ` stepMax ${entry.stepMsMax} ms` : ` build ${s.buildMs} ms`;
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
           if (entry.ab) line += ` | ab idle ${abText(entry.ab.idle)}${entry.ab.walk ? `, walk ${abText(entry.ab.walk)}` : ''}`;
-          line += selfLine;
+          line += selfLine + crossLine;
           // (diffs load the images into the page: after everything else of the entry)
           const sameAs = e.kind === 'live' ? e.sameAs : undefined;
           if (sameAs) {
@@ -842,7 +915,8 @@ async function main(): Promise<void> {
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
   if (selftestFailures.length) console.log(`self-test failed (no slots, field parity > ${SELFTEST_TOL} px or xbr > ${XBR_TOL.toFixed(4)}) in: ${selftestFailures.join(', ')}`);
-  if (pageErrors || missingRefs.length || failures.length || selftestFailures.length) process.exitCode = 1;
+  if (crossingFailures.length) console.log(`crossing gates failed in: ${crossingFailures.join(', ')}`);
+  if (pageErrors || missingRefs.length || failures.length || selftestFailures.length || crossingFailures.length) process.exitCode = 1;
 }
 
 main().catch((e) => {
