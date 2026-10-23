@@ -12,6 +12,7 @@ import { Hud } from './hud';
 import { PostFX, tiltShiftFor, type Quality } from './post';
 import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
+import { battleFadeOverlay } from './battle/battleActors';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
 import { mapLoadInProgress } from '../game/mapLoad';
@@ -31,7 +32,7 @@ export class Renderer {
   private screen: ScreenView;
   private gbaTex: GbaTextures;
   private spriteAtlas: SpriteAtlas;
-  /** Inflation field of the sprite atlas (Modern overworld only). */
+  /** Inflation field of the sprite atlas for the overworld (Modern overworld only; the battlers have their own: BattleView.field). */
   private spriteField: SpriteField;
   readonly overworld: OverworldView;
   readonly battle: BattleView;
@@ -179,8 +180,9 @@ export class Renderer {
     this.applyTiltShift(s);
     // The world is rebuilt by the next sync, which follows an emulated frame; while the settings
     // panel is open emulation is paused, so sync at the next render: the new world shows at once,
-    // with the style's shadows and blur.
-    if (changed && this.presented === 'overworld') this.resync = true;
+    // with the style's shadows and blur. (A battle likewise: the battlers' field is computed at a sync, from the atlas it
+    // bakes — Modern's inflated battlers never draw from a field of an earlier atlas.)
+    if (changed && (this.presented === 'overworld' || this.presented === 'battle')) this.resync = true;
   }
 
   private applyTiltShift(s: WorldStyle): void {
@@ -192,9 +194,16 @@ export class Renderer {
     this.post.setEnabled(tiltShift, bloom);
   }
 
-  /** Sprite edges of the Modern overworld's actors: HD smooth (xBR) or Pixel. Retro ignores it. */
+  /** Sprite edges of the Modern actors, the overworld's and the battlers: HD smooth (xBR) or Pixel. Retro ignores it. */
   setSpriteFilter(f: SpriteFilter): void {
     this.overworld.setSpriteFilter(f);
+    this.battle.setSpriteFilter(f);
+  }
+
+  /** Draws every actor of both views flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.overworld.setActorMask(on);
+    this.battle.setActorMask(on);
   }
 
   /** Called after every emulated frame (possibly several per displayed frame). */
@@ -233,6 +242,8 @@ export class Renderer {
       this.gbaTex.update();
       const dispcnt = this.gba.bus.io16[0];
       this.spriteAtlas.update(this.webgl, st.sprites, (dispcnt & 0x40) === 0);
+      // the battlers' inflation field of this same atlas (Modern; its own instance: the overworld's stays the overworld's)
+      this.battle.updateField(this.webgl);
       this.hud.updateOverlay();
     } else {
       this.gbaTex.paletteSource = null;
@@ -242,10 +253,11 @@ export class Renderer {
     this.gba.ppu.overlayMask = this.presented === 'battle' ? 0x07 : 0x01;
   }
 
-  /** Global fade (warps, battle starts/ends): the GBA fades its palettes; we fade the frame. */
+  /** Global fade (warps, battle starts/ends): the GBA fades its palettes; we fade the frame (a Modern battle not for a
+   *  fade of OBJ palettes only: battleFadeOverlay). */
   private renderFade(r: THREE.WebGLRenderer): void {
     const st = this.state;
-    const k = st.fadeY / 16;
+    const k = this.presented === 'battle' ? battleFadeOverlay(st, this.battle.worldStyle) : st.fadeY / 16;
     if (k <= 0) return;
     const mat = this.fade.material as THREE.MeshBasicMaterial;
     const c = st.fadeColor;
@@ -344,24 +356,31 @@ export class Renderer {
     );
   }
 
-  /** The field is computed in the Modern overworld only: the self-test and the dump need it current. */
-  private checkFieldLive(): void {
-    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
-      throw new Error(`the inflation field is computed in the Modern overworld only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+  /** The presented view's inflation field, which the self-test and the dump need current: the overworld's (computed in
+   *  the Modern overworld) or the battlers' (a Modern battle with inflation on); throws elsewhere. */
+  private liveField(): SpriteField {
+    if (this.presented === 'battle') {
+      if (!this.battle.fieldLive) {
+        throw new Error(`the battlers' inflation field is computed in a Modern battle with inflation on only (now: ${this.battle.worldStyle}, inflation ${this.battle.inflation})`);
+      }
+      return this.battle.field;
     }
+    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
+      throw new Error(`the inflation field is computed in the Modern overworld or a Modern battle only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+    }
+    return this.spriteField;
   }
 
-  /** Actor self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas, and the
-   *  xBR shader vs its CPU reference on a fixture. */
+  /** Actor self-test (harness --selftest): the presented view's field as the last frame left it vs the CPU reference of
+   *  its atlas, and the xBR shader vs its CPU reference on a fixture. */
   actorSelfTest(): Promise<ActorSelfTest> {
-    this.checkFieldLive();
-    return actorSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.liveField());
   }
 
-  /** The used slots of the inflation field as a grey PNG data URL (harness --selftest: _field_<entry>.png). */
+  /** The used slots of the presented view's inflation field as a grey PNG data URL (harness --selftest:
+   *  _field_<entry>.png). */
   actorFieldDump(): string {
-    this.checkFieldLive();
-    return fieldDump(this.webgl, this.spriteAtlas, this.spriteField);
+    return fieldDump(this.webgl, this.spriteAtlas, this.liveField());
   }
 
   render(_dtMs: number): void {

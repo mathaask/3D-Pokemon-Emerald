@@ -1,8 +1,9 @@
 // 3D battle scene. Battle sprites are placed by "un-projecting" their GBA screen positions through the battle stage's
 // reference projection (stage.ts) onto depth planes (player side, enemy side, or interpolated for move effects:
-// battleActors.ts). The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the
-// Modern style, else today's arena (arena.ts: the Retro look and the fallback), generated and themed from the game's own
-// terrain background colours. Every program the scene draws compiles at boot (precompile: the battle catalogue).
+// battleActors.ts); in Modern the battlers are inflated on the battle's own inflation field (field: BATTLE_INFLATE, D4).
+// The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the Modern style, else
+// today's arena (arena.ts: the Retro look and the fallback), generated and themed from the game's own terrain background
+// colours. Every program the scene draws compiles at boot (precompile: the battle catalogue, the actors, the field).
 
 import * as THREE from 'three';
 import type { GameState, SpriteSnap } from '../../game/state';
@@ -14,6 +15,9 @@ import type { Quality } from '../post';
 import { bgr555ToRgba } from '../gbaTextures';
 import { createKitUniforms, type KitUniforms } from '../kit/materials';
 import type { ProgramInfo } from '../actors/inflatedActors';
+import type { SpriteFilter } from '../actors/actorLayer';
+import { SpriteField } from '../actors/spriteField';
+import { BATTLE_INFLATE } from '../actors/inflateMath';
 import { BattleArena } from './arena';
 import { arenaKind, type ArenaInputs, type ArenaKind } from './arenaKind';
 import { defaultArenaColors, type ArenaColors } from './bgSample';
@@ -26,7 +30,7 @@ export { isBattleHudSprite } from './battleActors';
 
 /** What the battle view reads of the game state (GameState's fields; the static preview fills exactly these). */
 export type BattleViewState = Pick<GameState, 'mem' | 'sprites' | 'battleEnvironment' | 'battleType' | 'trainerClass'
-  | 'mapBattleScene' | 'mapType' | 'hours' | 'minutes' | 'animActive' | 'target'>;
+  | 'mapBattleScene' | 'mapType' | 'hours' | 'minutes' | 'animActive' | 'target' | 'battlerCopies'>;
 
 /** The precompile (BattleView.precompile): its catalogue, compileAsync's promise, whether its frame was drawn (or it
  *  failed). */
@@ -84,9 +88,16 @@ export class BattleView {
    *  precompile draws it with the catalogue shown. null: the scene alone, into a 1×1 target. */
   precompileFrame: (() => void) | null = null;
 
-  /** `instanceUniforms`: the inflated battlers' instance-data path (Task 5; instanceUniformsFit, as the overworld's). */
-  constructor(spriteAtlas: SpriteAtlas, opts: { instanceUniforms?: boolean } = {}) {
-    this.actors = new BattleActors(spriteAtlas, { rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
+  /** The battlers' inflation field (Modern): the sprite atlas's, with the battle's parameters (BATTLE_INFLATE: 64-px
+   *  pictures) — its own instance (+8 MB), so neither scene's field is ever the other's (D4). Recomputed by updateField
+   *  after each atlas update; read by the self-test. */
+  readonly field: SpriteField;
+
+  /** `instanceUniforms`: the inflated battlers' instance-data path (instanceUniformsFit, as the overworld's: every caller
+   *  passes it). */
+  constructor(private readonly spriteAtlas: SpriteAtlas, opts: { instanceUniforms?: boolean } = {}) {
+    this.field = new SpriteField(undefined, undefined, BATTLE_INFLATE);
+    this.actors = new BattleActors(spriteAtlas, { field: this.field, rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
     this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.arena.group);
     this.scene.fog = new THREE.Fog(0xcfe8ff, 40, 120);
     this.sun.castShadow = true;
@@ -105,9 +116,41 @@ export class BattleView {
     return this.style;
   }
 
-  /** Modern / Retro: applies at the next update (the arena the style draws; today's arena built when first shown). */
+  /** Modern / Retro: applies at the next update (the arena the style draws; today's arena built when first shown; the
+   *  battlers' field from the next updateField). */
   setWorldStyle(s: WorldStyle): void {
     this.style = s;
+  }
+
+  /** Modern's inflated battlers, flat enemy shadow and skipped OBJ-window masks (false: every sprite a card, as in Retro
+   *  — the harness's `--ab-feature battlers` baseline; the field is then not computed either). */
+  get inflation(): boolean {
+    return this.actors.inflation;
+  }
+
+  set inflation(on: boolean) {
+    this.actors.inflation = on;
+  }
+
+  /** Sprite edges of the inflated battlers (Modern): HD smooth (xBR) or Pixel. Cards and Retro are unaffected. */
+  setSpriteFilter(f: SpriteFilter): void {
+    this.actors.setSpriteFilter(f);
+  }
+
+  /** Whether the battlers' field is computed (and drawn from): a Modern battle with inflation on. */
+  get fieldLive(): boolean {
+    return this.style === 'modern' && this.actors.inflation;
+  }
+
+  /**
+   * Recomputes the battlers' inflation field from the sprite atlas as its last update baked it — the owner calls it right
+   * after every atlas update of a battle frame (sprites animate and change slot every frame: a field one bake behind
+   * would displace the wrong pixels) — in a Modern battle with inflation on only (Retro and the cards-only baseline draw no
+   * inflated battler).
+   */
+  updateField(renderer: THREE.WebGLRenderer): void {
+    if (!this.fieldLive) return;
+    this.field.update(renderer, this.spriteAtlas.target.texture, this.spriteAtlas.slotRects, this.spriteAtlas.slotCount);
   }
 
   /** The preview's &arenaFail=<name>: the arena part of that name throws (with no such part, one of that name covering
@@ -134,7 +177,8 @@ export class BattleView {
   /**
    * Starts compiling every program the battle scene draws, once, whatever the style: the battle catalogue (every arena
    * part's program variants, today's arena for every environment: catalogue.ts) in the battle scene, with every actor
-   * shown — compileAsync issues them all at once (parallel where the browser has KHR_parallel_shader_compile) into a 1×1
+   * shown (the inflated battlers too, and every shadow-depth twin through its stand-in), and the battlers' field passes —
+   * compileAsync issues them all at once (parallel where the browser has KHR_parallel_shader_compile) into a 1×1
    * target, as PostFX draws the scene, off the main thread; finishPrecompile then draws the frame that compiles the rest
    * (shadow-depth, PostFX's passes), blocking. Live play starts it at boot (Renderer's constructor), the battle preview
    * before its first frame. Resolves when compileAsync's programs are ready; a failure is logged once and never retried
@@ -163,7 +207,7 @@ export class BattleView {
         renderer.setRenderTarget(target);
         const scene = renderer.compileAsync(this.scene, this.camera);
         this.scene.fog = null;
-        ready = Promise.all([scene, renderer.compileAsync(standIns, this.camera, this.scene)]);
+        ready = Promise.all([scene, renderer.compileAsync(standIns, this.camera, this.scene), this.field.compile(renderer)]);
       } finally {
         this.scene.fog = fog;
         for (const s of standIns.children) if ((s as THREE.InstancedMesh).isInstancedMesh) (s as THREE.InstancedMesh).dispose();
@@ -370,7 +414,8 @@ export class BattleView {
     this.sky.mesh.position.copy(this.camera.position);
     this.uniforms.uSky.value.copy(this.arena.skyColor);
 
-    this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites);
+    this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites,
+      state.battlerCopies);
   }
 
   resize(aspect: number): void {
@@ -378,7 +423,8 @@ export class BattleView {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Draws the battle actors flat magenta (the harness's visible-actor mask) or normally. */
+  /** Draws the battle actors (cards, decals, inflated battlers) flat magenta (the harness's visible-actor mask) or
+   *  normally. */
   setActorMask(on: boolean): void {
     this.actors.setMask(on);
   }

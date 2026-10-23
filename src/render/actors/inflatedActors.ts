@@ -11,12 +11,13 @@
 // The contact shadows keep instance attributes.
 // The front silhouette is the sprite's own (alpha test on the game's frame; with HD edges, setSmoothing, on its
 // xBR-smoothed outline — the shadow's too).
-// Not tied to the overworld: battles can reuse it with any atlas and field of the same layout.
+// Not tied to the overworld: a variant (InflatedVariant) gives another scene its own programs, field parameters and relief
+// — the battle's (BATTLE_VARIANT: 64-px pictures, relief down to the feet) — with any atlas and field of the same layout.
 
 import * as THREE from 'three';
 import type { BillboardSpec } from '../overworld/billboards';
 import { put, markRange } from '../instanceUpload';
-import { INFLATE } from './inflateMath';
+import { INFLATE, BATTLE_INFLATE, type InflateParams } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { XBR_GLSL } from './xbr.glsl';
 import { afterChunk, glslFloat, patchChunk } from './glsl';
@@ -54,26 +55,29 @@ export function instanceUniformsFit(maxVertexUniforms: number, override?: string
   return maxVertexUniforms >= INST_UNIFORMS_MIN_VERTEX_VECTORS;
 }
 
-/** The program keys (customProgramCacheKey) of the actors' main material and shadow twin, per instance-data variant. */
-const programKey = (twin: boolean, uniforms: boolean) => `actor:inflated${twin ? '-depth' : ''}:1:${uniforms ? 'uniforms' : 'attributes'}`;
+/** The program keys (customProgramCacheKey) of the actors' main material and shadow twin, per instance-data path and
+ *  variant (its tag; '' = the overworld's: 'actor:inflated:1:…'). */
+const programKey = (twin: boolean, uniforms: boolean, tag = '') =>
+  `actor:inflated${tag ? '-' + tag : ''}${twin ? '-depth' : ''}:1:${uniforms ? 'uniforms' : 'attributes'}`;
 
 /** A shader program as three lists it (renderer.info.programs): its cache key (ending with the material's
  *  customProgramCacheKey) and, once it was first used with renderer.debug.checkShaderErrors on (three's default), its
  *  link diagnostics (none when it linked without a log). */
 export interface ProgramInfo { cacheKey: string; diagnostics?: { runnable: boolean } }
 
-/** Whether a program of the uniform-array variant (main or shadow twin) failed to link on this device although
- *  instanceUniformsFit let it through (a driver counting vectors more coarsely): the actors then need the attribute
- *  path (ActorLayer.checkInstanceUniforms, after the precompile). */
-export function instanceUniformsFailed(programs: readonly ProgramInfo[]): boolean {
-  const keys = [programKey(false, true), programKey(true, true)];
+/** Whether a program of the uniform-array path (main or shadow twin) of the variant tagged `tag` ('' = the overworld's)
+ *  failed to link on this device although instanceUniformsFit let it through (a driver counting vectors more coarsely):
+ *  those actors then need the attribute path (ActorLayer / BattleActors.checkInstanceUniforms, after the precompile). */
+export function instanceUniformsFailed(programs: readonly ProgramInfo[], tag = ''): boolean {
+  const keys = [programKey(false, true, tag), programKey(true, true, tag)];
   return programs.some((p) => p.diagnostics?.runnable === false && keys.some((k) => p.cacheKey.endsWith(k)));
 }
 
 /** How far the shading normal tilts: tan(tilt) across the body. The slope is that of the field's distance
  *  estimate (h / amp)², which rises evenly from the outline (the sqrt profile's slope is steepest at the
  *  outline): each body part shades like a pillow, the pixels along the outline keep their colour.
- *  Independent of INFLATE.amp (the relief's depth). Baked into the shader (compile-time). */
+ *  Independent of the field's amp (the relief's depth: the variant's params.amp normalises it). Baked into the shader
+ *  (compile-time). */
 export const SHADE_GAIN = 2.75;
 /** The shading slope's central differences span ±SHADE_STEP texels (smooths creases between lobes).
  *  Baked into the shader (compile-time). */
@@ -82,6 +86,23 @@ export const SHADE_STEP = 2;
  *  reach ~0.35 of a 2-unit character): the legs stay at the card's depth. Shading is not affected.
  *  Baked into the shader (compile-time). */
 export const RELIEF_FADE = { from: 0.15, to: 0.55 };
+
+/** What makes one scene's inflated actors differ from another's: their own programs (`tag` in the program keys), the
+ *  field parameters their field is computed with (the shading slope's normaliser uses params.amp) and the relief's fade
+ *  above the feet. Baked into the shaders (compile-time). */
+export interface InflatedVariant {
+  /** '' = the overworld's: its program keys stay 'actor:inflated:1:…'. */
+  tag: string;
+  /** The field's parameters (SpriteField's). */
+  params: InflateParams;
+  /** The relief fades in over this share of the sprite's height from the feet; null: full relief down to the feet. */
+  reliefFade: { from: number; to: number } | null;
+}
+
+/** The overworld's characters: 16×32 sprites, the legs at the card's depth (3D grass blades hide them). */
+export const OVERWORLD_VARIANT: InflatedVariant = { tag: '', params: INFLATE, reliefFade: RELIEF_FADE };
+/** The battlers (Phase 3): 64-px Pokémon and trainer pictures on their platforms, relief down to the feet. */
+export const BATTLE_VARIANT: InflatedVariant = { tag: 'battle', params: BATTLE_INFLATE, reliefFade: null };
 /** How far (world units) the shadow twin is pushed away from the light: the sheet stands steeply to a high
  *  sun, so its own depth varies more across the soft-shadow filter than the global bias covers (grainy
  *  self-shadow acne). The cast shadow does not move (the push follows the light's rays). Baked into the
@@ -101,8 +122,9 @@ export const SHOULDER = { knee: 0.8, max: 1.0 };
 // reads a neighbouring slot; its gradient in px per px (scale-free). The relief faces the viewer: each
 // point of the card rises along its own ray to the eye (uEye), so the camera sees exactly the sprite's
 // pixels; the shading normal (world) is the actor's facing (towards the eye) tilted by the shading
-// slope across the screen's right / up axes, as a bas-relief of the sprite seen face-on.
-const FIELD_GLSL = /* glsl */ `
+// slope across the screen's right / up axes, as a bas-relief of the sprite seen face-on. (Per variant: the slope's
+// normaliser is its field's amp.)
+const fieldGlsl = (v: InflatedVariant) => /* glsl */ `
 uniform sampler2D tField;
 uniform vec2 uAtlasSize;
 uniform vec3 uRight;   // camera right on XZ (unit): the sheet's x axis
@@ -119,7 +141,7 @@ vec2 fieldGrad(vec2 uv, vec4 rect, float s) {
 }
 // SHADE_GAIN x the slope of (h / amp)^2 = SHADE_GAIN x 2 h grad(h) / amp^2, over ±SHADE_STEP texels
 vec2 shadeSlope(vec2 uv, vec4 rect) {
-  return ${glslFloat(SHADE_GAIN * 2 / (INFLATE.amp * INFLATE.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect, ${glslFloat(SHADE_STEP)});
+  return ${glslFloat(SHADE_GAIN * 2 / (v.params.amp * v.params.amp))} * fieldH(uv, rect) * fieldGrad(uv, rect, ${glslFloat(SHADE_STEP)});
 }
 vec3 actorNormal(vec3 f, vec2 g) {
   vec3 r = normalize(uRight - dot(uRight, f) * f); // screen right, then screen up = f x r
@@ -142,11 +164,11 @@ attribute vec4 aSize;
 attribute vec4 aUv;
 `;
 
-const vertPrelude = (uniforms: boolean) => /* glsl */ `
+const vertPrelude = (uniforms: boolean, v: InflatedVariant) => /* glsl */ `
 ${uniforms ? INSTANCE_UNIFORMS_GLSL : INSTANCE_ATTRIBUTES_GLSL}
 varying vec2 vAtlasUv;
 varying vec4 vRect;     // the sprite's rectangle in atlas texels: x0, y0 (bottom), x1, y1 (top)
-${FIELD_GLSL}
+${fieldGlsl(v)}
 `;
 
 // main(): the grid vertex's atlas uv (x in [-0.5, 0.5], y in [0, 1] across the sprite), its point on
@@ -164,11 +186,12 @@ vFacing = normalize(uEye - (aFoot + vec3(0.0, 0.5 * aSize.y + aSize.z, 0.0)));
 // the shadow lookup, three's normal bias) ...
 const VERT_NORMAL = 'vec3 objectNormal = vFacing;';
 
-// ... and its position: pushed towards the eye by the field (sprite px → world units). The relief fades
-// in above the legs (RELIEF_FADE): they keep the card's depth, so 3D grass blades in front still hide them.
-const VERT_POSITION = /* glsl */ `
+// ... and its position: pushed towards the eye by the field (sprite px → world units; the texel size guarded: a sprite
+// scaled to nothing stays finite). The overworld's relief fades in above the legs (RELIEF_FADE): they keep the card's
+// depth, so 3D grass blades in front still hide them; a variant without a fade (the battlers) has it down to the feet.
+const vertPosition = (v: InflatedVariant) => /* glsl */ `
 float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);
-float relief = smoothstep(${glslFloat(RELIEF_FADE.from)}, ${glslFloat(RELIEF_FADE.to)}, local.y);
+${v.reliefFade ? `float relief = smoothstep(${glslFloat(v.reliefFade.from)}, ${glslFloat(v.reliefFade.to)}, local.y);` : 'float relief = 1.0;'}
 vec3 transformed = card + normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief);
 `;
 
@@ -192,7 +215,7 @@ vec4 actorSample(vec2 uv, vec4 rect) {
 }
 `;
 
-const FRAG_PRELUDE = /* glsl */ `
+const fragPrelude = (v: InflatedVariant) => /* glsl */ `
 uniform sampler2D tAtlas;
 uniform vec3 uRimColor;
 uniform float uRim;
@@ -200,7 +223,7 @@ uniform vec3 uFloor;
 uniform float uMask;    // 1: flat magenta (the harness's actor mask)
 varying vec2 vAtlasUv;
 varying vec4 vRect;
-${FIELD_GLSL}
+${fieldGlsl(v)}
 ${SAMPLE_GLSL}
 `;
 
@@ -271,13 +294,13 @@ export const FRAG_SHOULDER = /* glsl */ `
 /** The harness's actor mask: every drawn actor pixel flat magenta (after the alpha test and depth test). */
 export const MASK_GLSL = 'if (uMask > 0.5) gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);';
 
-const depthVert = (uniforms: boolean) => /* glsl */ `
+const depthVert = (uniforms: boolean, v: InflatedVariant) => /* glsl */ `
 #include <common>
-${vertPrelude(uniforms)}
+${vertPrelude(uniforms, v)}
 varying vec2 vUv;
 void main() {
 ${VERT_CARD}
-${VERT_POSITION}
+${vertPosition(v)}
   vUv = vAtlasUv;
   vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
   mvPosition.z -= ${glslFloat(SHADOW_PUSH)}; // away from the light, along its rays
@@ -335,10 +358,11 @@ export class InflatedActors {
    * `instanceUniforms`: read the instance data from the uniform array (default) or from instance attributes. The default
    * suits tests and devices known to fit: a renderer's caller (the overworld; Phase 3's battlers alike) passes
    * instanceUniformsFit(renderer.capabilities.maxVertexUniforms, …): false on a device with too few vertex uniform
-   * vectors.
+   * vectors. `variant`: the scene's programs, field parameters and relief (the overworld's by default; BATTLE_VARIANT).
    */
   constructor(atlas: THREE.Texture, field: THREE.Texture, rimColor: { value: THREE.Color },
-    atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS), instanceUniforms = true) {
+    atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS), instanceUniforms = true,
+    readonly variant: InflatedVariant = OVERWORLD_VARIANT) {
     this.instanceUniforms = instanceUniforms;
     const grid = new THREE.PlaneGeometry(1, 1, ACTOR_GRID.x, ACTOR_GRID.y);
     grid.translate(0, 0.5, 0); // x in [-0.5, 0.5], y in [0, 1]
@@ -367,11 +391,11 @@ export class InflatedActors {
     material.shadowSide = THREE.DoubleSide;
     material.onBeforeCompile = (s) => {
       Object.assign(s.uniforms, u);
-      let v = vertPrelude(instanceUniforms) + s.vertexShader;
+      let v = vertPrelude(instanceUniforms, variant) + s.vertexShader;
       v = patchChunk(v, 'beginnormal_vertex', VERT_CARD + VERT_NORMAL);
-      v = patchChunk(v, 'begin_vertex', VERT_POSITION);
+      v = patchChunk(v, 'begin_vertex', vertPosition(variant));
       s.vertexShader = v;
-      let f = FRAG_PRELUDE + s.fragmentShader;
+      let f = fragPrelude(variant) + s.fragmentShader;
       f = afterChunk(f, 'map_fragment', FRAG_COLOR);
       f = afterChunk(f, 'normal_fragment_maps', FRAG_NORMAL);
       f = afterChunk(f, 'emissivemap_fragment', FRAG_RIM);
@@ -381,15 +405,15 @@ export class InflatedActors {
       f = afterChunk(f, 'dithering_fragment', MASK_GLSL);
       s.fragmentShader = f;
     };
-    material.customProgramCacheKey = () => programKey(false, instanceUniforms);
+    material.customProgramCacheKey = () => programKey(false, instanceUniforms, variant.tag);
 
     const depth = new THREE.ShaderMaterial({
-      vertexShader: depthVert(instanceUniforms),
+      vertexShader: depthVert(instanceUniforms, variant),
       fragmentShader: DEPTH_FRAG,
       uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst },
       side: THREE.DoubleSide,
     });
-    depth.customProgramCacheKey = () => programKey(true, instanceUniforms);
+    depth.customProgramCacheKey = () => programKey(true, instanceUniforms, variant.tag);
     this.mesh = new THREE.Mesh(this.geometry, material);
     this.mesh.name = 'inflatedActors';
     this.mesh.frustumCulled = false;

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL, MAX_ACTORS, INST_UNIFORM_VECTORS,
-  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed,
+  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed, BATTLE_VARIANT,
 } from '../src/render/actors/inflatedActors';
 import { heights, INFLATE } from '../src/render/actors/inflateMath';
 import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
@@ -13,6 +13,37 @@ const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2
 const make = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() });
 /** The attribute fallback (a device with too few vertex uniform vectors). */
 const makeAttributes = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, false);
+/** The main material's shaders: its onBeforeCompile applied to three's standard shaders. */
+const patched = (a: InflatedActors) => {
+  const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+    uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms;
+  (a.mesh.material as THREE.MeshStandardMaterial).onBeforeCompile(s, null as unknown as THREE.WebGLRenderer);
+  return s;
+};
+
+describe('InflatedActors variants (battle)', () => {
+  it('a battle variant has its own program keys and full relief to the feet', () => {
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
+    expect((a.mesh.material as THREE.Material).customProgramCacheKey()).toBe('actor:inflated-battle:1:uniforms');
+    expect((a.mesh.customDepthMaterial as THREE.Material).customProgramCacheKey()).toBe('actor:inflated-battle-depth:1:uniforms');
+    expect(patched(a).vertexShader).toContain('float relief = 1.0;');
+  });
+  it('the overworld variant keeps its keys and its relief fade', () => {
+    const a = make();
+    expect((a.mesh.material as THREE.Material).customProgramCacheKey()).toBe('actor:inflated:1:uniforms');
+    expect(patched(a).vertexShader).toContain('smoothstep(0.15, 0.55, local.y)');
+  });
+  it('checks the uniform-array programs of the variant it is asked about', () => {
+    const failed = [{ cacheKey: 'x,actor:inflated-battle:1:uniforms', diagnostics: { runnable: false } }];
+    expect(instanceUniformsFailed(failed)).toBe(false);
+    expect(instanceUniformsFailed(failed, 'battle')).toBe(true);
+  });
+  it('keeps a zero-width actor finite (a battler growing from nothing at send-out): the battle shader guards its texel size', () => {
+    // (set() only copies finite spec numbers: a NaN could only arise in the shader, dividing by the slot's texel width)
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
+    expect(patched(a).vertexShader).toContain('float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);');
+  });
+});
 
 describe('InflatedActors', () => {
   it('draws one instanced 16x32 grid per actor, its instance data in a uniform array (no instance vertex buffer)', () => {

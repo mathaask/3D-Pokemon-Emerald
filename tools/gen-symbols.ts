@@ -41,6 +41,8 @@ const WANTED = [
   'gBattleCommunication', 'gAnimScriptActive', 'gBattleScripting', 'gMoveSelectionCursor',
   'gPlayerParty', 'gEnemyParty', 'gPlayerPartyCount', 'gEnemyPartyCount', 'gTrainerBattleOpponent_A',
   'gBattleAnimBgCntSet', 'gBattleBgsHidden', 'gBattleMonForms', 'gMultiuseSpriteTemplate', 'gBattlerSpriteTemplates',
+  // a battler copied onto a BG layer by a move animation (battle_anim.c Cmd_monbg: its update task, per flank)
+  'sMonAnimTaskIdArray', 'Task_UpdateMonBg',
   // ROM data tables
   'gMonFrontPicTable', 'gMonBackPicTable', 'gMonPaletteTable', 'gMonShinyPaletteTable',
   'gSpeciesNames', 'gMoveNames', 'gSpeciesInfo', 'gBattleMoves', 'gTrainerFrontPicTable',

@@ -21,6 +21,9 @@ export interface FieldSelfTest {
   fixtureMaxErr: number;
   /** Median GPU ms of one field update over the live atlas (timer queries). */
   gpuMs: number;
+  /** The field's highest height (sprite px), inflateMax(field.params): the harness's parity tolerance grows with it
+   *  (half-float rounding), max(0.02, 0.003 · inflateMax). */
+  inflateMax: number;
 }
 
 /** Updates timed for gpuMs (median). */
@@ -121,7 +124,7 @@ export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: Sprite
   // (re-running the update over the unchanged atlas leaves the same field)
   const t = await timeGpuFrames(renderer.getContext() as WebGL2RenderingContext, TIMED_UPDATES,
     () => field.update(renderer, atlas.target.texture, atlas.slotRects, count));
-  return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs };
+  return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs, inflateMax: inflateMax(field.params) };
 }
 
 export interface XbrSelfTest {

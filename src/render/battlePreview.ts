@@ -10,7 +10,8 @@
 //   (a value that does not parse falls back to the default: a species not a non-negative integer, an hour outside 0–24,
 //   an unknown quality, a yaw not a number; a species past the ROM's picture tables throws readMonPic's RomError)
 //   &arenaFail=<part>        that Modern arena part throws: the battle falls back to today's arena (BattleView.arenaFailPart)
-//   &spriteFilter=smooth|pixel   accepted; today's battle cards have no sprite edges setting (no effect yet)
+//   &spriteFilter=smooth|pixel   the Modern inflated battlers' sprite edges (default HD smooth; cards are unaffected)
+//   &actorUniforms=0|1       the inflated battlers' instance data from attributes / the uniform array (default: by device)
 //   &manual=1                no frame loop: frames advance through preview.frames(n) (1/60 s each)
 // Drag turns the camera (±0.9 rad, as live play's), the wheel zooms.
 
@@ -32,6 +33,9 @@ import { PostFX, tiltShiftFor, type Quality } from './post';
 import type { WorldStyle } from './overworld/world';
 import { blankSprite } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
+import { instanceUniformsFit } from './actors/inflatedActors';
+import { parseSpriteFilter } from './actors/actorLayer';
+import { fieldDump, actorSelfTest, type ActorSelfTest } from './actors/selfTest';
 
 export interface PreviewBattler { pic: MonPic; position: number }   // B_POSITION_* 0..3 (even: player side)
 
@@ -172,6 +176,7 @@ export class BattlePreviewApp {
       battleType: inputs.battleType | (double ? BATTLE_TYPE_DOUBLE : 0), trainerClass: inputs.trainerClass,
       mapBattleScene: inputs.mapBattleScene, mapType: inputs.mapType,
       hours: Math.floor(hour), minutes: Math.round((hour % 1) * 60), animActive: false, target: 0,
+      battlerCopies: [],
     } satisfies BattleViewState;
 
     // the live battle path: hardware palette RAM (paletteSource null), the sprite atlas (1D tiles), the BattleView (the
@@ -179,7 +184,10 @@ export class BattlePreviewApp {
     this.tex = new GbaTextures(bus);
     this.tex.update(true);
     this.spriteAtlas = new SpriteAtlas(this.tex);
-    this.battle = new BattleView(this.spriteAtlas);
+    // (the inflated battlers' instance data: as live play's, by device; &actorUniforms=0|1)
+    this.battle = new BattleView(this.spriteAtlas,
+      { instanceUniforms: instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, params.get('actorUniforms')) });
+    this.battle.setSpriteFilter(parseSpriteFilter(params.get('spriteFilter')) ?? 'smooth');
     const q = params.get('quality');
     const quality: Quality = q === 'low' || q === 'high' ? q : 'medium';
     this.battle.quality = quality;
@@ -233,9 +241,36 @@ export class BattlePreviewApp {
     this.frame(0);
   }
 
-  /** Draws the battle cards flat magenta (the harness's visible-actor mask) or normally. */
+  /** Draws the battle actors (cards, decals, inflated battlers) flat magenta (the harness's visible-actor mask) or
+   *  normally. */
   setActorMask(on: boolean): void {
     this.battle.setActorMask(on);
+  }
+
+  /** Modern's inflated battlers on or off (every sprite a card, as in Retro: the harness's `--ab-feature battlers`
+   *  baseline); from the next frame. */
+  setInflation(on: boolean): void {
+    this.battle.inflation = on;
+  }
+
+  /** The battlers' field is computed in Modern with inflation on only: the self-test and the dump need it current. */
+  private checkFieldLive(): void {
+    if (!this.battle.fieldLive) {
+      throw new Error(`the battlers' inflation field is computed in Modern with inflation on only (now: ${this.battle.worldStyle}, inflation ${this.battle.inflation})`);
+    }
+  }
+
+  /** Actor self-test (as emu.selfTest): the last frame's battle field vs the CPU reference of its atlas, and the xBR
+   *  shader vs its CPU reference on a fixture. */
+  selfTest(): Promise<ActorSelfTest> {
+    this.checkFieldLive();
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.battle.field);
+  }
+
+  /** The used slots of the battle field as a grey PNG data URL (as emu.fieldDump). */
+  fieldDump(): string {
+    this.checkFieldLive();
+    return fieldDump(this.webgl, this.spriteAtlas, this.battle.field);
   }
 
   /** Times n frames (as frames(1) each) on the GPU: timer queries, medians (as emu.gpuFrames). */
@@ -294,8 +329,8 @@ export class BattlePreviewApp {
     this.battle.resize(window.innerWidth / window.innerHeight);
   }
 
-  /** One frame, as the live Renderer draws a battle frame (without the HUD): the sprite atlas, the battle view, PostFX.
-   *  `fixedDt` (seconds) replaces the wall-clock time step. */
+  /** One frame, as the live Renderer draws a battle frame (without the HUD): the sprite atlas and the battlers' field,
+   *  the battle view, PostFX. `fixedDt` (seconds) replaces the wall-clock time step. */
   private frame(fixedDt?: number): void {
     const r = this.webgl;
     r.info.reset();
@@ -306,6 +341,7 @@ export class BattlePreviewApp {
     this.last = now;
     this.tex.update();
     this.spriteAtlas.update(r, this.state.sprites, false);
+    this.battle.updateField(r);
     this.hud.length = 0;
     this.battle.update(this.state, dt, this.input, this.hud);
     this.input.yaw = this.input.pitch = this.input.zoom = 0;

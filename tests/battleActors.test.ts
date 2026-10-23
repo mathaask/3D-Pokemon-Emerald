@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { battleRoute, battleCardSpec, isBattler, BattleActors } from '../src/render/battle/battleActors';
+import { battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, isBattler, BattleActors } from '../src/render/battle/battleActors';
 import { STAGE, REF_PITCH } from '../src/render/battle/stage';
 import { blankSprite } from '../src/render/previewActors';
 import { SYM } from '../src/game/symbols';
+import { GameState, type SpriteSnap } from '../src/game/state';
+import { Bus } from '../src/gba/bus';
 
 const slot = { u0: 0, v0: 0.125, u1: 0.0625, v1: 0 };
 const battler = (index: number, screenX: number, screenY: number) => blankSprite({ index, template: SYM.gMultiuseSpriteTemplate,
   width: 64, height: 64, affine: true, coordOffset: false, screenX, screenY });
 const effect = (index: number, screenX: number) => blankSprite({ index, template: 0x08590000, width: 32, height: 32, coordOffset: false, screenX, screenY: 40 });
+const shadow = blankSprite({ index: 2, template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, coordOffset: false, screenX: 160, screenY: 65 });
 
 describe('battleCardSpec (today\'s placement)', () => {
   it('stands a battler on its side\'s depth plane, stretched by 1/cos(pitch)', () => {
@@ -26,18 +29,90 @@ describe('battleCardSpec (today\'s placement)', () => {
   });
 });
 
+describe('battleDecalSpec (the enemy shadow on the platform)', () => {
+  it('lays the sprite\'s screen rectangle on the platform top: x at its centre\'s ground hit, z spanning its edges\' ground hits', () => {
+    const d = battleDecalSpec(shadow, slot, STAGE);
+    const top = STAGE.groundHit(176, 65), bottom = STAGE.groundHit(176, 73);
+    expect(d.flat).toBe(true);
+    expect(d.footX).toBeCloseTo(top.x, 6);
+    expect(d.width).toBeCloseTo(32 / 32, 6);
+    // (a flat card covers footZ − height .. footZ: the nearer edge is the screen rectangle's bottom)
+    expect(d.footZ).toBeCloseTo(bottom.z, 6);
+    expect(d.footZ - d.height).toBeCloseTo(top.z, 6);
+    expect(d.height).toBeGreaterThan(0);
+  });
+});
+
 describe('battleRoute', () => {
-  it('Task 4: Retro and Modern both draw every visible non-HUD sprite as a card until Task 5 routes it', () => {
+  it('Modern inflates battlers, lays the enemy shadow flat, skips OBJ-window masks; Retro draws cards', () => {
+    const b = battler(0, 40, 53);
+    expect(battleRoute(b, 'modern', true)).toBe('inflated');
+    expect(battleRoute(b, 'modern', false)).toBe('card');
+    expect(battleRoute(b, 'retro', true)).toBe('card');
+    expect(battleRoute({ ...b, objMode: 2 }, 'modern', true)).toBe('skip');
+    expect(battleRoute({ ...b, objMode: 2 }, 'retro', true)).toBe('card');     // today's (the GBA never shows it)
+    expect(battleRoute(shadow, 'modern', true)).toBe('decal');
+    expect(battleRoute(shadow, 'retro', true)).toBe('card');
+    expect(battleRoute(effect(1, 108), 'modern', true)).toBe('card');
+  });
+  it('skips invisible sprites and hands HUD sprites to the HUD in both styles', () => {
     expect(isBattler(battler(0, 40, 53))).toBe(true);
-    const shadow = blankSprite({ index: 2, template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, coordOffset: false, screenX: 160, screenY: 65 });
     for (const style of ['retro', 'modern'] as const) {
-      expect(battleRoute(battler(0, 40, 53), style, true)).toBe('card');
-      expect(battleRoute({ ...battler(0, 40, 53), objMode: 2 }, style, true)).toBe('card');   // an OBJ-window clone: today's card
-      expect(battleRoute(shadow, style, true)).toBe('card');
-      expect(battleRoute(effect(1, 108), style, true)).toBe('card');
       expect(battleRoute(blankSprite({ invisible: true }), style, true)).toBe('skip');
+      expect(battleRoute(blankSprite({ template: 0x0832c140 }), style, true)).toBe('hud');   // a healthbox
     }
-    expect(battleRoute(blankSprite({ template: 0x0832c140 }), 'modern', true)).toBe('hud');   // a healthbox
+  });
+});
+
+describe('battler copies on BG layers (a move\'s monbg)', () => {
+  it('GameState lists the battler sprites whose monbg copy the overlay shows: their task lives now and lived at the previous sync', () => {
+    const bus = new Bus(new Uint8Array(0x1000));
+    const w = (a: number, v: number, bytes: 1 | 2 | 4) => {
+      const arr = (a >>> 24) === 2 ? bus.ewram : bus.iwram, o = (a >>> 24) === 2 ? a & 0x3ffff : a & 0x7fff;
+      for (let i = 0; i < bytes; i++) arr[o + i] = (v >>> (8 * i)) & 0xff;
+    };
+    w(SYM.gMain + 4, SYM.BattleMainCB2 | 1, 4);                        // in battle
+    w(SYM.sMonAnimTaskIdArray, 0xff, 1); w(SYM.sMonAnimTaskIdArray + 1, 0xff, 1);
+    const task = SYM.gTasks + 3 * 40;
+    w(task, SYM.Task_UpdateMonBg | 1, 4); w(task + 4, 1, 1); w(task + 8, 4, 2);   // Task_UpdateMonBg, active, sprite 4
+    const st = new GameState(bus);
+    st.update();
+    expect(st.scene).toBe('battle');
+    expect(st.battlerCopies).toEqual([]);
+    w(SYM.sMonAnimTaskIdArray, 3, 1);                                   // monbg: the task lives (the copy shows a frame later)
+    st.update(); expect(st.battlerCopies).toEqual([]);
+    st.update(); expect(st.battlerCopies).toEqual([4]);
+    st.update(); expect(st.battlerCopies).toEqual([4]);
+    w(SYM.sMonAnimTaskIdArray, 0xff, 1);                                // clearmonbg's task destroyed it
+    st.update(); expect(st.battlerCopies).toEqual([]);
+    w(SYM.sMonAnimTaskIdArray, 3, 1); w(task, 0x08000001, 4);           // another task in that slot: no copy
+    st.update(); st.update(); expect(st.battlerCopies).toEqual([]);
+    w(task, SYM.Task_UpdateMonBg | 1, 4); w(task + 4, 0, 1);            // an inactive task: none
+    st.update(); st.update(); expect(st.battlerCopies).toEqual([]);
+  });
+  it('Modern hides a battler while its flat copy shows on the overlay (no duplicate); Retro and the cards baseline as today', () => {
+    const b = battler(4, 144, 23);
+    expect(battleRoute(b, 'modern', true, true)).toBe('skip');
+    expect(battleRoute(b, 'modern', true, false)).toBe('inflated');
+    expect(battleRoute(b, 'retro', true, true)).toBe('card');
+    expect(battleRoute(b, 'modern', false, true)).toBe('card');
+    const atlas = { slots: new Map([[0, slot], [4, slot]]), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    a.update([battler(0, 40, 53), b], 'modern', new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), [], [4]);
+    expect(a.counts()).toEqual({ cards: 0, inflated: 1, decals: 0 });
+  });
+});
+
+describe('battleFadeOverlay (the palette fade over the 3D battle)', () => {
+  it('Modern: an OBJ-palette-only normal fade (the intro darkening the wild Pokémon) dims no 3D frame; Retro: as today', () => {
+    const intro = { fadeY: 10, fadeMode: 0, fadePalettes: 0x20000 };          // BeginNormalPaletteFade(0x20000, 0, 10, 10, …)
+    expect(battleFadeOverlay(intro, 'modern')).toBe(0);
+    expect(battleFadeOverlay(intro, 'retro')).toBe(10 / 16);
+    // a fade of every palette (the battle's start and end), one with BG palettes, a fast or hardware fade: the whole frame
+    for (const f of [{ fadePalettes: 0xffffffff }, { fadePalettes: 0x00010000 | 0x1 }, { fadePalettes: 0x20000, fadeMode: 1 },
+      { fadePalettes: 0x20000, fadeMode: 2 }]) {
+      expect(battleFadeOverlay({ fadeY: 8, fadeMode: 0, ...f }, 'modern')).toBe(0.5);
+    }
   });
 });
 
@@ -50,5 +125,38 @@ describe('BattleActors', () => {
     a.update([battler(0, 40, 53), effect(1, 108), hb], 'retro', new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), hud);
     expect(a.counts()).toEqual({ cards: 2, inflated: 0, decals: 0 });
     expect(hud).toEqual([hb]);
+  });
+  it('routes a battle frame per style, four battlers in a double battle', () => {
+    const atlas = { slots: new Map([0, 1, 2, 3, 4, 5].map((i) => [i, slot])), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    const hud: SpriteSnap[] = [];
+    const args = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), hud] as const;
+    const single = [battler(0, 40, 53), battler(1, 144, 23), shadow, effect(3, 108)];
+    a.update(single, 'modern', ...args); expect(a.counts()).toEqual({ cards: 1, inflated: 2, decals: 1 });
+    a.update(single, 'retro', ...args);  expect(a.counts()).toEqual({ cards: 4, inflated: 0, decals: 0 });
+    const double = [battler(0, 0, 48), battler(1, 168, 8), battler(2, 58, 56), battler(3, 120, 0)];
+    a.update(double, 'modern', ...args); expect(a.counts().inflated).toBe(4);
+    const decal = battleDecalSpec(shadow, slot, STAGE);
+    expect(decal.flat).toBe(true); expect(decal.footY).toBeCloseTo(0, 6);
+  });
+  it('gives a sprite scaled to nothing (affine growth at send-out) finite card and decal specs', () => {
+    const finite = (s: ReturnType<typeof battleCardSpec>) => [s.footX, s.footY, s.footZ, s.width, s.height, s.lift].every(Number.isFinite);
+    expect(finite(battleCardSpec({ ...battler(0, 40, 53), scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
+    expect(finite(battleDecalSpec({ ...shadow, scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
+  });
+  it('without an inflation field (or with inflation off) a Modern battle draws cards only', () => {
+    const atlas = { slots: new Map([0, 1, 2].map((i) => [i, slot])), target: { texture: new THREE.Texture() } };
+    const args = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), [] as SpriteSnap[]] as const;
+    const frame = [battler(0, 40, 53), battler(1, 144, 23), shadow];
+    const plain = new BattleActors(atlas);
+    plain.update(frame, 'modern', ...args);
+    expect(plain.counts()).toEqual({ cards: 3, inflated: 0, decals: 0 });
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    a.inflation = false;
+    a.update(frame, 'modern', ...args);
+    expect(a.counts()).toEqual({ cards: 3, inflated: 0, decals: 0 });
+    a.inflation = true;
+    a.update(frame, 'modern', ...args);
+    expect(a.counts()).toEqual({ cards: 0, inflated: 2, decals: 1 });
   });
 });

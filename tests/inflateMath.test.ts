@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { distanceField, bruteForceDistance, heights, blurWeights, profile, gradientAt, INFLATE } from '../src/render/actors/inflateMath';
+import {
+  distanceField, bruteForceDistance, heights, blurWeights, profile, gradientAt, INFLATE, BATTLE_INFLATE, inflateMax,
+} from '../src/render/actors/inflateMath';
 import { rng } from '../src/render/kit/geom';
 
 const mask = (w: number, h: number, f: (x: number, y: number) => boolean) => {
@@ -55,5 +57,11 @@ describe('heights', () => {
     }
     expect(gradientAt(hs, 15, 15, 7, 7)[0]).toBeCloseTo(0);
     expect(gradientAt(hs, 15, 15, 3, 7)[0]).toBeGreaterThan(0); // rising towards the middle
+  });
+  it('battle parameters inflate a 64-px Pokémon in proportion to a 16-px character', () => {
+    expect(BATTLE_INFLATE.window).toBeGreaterThanOrEqual(BATTLE_INFLATE.cap);
+    const battle = inflateMax(BATTLE_INFLATE) / 64, overworld = inflateMax(INFLATE) / 16;
+    expect(battle).toBeGreaterThan(0.5 * overworld);
+    expect(battle).toBeLessThan(1.5 * overworld);
   });
 });

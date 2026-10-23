@@ -123,6 +123,9 @@ export interface BattlerSnap {
 const SPRITE_SIZE = 0x44;
 const OBJECT_EVENT_SIZE = 0x24;
 const TRAINER_SIZE = 0x28; // struct Trainer: partyFlags u8, trainerClass u8, …
+/** struct Task: func u32, isActive u8, prev u8, next u8, priority u8, data s16[16]; gTasks holds 16. */
+const TASK_SIZE = 40;
+const TASK_COUNT = 16;
 
 const OVERWORLD_CB2 = new Set<number>([SYM.CB2_Overworld]);
 const TRANSITION_CB2 = new Set<number>([
@@ -186,6 +189,10 @@ export class GameState {
   fadeActive = false;
   fadeY = 0;
   fadeColor = 0;
+  /** The palettes a normal palette fade blends (gPaletteFade.selectedPalettes: bits 0–15 the BG palettes, 16–31 the OBJ
+   *  palettes) and the fade's mode (0 normal, 1 fast: every palette, 2 hardware: the blend registers). */
+  fadePalettes = 0;
+  fadeMode = 0;
 
   hours = 12;
   minutes = 0;
@@ -203,6 +210,20 @@ export class GameState {
   attacker = 0;
   target = 0;
   animActive = false;
+  /**
+   * The battler sprites (gSprites indices) whose copy on a BG layer the frame's BG0–2 overlay shows: a move animation's
+   * monbg (battle_anim.c) draws the battler onto BG1 / BG2 and hides its sprite while its update task
+   * (Task_UpdateMonBg, sMonAnimTaskIdArray) lives; clearmonbg shows the sprite again three frames before the task goes.
+   * Measured on Scratch (battle1.state, frames from the load): task 65–91, sprite hidden 65–87, the copy on the overlay
+   * 66–90 — the overlay shows it a frame after the task appears and stops a frame before the task goes. So: a battler
+   * whose task lives at this sync and lived at the previous one (66–91: never a frame with the copy outside it; frame 91
+   * shows neither, as 65 does). (On the GBA the copy lies exactly under the sprite; the 3D view places the battler
+   * elsewhere: Modern hides it meanwhile — no duplicate. monbg_static, which makes no task and keeps the sprite, is not
+   * covered.)
+   */
+  battlerCopies: number[] = [];
+  /** The sprites with a live monbg task at the previous sync. */
+  private monBgBefore: number[] = [];
 
   /** Subsprite tables read so far, by table address (ROM tables only: they never change). */
   private subspriteCache = new Map<number, SubspritePiece[] | null>();
@@ -223,6 +244,25 @@ export class GameState {
     this.readSprites();
     if (this.scene === 'overworld' || this.scene === 'transition' || this.scene === 'battleTransition') this.readOverworld();
     if (this.scene === 'battle') this.readBattle();
+    else this.battlerCopies.length = this.monBgBefore.length = 0;
+  }
+
+  /** The battler copies the overlay shows (battlerCopies): the sprites of the monbg tasks live both now and at the
+   *  previous sync. */
+  private readMonBg(): void {
+    const m = this.mem;
+    const now: number[] = [];
+    for (let k = 0; k < 2; k++) {
+      const id = m.u8(SYM.sMonAnimTaskIdArray + k);
+      if (id >= TASK_COUNT) continue; // TASK_NONE
+      const t = SYM.gTasks + id * TASK_SIZE;
+      if (m.u8(t + 4) === 0 || ((m.u32(t) & ~1) >>> 0) !== SYM.Task_UpdateMonBg) continue;
+      now.push(m.u16(t + 8)); // t2_SpriteId (data[0])
+    }
+    const copies = this.battlerCopies;
+    copies.length = 0;
+    for (const s of now) if (this.monBgBefore.includes(s)) copies.push(s);
+    this.monBgBefore = now;
   }
 
   private readFade(): void {
@@ -232,6 +272,8 @@ export class GameState {
     this.fadeY = (w >>> 6) & 0x1f;
     this.fadeColor = (w >>> 16) & 0x7fff;
     this.fadeActive = (w >>> 31) !== 0;
+    this.fadePalettes = m.u32(a) >>> 0; // multipurpose1 (selectedPalettes)
+    this.fadeMode = (m.u16(a + 8) >>> 8) & 3; // multipurpose2:6, yDec:1, bufferTransferDisabled:1, mode:2
   }
 
   private readOverworld(): void {
@@ -414,6 +456,7 @@ export class GameState {
     this.attacker = m.u8(SYM.gBattlerAttacker);
     this.target = m.u8(SYM.gBattlerTarget);
     this.animActive = m.u8(SYM.gAnimScriptActive) !== 0;
+    this.readMonBg();
     this.battlers.length = 0;
     for (let b = 0; b < Math.min(4, this.battlersCount); b++) {
       const a = SYM.gBattleMons + b * 0x58;
