@@ -329,7 +329,8 @@ export const flowerFamily: Family<FlowerCell[]> = {
       let km = mats.get(matId);
       if (!km) {
         const centre = toLinear(centreOf(list[0])), leaf = toLinear(list[0].leaf ?? LEAF);
-        km = kitMaterial(kit.uniforms, flowerMaterial(new THREE.Color(centre[0], centre[1], centre[2]), new THREE.Color(leaf[0], leaf[1], leaf[2])));
+        km = kitMaterial(kit.uniforms,
+          flowerMaterial(new THREE.Color(centre[0], centre[1], centre[2]), new THREE.Color(leaf[0], leaf[1], leaf[2])));
         mats.set(matId, km);
       }
       const mesh = new THREE.InstancedMesh(geo, km.material, list.reduce((n, c) => n + perCell(c), 0));

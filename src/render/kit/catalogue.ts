@@ -21,7 +21,8 @@ import { TreeCardMaterials, TreeCards } from '../overworld/treeCards';
 function attributeSignature(g: THREE.BufferGeometry): string {
   return Object.keys(g.attributes).sort().map((n) => {
     const a = g.attributes[n] as THREE.BufferAttribute;
-    return `${n}:${a.itemSize}:${a.array.constructor.name}${a.normalized ? ':n' : ''}${(a as THREE.InstancedBufferAttribute).isInstancedBufferAttribute ? ':i' : ''}`;
+    const perInstance = (a as THREE.InstancedBufferAttribute).isInstancedBufferAttribute;
+    return `${n}:${a.itemSize}:${a.array.constructor.name}${a.normalized ? ':n' : ''}${perInstance ? ':i' : ''}`;
   }).join(',');
 }
 

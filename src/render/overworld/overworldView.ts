@@ -262,9 +262,9 @@ export class OverworldView {
    * Starts compiling every program the overworld draws, once, whatever the style (a Retro session switching to Modern
    * must not hitch): the world's — one mesh per variant of the program catalogue (kit/catalogue.ts: the kit families',
    * the legacy pixel geometry's, the tree cards', the ground plane's) — the Phase 2 actors' (inflated actors, object
-   * models), the sprite atlas's bake and the inflation field's passes. compileAsync issues them all at once (parallel where the browser has
-   * KHR_parallel_shader_compile) into a target as PostFX draws the scene; finishPrecompile then draws the frame that
-   * compiles the rest (shadow-depth, GTAO's override materials, PostFX's passes). Live play starts it at boot (the title
+   * models), the sprite atlas's bake and the inflation field's passes. compileAsync issues them all at once (parallel
+   * where the browser has KHR_parallel_shader_compile) into a target as PostFX draws the scene; finishPrecompile then
+   * draws the frame that compiles the rest (shadow-depth, GTAO's override materials, PostFX's passes). Live play starts it at boot (the title
    * screen), the map preview before its build. Resolves when compileAsync's programs are ready; a failure is logged
    * once and never retried (the programs then compile on first use).
    */

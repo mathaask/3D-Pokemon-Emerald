@@ -47,7 +47,8 @@ class Model {
     const s = this.state;
     s.update();
     // (Renderer.syncFromEmulator)
-    const scene = s.scene === 'battleTransition' ? 'overworld' : s.scene === 'transition' ? (this.presented === 'battle' ? 'screen2d' : this.presented) : s.scene;
+    const scene = s.scene === 'battleTransition' ? 'overworld'
+      : s.scene === 'transition' ? (this.presented === 'battle' ? 'screen2d' : this.presented) : s.scene;
     this.presented = scene;
     if (scene !== 'overworld' || !this.pending(s)) return;
     this.builtKey = key(s);

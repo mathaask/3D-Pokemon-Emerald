@@ -44,4 +44,20 @@ describe('SyncGate (skip a frame\'s sync while the game is mid map load)', () =>
     expect(g.defer(yes, yes)).toBe(false);
     expect(g.deferred).toBe(3);
   });
+
+  it('asked again for the same emulated frame (a display faster than the game): the same answer, the run not longer', () => {
+    const g = new SyncGate(2);
+    let asked = 0;
+    const midLoad = () => { asked++; return true; };
+    expect(g.defer(midLoad, yes, 10)).toBe(true);
+    // (renders 2-4 of frame 10: nothing new to read, no frame of the cap spent)
+    for (let i = 0; i < 3; i++) expect(g.defer(midLoad, yes, 10)).toBe(true);
+    expect(asked).toBe(1);
+    expect(g.deferred).toBe(1);
+    expect(g.defer(midLoad, yes, 11)).toBe(true);
+    expect(g.defer(midLoad, yes, 12)).toBe(false);
+    // a frame that synced is not asked again either
+    expect(g.defer(midLoad, yes, 12)).toBe(false);
+    expect(asked).toBe(2);
+  });
 });

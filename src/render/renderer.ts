@@ -247,6 +247,7 @@ export class Renderer {
         // (a scene the overworld is not synced in builds nothing)
         return p.scene !== 'battle' && p.scene !== 'screen2d' && this.overworld.wouldRebuild(p);
       },
+      this.gba.frameCount,
     );
   }
 

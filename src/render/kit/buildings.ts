@@ -489,7 +489,9 @@ const EMBLEM_GLOW = 'totalEmissiveRadiance += diffuseColor.rgb * 0.35 * uNight;'
 
 // The buildings' materials: their only definitions (the program catalogue, kit/catalogue.ts, precompiles each).
 export const BUILDING_BODY: KitMaterialOptions = { vertexColors: true, roughness: 0.85, fade: true };
-export const BUILDING_ROOF: KitMaterialOptions = { vertexColors: true, roughness: 0.7, pattern: 'roofTiles', fade: true, side: THREE.DoubleSide };
+export const BUILDING_ROOF: KitMaterialOptions = {
+  vertexColors: true, roughness: 0.7, pattern: 'roofTiles', fade: true, side: THREE.DoubleSide,
+};
 export const BUILDING_GLASS: KitMaterialOptions = { vertexColors: true, roughness: 0.15, metalness: 0.1, glow: WINDOW_GLOW, fade: true };
 /** A sign board's face (`map`: its lettering). */
 export const signMaterial = (map: THREE.Texture): KitMaterialOptions =>
@@ -541,7 +543,8 @@ function doorSign(p: BuildingPlacement, f: BuildingFrame, text: string, bg: RGB,
   const w = Math.min(b - a - 0.3, 2.8, (hi - lo) * SIGN_ASPECT);
   const h = w / SIGN_ASPECT, x = (a + b) / 2, y = lo + h / 2, z = frontZ(p, f, p.doorX);
   addBox(parts.body, x, y, z + 0.035, w + 0.06, h + 0.06, 0.07, SIGN_BACK);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), kitMaterial(kit.uniforms, signMaterial(signTexture(text, '#ffffff', css(bg)))).material);
+  const face = signMaterial(signTexture(text, '#ffffff', css(bg)));
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), kitMaterial(kit.uniforms, face).material);
   mesh.name = `sign:${text}`;
   mesh.position.set(x, y, z + 0.075);
   mesh.receiveShadow = true;
