@@ -2,32 +2,40 @@
 // the world from it. The previous frame's state is then drawn once more (the whole sync waits, sprites included: they
 // would stand on the new map's coordinates over the old world), and the world is built once, from the finished map.
 
-/** The longest run of emulated frames deferred in a row: the next frame syncs whatever the state (no stall). A
- *  crossing's load ends within the frame after the one it straddles. */
-export const MAX_DEFERRED_SYNCS = 3;
+import type { MapLoad } from '../game/mapLoad';
+
+/** The longest run of emulated frames deferred in a row, per load; the next frame syncs whatever the state (no stall).
+ *  A crossing's load ends within the frame after the one it straddles; a warp loads over several frames, the screen
+ *  faded to black (a door: 3). */
+export const MAX_DEFERRED_FRAMES: Readonly<Record<MapLoad, number>> = { crossing: 3, warp: 30 };
 
 export class SyncGate {
-  /** Emulated frames deferred in the session. */
+  /** Syncs deferred in the session (render decisions; under fast-forward one covers several emulated frames). */
   deferred = 0;
-  private run = 0;
+  /** The emulated frame the current run of deferrals started at (null: none). */
+  private runStart: number | null = null;
   /** The emulated frame last decided, and the decision (renders of the same frame get it again). */
-  private frame: number | undefined;
+  private frame = -1;
   private answer = false;
 
-  constructor(readonly maxRun = MAX_DEFERRED_SYNCS) {}
-
-  /** Whether to skip this render's sync: `midLoad` (the game is loading a map now) and, only then, `wouldRebuild` (a sync
-   *  now would rebuild the world); never more than `maxRun` emulated frames in a row. `frame`: the emulated frame
-   *  (gba.frameCount) — renders of a frame already decided (a display refreshing faster than the game) get the same
-   *  answer without spending the cap. */
-  defer(midLoad: () => boolean, wouldRebuild: () => boolean, frame?: number): boolean {
-    if (frame !== undefined && frame === this.frame) return this.answer;
+  /**
+   * Whether to skip this render's sync: `load` (which map load the game is in now, if any) and, only then, `wouldRebuild`
+   * (a sync now would rebuild the world); a run lasts at most MAX_DEFERRED_FRAMES[load] emulated frames from its first.
+   * `frame`: the emulated frame (gba.frameCount) — renders of a frame already decided (a display refreshing faster than
+   * the game) get the same answer, nothing read again.
+   */
+  defer(load: () => MapLoad | null, wouldRebuild: () => boolean, frame: number): boolean {
+    if (frame === this.frame) return this.answer;
     this.frame = frame;
-    if (this.run >= this.maxRun || !midLoad() || !wouldRebuild()) {
-      this.run = 0;
+    // (the emulator went back, a state loaded: a new run)
+    if (this.runStart !== null && frame < this.runStart) this.runStart = null;
+    const kind = load();
+    const ran = this.runStart === null ? 0 : frame - this.runStart;
+    if (kind === null || ran >= MAX_DEFERRED_FRAMES[kind] || !wouldRebuild()) {
+      this.runStart = null;
       return (this.answer = false);
     }
-    this.run++;
+    this.runStart ??= frame;
     this.deferred++;
     return (this.answer = true);
   }

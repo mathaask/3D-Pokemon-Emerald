@@ -10,9 +10,10 @@ import type { Mem } from './mem';
 import { currentScene } from './state';
 import { SYM, SYM_SIZE } from './symbols';
 
-/** Tops of pokeemerald's stacks in IWRAM: user/system (the main code, and interrupt handlers once IntrMain moves to
- *  system mode) and IRQ (the interrupted code's return address while a handler runs). */
-export const USER_STACK_TOP = 0x03007f00;
+/** Tops of pokeemerald's stacks in IWRAM (crt0.s: sp_sys = IWRAM_END - 0x1c0, sp_irq = IWRAM_END - 0x60): user/system
+ *  (the main code, and interrupt handlers once IntrMain moves to system mode) and IRQ (the interrupted code's return
+ *  address while a handler runs). Above the user stack's top lies the IRQ stack's dead part: never scanned with it. */
+export const USER_STACK_TOP = 0x03007e40;
 export const IRQ_STACK_TOP = 0x03007fa0;
 /** Deepest live stack scanned (bytes): pokeemerald's stays far shallower; a corrupt stack pointer costs no more. */
 const MAX_STACK_SCAN = 0x1000;
@@ -39,10 +40,11 @@ export interface CpuRegs {
  */
 export function insideFunction(fn: { addr: number; size: number }, cpu: CpuRegs, read32: (a: number) => number): boolean {
   const end = fn.addr + fn.size;
-  // (a return address points past its call, an IRQ's 4 past the interrupted instruction: never at the first byte)
+  // (a return address points past its call, an IRQ's 4 past the interrupted instruction — end + 2 for the function's
+  // last Thumb halfword: never at the first byte)
   const returnsInto = (v: number) => {
     const a = (v & ~1) >>> 0;
-    return a > fn.addr && a <= end;
+    return a > fn.addr && a <= end + 2;
   };
   const pc = cpu.currentPC() >>> 0;
   if (pc >= fn.addr && pc < end) return true;
@@ -63,9 +65,14 @@ export function crossingInProgress(cpu: CpuRegs, mem: Mem): boolean {
   return insideFunction({ addr: SYM.CameraMove, size: SYM_SIZE.CameraMove }, cpu, (a) => mem.u32(a));
 }
 
-/** The game is loading a map: crossing a connection (crossingInProgress), or a warp's load (a map-loading main
- *  callback, GameState's 'transition' scene: the new map's header and tilesets arrive frames before its grid, while the
- *  screen is faded out). */
-export function mapLoadInProgress(cpu: CpuRegs, mem: Mem): boolean {
-  return currentScene(mem) === 'transition' || crossingInProgress(cpu, mem);
+/** A map load in progress: a connection's crossing (inside CameraMove, within a frame or two) or a warp (its loading
+ *  frames, black). */
+export type MapLoad = 'crossing' | 'warp';
+
+/** Which map load the game is in, if any: a warp's load (a map-loading main callback, GameState's 'transition' scene: the
+ *  new map's header and tilesets arrive frames before its grid, the screen faded out), or crossing a connection
+ *  (crossingInProgress). */
+export function mapLoadInProgress(cpu: CpuRegs, mem: Mem): MapLoad | null {
+  if (currentScene(mem) === 'transition') return 'warp';
+  return crossingInProgress(cpu, mem) ? 'crossing' : null;
 }

@@ -99,8 +99,8 @@ export class Renderer {
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
-    // the overworld's precompile frame (on the title screen, or at its first sync) is drawn through PostFX, as frames are
-    // presented
+    // the overworld's precompile frame (before the start gesture, or at its first sync) is drawn through PostFX, as frames
+    // are presented
     this.overworld.precompileFrame = () => {
       this.post.setCamera(this.overworld.scene, this.overworld.camera);
       this.post.render(0);
@@ -112,8 +112,9 @@ export class Renderer {
     // a restored context has lost every render target's pixels: the atlas redraws only on change
     canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
     this.resize();
-    // every overworld program (the world's catalogue, the actors') compiles from boot on, while the title screen shows:
-    // a map's first visit compiles nothing (render() draws the precompile frame once they are ready)
+    // every overworld program (the world's catalogue, the actors') compiles from boot on, in parallel: a map's first
+    // visit compiles nothing. The frame that compiles the rest blocks: main.ts draws it while the loader waits for the
+    // start gesture if the programs are ready by then (finishPrecompile), else the first overworld sync draws it
     void this.overworld.precompile(this.webgl);
   }
 
@@ -232,15 +233,31 @@ export class Renderer {
     };
   }
 
+  /** Resolves when the overworld precompile's parallel compile is done (or failed: logged). */
+  precompiled(): Promise<void> {
+    return this.overworld.precompile(this.webgl);
+  }
+
+  /**
+   * Draws the overworld precompile frame now (once; it blocks while the rest compiles: shadow-depth, PostFX passes), then
+   * clears the canvas it painted. main.ts calls it while the loader still covers the page, before anything runs; without
+   * it the first overworld sync draws it, before the first world build.
+   */
+  finishPrecompile(): void {
+    this.overworld.finishPrecompile(this.webgl);
+    this.webgl.setRenderTarget(null);
+    this.webgl.clear();
+  }
+
   /**
    * Whether this render skips its sync with the emulator: the overworld is presented, the game is loading a map
    * (crossing a connection, or a warp's loading frames) and the sync would rebuild the world from it — the previous
    * frame's state is drawn once more instead, the world built once, from the finished map (SyncGate: at most
-   * MAX_DEFERRED_SYNCS frames in a row).
+   * MAX_DEFERRED_FRAMES emulated frames in a row, 3 for a crossing, 30 for a warp's black loading frames).
    */
   private deferSync(): boolean {
     return this.syncGate.defer(
-      () => this.presented === 'overworld' && this.mode !== 'classic' && mapLoadInProgress(this.gba.cpu, this.state.mem),
+      () => (this.presented === 'overworld' && this.mode !== 'classic' ? mapLoadInProgress(this.gba.cpu, this.state.mem) : null),
       () => {
         const p = (this.probe ??= new GameState(this.gba.bus));
         p.update();
@@ -292,9 +309,6 @@ export class Renderer {
       this.emulatedSinceRender = 0;
       this.resync = false;
     }
-    // the precompile frame, once its programs are ready, while the overworld is not shown (the title screen: drawn over
-    // by this frame; the first overworld sync draws it at the latest, before the first world build)
-    if (this.presented !== 'overworld' && this.overworld.precompileReady) this.overworld.finishPrecompile(this.webgl);
     const r = this.webgl;
     if (this.presented === 'overworld') {
       this.overworld.update(this.state, dt, this.cameraInput);

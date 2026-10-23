@@ -39,8 +39,8 @@ class Model {
   }
 
   render(frame: number): void {
-    if (this.gate?.defer(() => this.presented === 'overworld' && mapLoadInProgress(this.gba.cpu, this.state.mem),
-      () => { this.probe.update(); return this.pending(this.probe); })) {
+    if (this.gate?.defer(() => (this.presented === 'overworld' ? mapLoadInProgress(this.gba.cpu, this.state.mem) : null),
+      () => { this.probe.update(); return this.pending(this.probe); }, this.gba.frameCount)) {
       this.deferred.push(frame);
       return;
     }
