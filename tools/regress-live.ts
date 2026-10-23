@@ -151,9 +151,9 @@ const LIVE: LiveEntry[] = [
   // Battles (Phase 3; frames counted from the state's load, probed with GameState: scene, animActive, sprites). The
   // first battle (Route 101, environment 9 PLAIN): Torchic vs Zigzagoon at the move menu; its intro (s28: from frame
   // 59 Zigzagoon slides in from the left, from 69 the player's back picture from the right, under the intro's palette
-  // darkening; they pass each other at 144 — the 3D view puts a battler left of x 120 at the player's depth, so before
-  // that each stands at the other side's depth — and stop at 164). battle_intro at 155: both on screen, each on its own
-  // side, sliding.
+  // darkening; they pass each other at 144 — the 3D view puts a battler centred left of GBA x 120 at the player's depth,
+  // so before that each stands at the other side's depth — and stop at 164). battle_intro at 155: both on screen, each on
+  // its own side, sliding.
   { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // PLAIN: Torchic vs Zigzagoon, move menu
   { name: 'battle_intro', state: 'out/s28.state', steps: [['', 155]] },                      // intro: both battlers sliding in
   { name: 'battle_grass', state: 'out/fuzz.state', steps: [['', 30]] },                      // GRASS (environment 0): wild Wurmple
