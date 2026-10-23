@@ -111,6 +111,12 @@ export class PreviewApp {
       borderPhase: 0,
     };
     this.view.renderAtlas(this.webgl);
+    this.post = new PostFX(this.webgl, this.view.scene, this.view.camera, quality);
+    // every overworld program compiles first, as in live play before its first world build (the world's catalogue,
+    // the Phase 2 actors', the field's), with one PostFX frame (shadow-depth, GTAO's override materials at High
+    // quality): the world's first frame compiles nothing
+    this.view.precompileFrame = () => this.post.render(0);
+    this.view.finishPrecompile(this.webgl);
     this.rebuild = () => {
       const t0 = performance.now();
       this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset,
@@ -145,11 +151,6 @@ export class PreviewApp {
     this.zoom = parseFloat(params.get('zoom') ?? '0');
     if (params.has('preset')) this.view.presetIndex = parseInt(params.get('preset')!, 10);
 
-    this.post = new PostFX(this.webgl, this.view.scene, this.view.camera, quality);
-    // the Phase 2 programs compile now, as live play's first sync does (models, inflated actors, field), with one
-    // PostFX frame (GTAO's override materials at High quality)
-    this.view.precompileFrame = () => this.post.render(0);
-    void this.view.precompile(this.webgl);
     const tilt = tiltShiftFor(this.view.worldStyle);
     this.post.setTiltShift(tilt.focus, tilt.band, tilt.strength);
     window.addEventListener('keydown', (e) => this.keys.add(e.code));

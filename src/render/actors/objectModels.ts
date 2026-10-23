@@ -534,6 +534,17 @@ export class ObjectModels {
    */
   precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, root: THREE.Object3D = this.group,
     frame?: () => void): Promise<void> {
+    const restore = this.showAll();
+    try {
+      return precompileScene(renderer, root, scene, camera, frame).then(() => undefined);
+    } finally {
+      restore();
+    }
+  }
+
+  /** Shows every model mesh with one instance (a precompile frame draws them all, Retro too); returns what restores
+   *  them. */
+  showAll(): () => void {
     const meshes = [...this.kinds.values()].flatMap((k) => k.groups.flatMap((g) => g.parts.map((p) => p.mesh)))
       .concat(this.berry.all.map((m) => m.mesh));
     const saved = meshes.map((m) => [m.visible, m.count] as const);
@@ -543,12 +554,10 @@ export class ObjectModels {
       m.visible = true;
       m.count = 1;
     }
-    try {
-      return precompileScene(renderer, root, scene, camera, frame).then(() => undefined);
-    } finally {
+    return () => {
       meshes.forEach((m, i) => { [m.visible, m.count] = saved[i]; });
       this.group.visible = groupVisible;
-    }
+    };
   }
 
   /** Instance i of group g at (x, y, z), turned by `yaw` about the vertical; flags a changed matrix. */

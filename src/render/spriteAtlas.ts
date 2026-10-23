@@ -149,6 +149,12 @@ export class SpriteAtlas {
   }
 
   /** Bakes the given sprites (composed ones from their pieces); `map2d` reflects DISPCNT bit 6 == 0. */
+  /** Compiles the bake program (compileAsync) before the first sprite is baked (OverworldView.precompile). Resolves
+   *  when it is ready. */
+  compile(renderer: THREE.WebGLRenderer): Promise<void> {
+    return renderer.compileAsync(this.scene, this.camera).then(() => undefined);
+  }
+
   update(renderer: THREE.WebGLRenderer, sprites: readonly SpriteSnap[], map2d: boolean): void {
     this.slots.clear();
     let n = 0, p = 0;

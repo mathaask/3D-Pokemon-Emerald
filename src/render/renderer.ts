@@ -99,7 +99,8 @@ export class Renderer {
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
-    // the overworld's precompile (at its first sync) draws one frame through PostFX, as frames are presented
+    // the overworld's precompile frame (on the title screen, or at its first sync) is drawn through PostFX, as frames are
+    // presented
     this.overworld.precompileFrame = () => {
       this.post.setCamera(this.overworld.scene, this.overworld.camera);
       this.post.render(0);
@@ -111,6 +112,9 @@ export class Renderer {
     // a restored context has lost every render target's pixels: the atlas redraws only on change
     canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
     this.resize();
+    // every overworld program (the world's catalogue, the actors') compiles from boot on, while the title screen shows:
+    // a map's first visit compiles nothing (render() draws the precompile frame once they are ready)
+    void this.overworld.precompile(this.webgl);
   }
 
   resize(): void {
@@ -287,6 +291,9 @@ export class Renderer {
       this.emulatedSinceRender = 0;
       this.resync = false;
     }
+    // the precompile frame, once its programs are ready, while the overworld is not shown (the title screen: drawn over
+    // by this frame; the first overworld sync draws it at the latest, before the first world build)
+    if (this.presented !== 'overworld' && this.overworld.precompileReady) this.overworld.finishPrecompile(this.webgl);
     const r = this.webgl;
     if (this.presented === 'overworld') {
       this.overworld.update(this.state, dt, this.cameraInput);
