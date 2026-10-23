@@ -359,7 +359,7 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
 
 ## Phase 3 status
 - [x] Plan (`docs/superpowers/plans/2026-10-23-phase3-battles.md`, 12 tasks)
-- [ ] 1 battle harness entries + p3-base · [ ] 2 arena kinds/ROM graphics/colours · [ ] 3 static battle preview
+- [x] 1 battle harness entries + p3-base · [ ] 2 arena kinds/ROM graphics/colours · [ ] 3 static battle preview
 - [ ] 4 BattleView split + battle precompile · [ ] 5 inflated battlers · [ ] 6 arena foundation · [ ] 7 outdoor arenas
 - [ ] 8 water arenas · [ ] 9 rock arenas · [ ] 10 indoor halls · [ ] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12 perf/docs
 - Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
