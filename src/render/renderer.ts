@@ -68,6 +68,8 @@ export class Renderer {
   private probe: GameState | null = null;
   /** Whether finishPrecompile compiled the fade quad, ScreenView, the HUD and the transition effect. */
   private screensCompiled = false;
+  /** Their parallel compile, issued at construction (compileScreensAsync). */
+  private screens: Promise<void>;
   cameraInput = { yaw: 0, pitch: 0, zoom: 0 };
 
   constructor(private canvas: HTMLCanvasElement, private gba: Gba, quality: Quality = 'medium') {
@@ -122,9 +124,35 @@ export class Renderer {
     // every overworld program (the world's catalogue, the actors') and every battle program (the battle catalogue: the
     // arenas of both styles) compiles from boot on, in parallel: a map's first visit and a battle's entry compile nothing.
     // The frames that compile the rest block: main.ts draws them while the loader waits for the start gesture if the
-    // programs are ready by then (finishPrecompile), else each view's first sync draws its own
+    // programs are ready by then (finishPrecompile), else each view's first sync draws its own. (The battle's starts one
+    // macrotask later: its catalogue's build and the overworld's are separate tasks on the main thread; precompiled()
+    // and the first battle sync start it at once if it has not started yet.)
     void this.overworld.precompile(this.webgl);
-    void this.battle.precompile(this.webgl);
+    setTimeout(() => void this.battle.precompile(this.webgl), 0);
+    this.screens = this.compileScreensAsync();
+  }
+
+  /**
+   * The renderer-level programs nothing else precompiles, compiled from boot on in parallel without drawing, whatever
+   * the start gesture does (compileAsync for the canvas, as they draw, and a render target for ScreenView's blur pass):
+   * the fade quad (a palette fade: a battle's end, a warp), the battle transition effect, the HUD (overlay and sprites:
+   * first drawn after a wild battle's transition) and ScreenView (the `screen2d` frames of the transition after a battle).
+   * finishPrecompile still draws them once (compileScreens) as the backup. A failure is logged once.
+   */
+  private compileScreensAsync(): Promise<void> {
+    const r = this.webgl;
+    // (an async body: a synchronous throw becomes the rejection)
+    return (async () => {
+      r.setRenderTarget(null);
+      await Promise.all([
+        r.compileAsync(this.fadeScene, this.fadeCamera),
+        this.transitionFx.compile(r),
+        r.compileAsync(this.hud.scene, this.hud.camera),
+        this.screen.compile(r),
+      ]);
+    })().catch((e) => {
+      console.warn('[render] compiling the screen programs failed (they compile on first use instead)', e);
+    });
   }
 
   resize(): void {
@@ -247,9 +275,10 @@ export class Renderer {
     };
   }
 
-  /** Resolves when the overworld's and the battle's precompiles' parallel compiles are done (or failed: logged). */
+  /** Resolves when the overworld's and the battle's precompiles' and the screen programs' parallel compiles are done (or
+   *  failed: logged). */
   precompiled(): Promise<void> {
-    return Promise.all([this.overworld.precompile(this.webgl), this.battle.precompile(this.webgl)]).then(() => undefined);
+    return Promise.all([this.overworld.precompile(this.webgl), this.battle.precompile(this.webgl), this.screens]).then(() => undefined);
   }
 
   /**
@@ -268,7 +297,8 @@ export class Renderer {
   }
 
   /**
-   * Compiles (once) what the views' precompiles leave to first use, so a battle's entry and exit compile nothing (the
+   * The backup of compileScreensAsync (its programs are normally ready by then, and drawing them compiles nothing):
+   * draws (once) what the views' precompiles leave to first use, so a battle's entry and exit compile nothing (the
    * battle_enter / battle_exit walks): the fade quad (a palette fade: a battle's end, a warp), ScreenView (its blur pass and
    * screen quad: the `screen2d` frames of the transition after a battle), the HUD (overlay and sprites: first drawn after a
    * wild battle's transition) and the battle transition effect. Each is drawn once as at run time, on the canvas (a render

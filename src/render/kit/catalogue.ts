@@ -3,7 +3,7 @@
 // compile them all at boot instead of on the first frame that shows each (a map's first visit stalled up to 558 ms).
 
 import * as THREE from 'three';
-import { applyKitMaterial, kitMaterial, kitMaterialKind, releaseKitMaterial, type KitMaterialOptions, type KitUniforms } from './materials';
+import { applyKitMaterial, hashString, kitMaterial, kitMaterialKind, releaseKitMaterial, type KitMaterialOptions, type KitUniforms } from './materials';
 import { BUILDING_BODY, BUILDING_GLASS, BUILDING_ROOF, emblemMaterial, facadeMaterial, signMaterial } from './buildings';
 import { PROP_BODY, PROP_GLOW } from './props';
 import { TREE_STYLES, treeMaterial } from './trees';
@@ -26,11 +26,15 @@ function attributeSignature(g: THREE.BufferGeometry): string {
   }).join(',');
 }
 
-/** A non-kit material's program-affecting state. */
+/** A non-kit material's program-affecting state. A ShaderMaterial's (RawShaderMaterial's) program cache key is its
+ *  onBeforeCompile's source, the same for every one of them: a hash of its shaders and defines tells them apart. */
 function materialSignature(m: THREE.Material): string {
   const s = m as THREE.MeshStandardMaterial;
-  return [m.type, m.customProgramCacheKey(), s.vertexColors ? 1 : 0, m.side, m.transparent ? 1 : 0, s.flatShading ? 1 : 0,
-    s.map ? 1 : 0, m.alphaTest > 0 ? 1 : 0].join('|');
+  const sm = m as THREE.ShaderMaterial;
+  const parts: (string | number)[] = [m.type, m.customProgramCacheKey(), s.vertexColors ? 1 : 0, m.side, m.transparent ? 1 : 0,
+    s.flatShading ? 1 : 0, s.map ? 1 : 0, m.alphaTest > 0 ? 1 : 0];
+  if (sm.isShaderMaterial) parts.push(hashString(sm.vertexShader + sm.fragmentShader + JSON.stringify(sm.defines ?? {})));
+  return parts.join('|');
 }
 
 /**

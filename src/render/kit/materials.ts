@@ -444,7 +444,7 @@ totalEmissiveRadiance += ${WARM_GLOW_GLSL} * uNight * uGlow;
 type Local = Record<'uWindAmp' | 'uWindHeight' | 'uGlow', { value: number }>;
 
 /** FNV-1a 32-bit hash, base 36 (compact program-cache-key component). */
-function hashString(s: string): string {
+export function hashString(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(36);

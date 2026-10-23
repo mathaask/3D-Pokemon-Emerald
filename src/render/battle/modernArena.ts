@@ -49,6 +49,10 @@ export class ModernArena {
   /** The last build failed (a part threw): the arena is empty and the battle draws today's arena. */
   failed = false;
   private key = '';
+  /** The last build call's arguments (its colours by identity). */
+  private lastKind: ArenaKind | null = null;
+  private lastColors: ArenaColors | null = null;
+  private lastQuality: Quality | null = null;
   private ctx: ArenaContext | null = null;
   /** Kinds whose failure was warned about (once per kind). */
   private warned = new Set<ArenaKind>();
@@ -67,6 +71,12 @@ export class ModernArena {
    *  arena, sets `failed`, warns once per kind ("[battle] arena part '<name>' failed for <kind>: the battle uses today's
    *  arena") and returns false. */
   build(kind: ArenaKind, colors: ArenaColors, quality: Quality): boolean {
+    // (the very colours object of the last call again: unchanged, without building its key — a caller hands a new
+    // object for new colours, never mutates one; any other object is compared by value)
+    if (kind === this.lastKind && colors === this.lastColors && quality === this.lastQuality) return !this.failed;
+    this.lastKind = kind;
+    this.lastColors = colors;
+    this.lastQuality = quality;
     const key = `${kind}|${quality}|${colorsKey(colors)}`;
     if (key === this.key) return !this.failed;
     this.key = key;
@@ -116,6 +126,7 @@ export class ModernArena {
   dispose(): void {
     this.clear();
     this.key = '';
+    this.lastKind = this.lastColors = this.lastQuality = null;
     this.failed = false;
     this.group.removeFromParent();
   }

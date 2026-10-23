@@ -15,12 +15,12 @@ import { bgr555ToRgba } from '../gbaTextures';
 import { createKitUniforms, type KitUniforms } from '../kit/materials';
 import type { ProgramInfo } from '../actors/inflatedActors';
 import { BattleArena } from './arena';
-import { arenaKind } from './arenaKind';
-import { defaultArenaColors } from './bgSample';
+import { arenaKind, type ArenaInputs, type ArenaKind } from './arenaKind';
+import { defaultArenaColors, type ArenaColors } from './bgSample';
 import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
 import { BattleActors } from './battleActors';
 import { ARENA_PARTS, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
-import { battleCatalogue, type BattleCatalogue } from './catalogue';
+import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
 
 export { isBattleHudSprite } from './battleActors';
 
@@ -66,6 +66,12 @@ export class BattleView {
   private modern: ModernArena;
   private style: WorldStyle = 'modern';
   private failPart: string | null = null;
+  /** The arena kind's inputs as last seen (updated in place), the kind, its default colours and whether the Modern arena
+   *  covers it: recomputed only when an input changes (no allocation per frame). */
+  private kindInputs: ArenaInputs = { environment: -1, battleType: -1, trainerClass: -1, mapBattleScene: -1, mapType: -1 };
+  private kind: ArenaKind = 'plain';
+  private kindColors: ArenaColors = defaultArenaColors('plain');
+  private covered = false;
   /** Arena build quality (the renderer's). */
   quality: Quality = 'medium';
   /** The precompile (started once). */
@@ -117,6 +123,7 @@ export class BattleView {
     this.modern = new ModernArena(this.uniforms, this.parts());
     this.modern.group.visible = false;
     this.scene.add(this.modern.group);
+    this.covered = this.modern.covers(this.kind);
   }
 
   /** The arena parts the Modern arena builds (and the catalogue compiles): ARENA_PARTS, one made to fail by arenaFailPart. */
@@ -147,10 +154,19 @@ export class BattleView {
       let ready: Promise<unknown>;
       this.scene.add(catalogue.root);
       const restore = this.actors.showAll();
+      // the shadow twins too (else the first battle frame's shadow pass compiles them: the cards' alpha-tested one). The
+      // shadow pass draws them with this scene's lights but no scene (no fog), into a target: compiled so
+      const standIns = new THREE.Group();
+      const fog = this.scene.fog;
       try {
+        for (const s of shadowDepthStandIns(this.scene)) standIns.add(s);
         renderer.setRenderTarget(target);
-        ready = renderer.compileAsync(this.scene, this.camera);
+        const scene = renderer.compileAsync(this.scene, this.camera);
+        this.scene.fog = null;
+        ready = Promise.all([scene, renderer.compileAsync(standIns, this.camera, this.scene)]);
       } finally {
+        this.scene.fog = fog;
+        for (const s of standIns.children) if ((s as THREE.InstancedMesh).isInstancedMesh) (s as THREE.InstancedMesh).dispose();
         restore();
         catalogue.root.removeFromParent();
         renderer.setRenderTarget(prev);
@@ -250,6 +266,22 @@ export class BattleView {
     this.sampled = { sky, platform, rim, key: [sky, platform, rim].map((c) => c.getHexString()).join(':') };
   }
 
+  /** The arena kind (as the GBA picks its background), its default colours and whether the Modern arena covers it,
+   *  recomputed only when one of the kind's inputs changed. */
+  private updateKind(state: BattleViewState): void {
+    const i = this.kindInputs;
+    if (i.environment === state.battleEnvironment && i.battleType === state.battleType && i.trainerClass === state.trainerClass
+      && i.mapBattleScene === state.mapBattleScene && i.mapType === state.mapType) return;
+    i.environment = state.battleEnvironment;
+    i.battleType = state.battleType;
+    i.trainerClass = state.trainerClass;
+    i.mapBattleScene = state.mapBattleScene;
+    i.mapType = state.mapType;
+    this.kind = arenaKind(i);
+    this.kindColors = defaultArenaColors(this.kind);
+    this.covered = this.modern.covers(this.kind);
+  }
+
   /**
    * The arena of this frame: the Modern arena when the style is Modern, it covers the arena kind and its build succeeded;
    * else today's arena, built lazily — only while shown — with exactly today's calls at today's frames (setEnvironment on
@@ -262,9 +294,8 @@ export class BattleView {
       this.intro = 0;
       this.sampled = null;
     }
-    const kind = arenaKind({ environment: state.battleEnvironment, battleType: state.battleType, trainerClass: state.trainerClass,
-      mapBattleScene: state.mapBattleScene, mapType: state.mapType });
-    const modern = this.style === 'modern' && this.modern.covers(kind) && this.modern.build(kind, defaultArenaColors(kind), this.quality);
+    this.updateKind(state);
+    const modern = this.style === 'modern' && this.covered && this.modern.build(this.kind, this.kindColors, this.quality);
     this.modern.group.visible = modern;
     this.arena.group.visible = !modern;
     if (!modern && this.legacyEnv !== this.env) {

@@ -13,8 +13,9 @@ import { STAGE } from './stage';
 export interface BattleCatalogue {
   /** One mesh per program variant (frustumCulled off: drawn in the precompile frame wherever the camera looks). */
   root: THREE.Group;
-  /** Frees the meshes' geometries, instance buffers and textures and detaches the root; the materials stay (the kit ones
-   *  in the catalogue's pool, today's arena's unreferenced), so their programs live for the session. */
+  /** Frees the meshes' geometries, instance buffers, placeholder textures and today's arena's textures (never a kit
+   *  material's map: it may be shared with the arenas' builds) and detaches the root; the materials stay (the kit ones in
+   *  the catalogue's pool, today's arena's unreferenced), so their programs live for the session. */
   dispose(): void;
 }
 
@@ -40,6 +41,45 @@ export function legacyArenaMeshes(): THREE.Mesh[] {
     }
     // (the rest was never drawn: nothing on the GPU to free)
   }
+  return out;
+}
+
+/** three's shadow pass draws a material's front faces' shadow with the back faces and the other way round (WebGLShadowMap's
+ *  shadowSide). */
+const SHADOW_SIDE: Record<THREE.Side, THREE.Side> = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide,
+  [THREE.DoubleSide]: THREE.DoubleSide };
+
+/**
+ * A stand-in for every shadow-casting mesh under `root` with its own shadow-depth material (customDepthMaterial: the cards'
+ * alpha-tested twin, a kit material's wind twin): a mesh of the same kind on the same geometry drawing that material, set
+ * as three's shadow pass sets it (side, map, alpha test). compileAsync compiles a scene's materials but not their shadow
+ * twins, which otherwise compile in the first frame's shadow pass; with the stand-ins in the scene they compile with the
+ * scene's lights in parallel too. (The stand-ins never draw: they are removed before any frame.)
+ */
+export function shadowDepthStandIns(root: THREE.Object3D): THREE.Mesh[] {
+  const out: THREE.Mesh[] = [];
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const depth = mesh.customDepthMaterial;
+    if (!mesh.isMesh || !mesh.castShadow || !depth || Array.isArray(mesh.material)) return;
+    // (as WebGLShadowMap's getDepthMaterial sets a custom depth material before each shadow pass draws it)
+    const m = mesh.material as THREE.Material & { map?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
+    const d = depth as THREE.Material & { map?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
+    d.side = m.shadowSide !== null ? m.shadowSide : SHADOW_SIDE[m.side];
+    d.alphaMap = m.alphaMap;
+    d.alphaTest = m.alphaToCoverage ? 0.5 : m.alphaTest;
+    d.map = m.map;
+    const im = mesh as THREE.InstancedMesh;
+    let standIn: THREE.Mesh;
+    if (im.isInstancedMesh) {
+      const inst = new THREE.InstancedMesh(mesh.geometry, depth, 1);
+      if (im.instanceColor) inst.setColorAt(0, new THREE.Color(1, 1, 1));
+      standIn = inst;
+    } else standIn = new THREE.Mesh(mesh.geometry, depth);
+    standIn.frustumCulled = false;
+    standIn.name = `${mesh.name || 'mesh'}:shadowDepth`;
+    out.push(standIn);
+  });
   return out;
 }
 
@@ -100,9 +140,11 @@ export function battleCatalogue(src: { uniforms: KitUniforms; parts: readonly Ar
       for (const mesh of meshesOf(root)) {
         geometries.add(mesh.geometry);
         if ((mesh as THREE.InstancedMesh).isInstancedMesh) (mesh as THREE.InstancedMesh).dispose();
+        // (today's arena's own textures; a kit material's map is the catalogue's placeholder, already listed — or a
+        // texture shared with the arenas' builds, which must stay)
         for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
           const map = (m as THREE.MeshStandardMaterial).map;
-          if (map && !textures.includes(map)) textures.push(map);
+          if (map && kitMaterialKind(m) === null && !textures.includes(map)) textures.push(map);
         }
         release(mesh);
       }
