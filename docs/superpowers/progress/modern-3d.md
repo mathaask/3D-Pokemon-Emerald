@@ -333,6 +333,11 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
 
 ## Next step
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
+- **2026-10-23: hitch fix in progress** (user chose "hitch fix, then Phase 3"; in-chat design approved): branch
+  `hitch-fix` — boot-time catalogue precompile of every kit world program + JIT warm-up build, one world build per map
+  crossing (the second build came from reading a half-loaded map), a live crossing harness entry. Ledger/brief in
+  `.superpowers/sdd/hitch-fix/` (gitignored). After it: Phase 3 (battles) plan from spec §7. The terrain height
+  solver v2 (mountain ridges) waits.
 - Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
   programs and a cheaper map crossing (the hitches listed in both phases' gaps). Then Phase 3 (battles): reuse
   `InflatedActors` + `SpriteField` for battlers (pass `instanceUniformsFit(renderer.capabilities.maxVertexUniforms)`;
