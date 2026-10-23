@@ -351,8 +351,17 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
     screen → 0.16–0.25 s. JIT warm-up build measured, no gain, not shipped.
   - Remaining: a crossing still costs one world build (≈ 30–75 ms; moving analysis off the main thread would fix it);
     detection relies on the BPEE rev 0 CameraMove address (unknown ROM → old behaviour, bounded by the cap).
-- **Next: Phase 3 (battles)** — plan being written from spec §7 (draft in `.superpowers/sdd/phase3-draft/`, then
-  `docs/superpowers/plans/`); the user reviews it before execution. The terrain height solver v2 waits.
+- **Phase 3 (battles) in progress (2026-10-23)** on branch `phase3-battles`: plan
+  `docs/superpowers/plans/2026-10-23-phase3-battles.md` (12 tasks) approved by the user as is ("Godkjenn og kjør"),
+  executed subagent-driven. SDD ledger `.superpowers/sdd/2026-10-23-phase3-battles/progress.md` (gitignored; read it
+  first after a reset; `Task N: complete` lines are done). Progress bar in every update. The terrain height solver v2
+  waits.
+
+## Phase 3 status
+- [x] Plan (`docs/superpowers/plans/2026-10-23-phase3-battles.md`, 12 tasks)
+- [ ] 1 battle harness entries + p3-base · [ ] 2 arena kinds/ROM graphics/colours · [ ] 3 static battle preview
+- [ ] 4 BattleView split + battle precompile · [ ] 5 inflated battlers · [ ] 6 arena foundation · [ ] 7 outdoor arenas
+- [ ] 8 water arenas · [ ] 9 rock arenas · [ ] 10 indoor halls · [ ] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12 perf/docs
 - Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
   programs and a cheaper map crossing (the hitches listed in both phases' gaps). Then Phase 3 (battles): reuse
   `InflatedActors` + `SpriteField` for battlers (pass `instanceUniformsFit(renderer.capabilities.maxVertexUniforms)`;
