@@ -4,7 +4,7 @@
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
 //     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--review [--review-before <label>]]
-//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade] [--ab-aa]]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -59,7 +59,9 @@
 // +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-aa runs both arms on (A/A: the method's noise floor).
 // --ab-feature npcfade switches the NPC occlusion fade instead (Task 11: the player's circle only as the baseline;
 // flagged over +0.3 ms GPU), on the live entries and, idle only, the static ones with a stand-in player (&focus; the
-// preview's same frames, no snapshot).
+// preview's same frames, no snapshot). --ab-feature battle switches the battle's world style (Phase 3: the Modern battle
+// over the Retro one, flagged over +3.0 ms GPU / +0.5 ms CPU) on the live battle entries and the static battle previews
+// (run it with --only <battle entries>: elsewhere both arms draw the same frames).
 // Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
@@ -131,6 +133,10 @@ const repeat = (n: number, steps: [string, number][]): [string, number][] => Arr
 /** A step's switch: the world style to the other one (Modern ↔ Retro; the world rebuilds on the next sync). */
 const TOGGLE_STYLE = "emu.renderer.setWorldStyle(emu.renderer.overworld.worldStyle === 'modern' ? 'retro' : 'modern')";
 
+/** An entry's eval: the boot precompile finished (both views' parallel compiles, then Renderer.finishPrecompile: their
+ *  frames and the screen programs), as play's loader does before the start gesture. */
+const PRECOMPILED = 'emu.renderer.precompiled().then(() => emu.renderer.finishPrecompile())';
+
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
 // takes 16 frames per cell). r101: standing still, the youngster stays off-screen left, so the
 // player walks 3 cells towards him. transition: the battle flash peaks at 8 frames and is gone by
@@ -178,14 +184,16 @@ const LIVE: LiveEntry[] = [
   // effect card at the player's depth; Zigzagoon back in place
   { name: 'battle_hit', state: 'out/battle1.state', steps: [['', 30], ...repeat(16, [['A', 2], ['', 38]]), ['A', 2], ['', 36]] },
   // the wild battle transition on Route 101 (frames 1-86) → screen2d 87-93 → a GRASS battle (wild Wurmple) from 94: at 360
-  // the battlers have slid in (171-274), the HUD is up (275), Wurmple's entry wobble is over (341). Records today's entry
-  // cost (gated from Task 4)
-  { name: 'battle_enter', state: 'out/wild_transition.state', steps: [['', 30], ['', 330]], sceneChange: 'record' },
+  // the battlers have slid in (171-274), the HUD is up (275), Wurmple's entry wobble is over (341). Gated (Phase 3 Task 4):
+  // no program compiles on the way and no frame takes > 150 ms. The eval finishes the boot precompile first, as play's
+  // loader does (in manual mode nothing waits for it: the gate measures play, not boot)
+  { name: 'battle_enter', state: 'out/wild_transition.state', eval: PRECOMPILED, steps: [['', 30], ['', 330]], sceneChange: 'gate' },
   // the first battle played to its end (Scratch until Zigzagoon faints), the battle fades out (1262-1293), transition from
   // 1299, Route 101 from 1308 (faded in at 1324; Birch walks up, 1333-1348): 63 overworld frames at the shot (the 30th A
   // press, frames 1191-1192, is the last one the battle needs; a press after 1308 would run Birch's dialogue on to the
-  // warp into his lab, 1706)
-  { name: 'battle_exit', state: 'out/battle1.state', steps: [['', 30], ...repeat(30, [['A', 2], ['', 38]]), ['', 140]], sceneChange: 'record' },
+  // warp into his lab, 1706). Gated as battle_enter (frame 1308, the session's first world build, has no frame gate)
+  { name: 'battle_exit', state: 'out/battle1.state', eval: PRECOMPILED, steps: [['', 30], ...repeat(30, [['A', 2], ['', 38]]), ['', 140]],
+    sceneChange: 'gate' },
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
   // Map crossings (hitch fix): Route 101 → Littleroot after 30 idle frames (that crossing's frame ends inside the game's
   // map load, CameraMove: the new map's header over the old map's grid — built twice before the fix), and Route 101 →
@@ -251,6 +259,10 @@ const STATIC: StaticEntry[] = [
 const BATTLE_FRAMES = 150;
 const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/constants/species.h)
   { name: 'b_grass', q: 'battle=grass&player=280&enemy=288' },          // Torchic vs Zigzagoon
+  // b_grass with the Modern arena's ground part made to throw: the battle falls back to today's arena (warned once). Until
+  // Task 6 it equals b_grass in both styles (checked when its p3-base reference was captured, Task 4); from then on Modern
+  // b_grass draws the Modern arena and this one today's, so it has its own reference, not a sameAs
+  { name: 'b_grass_fail', q: 'battle=grass&player=280&enemy=288&arenaFail=ground' },
   { name: 'b_grass_night', q: 'battle=grass&player=280&enemy=288&hour=21' },
   { name: 'b_double', q: 'battle=grass&double=1&player=280&player2=277&enemy=288&enemy2=286' },
   { name: 'b_longgrass', q: 'battle=longGrass&player=277&enemy=286' },  // Treecko vs Poochyena
@@ -307,9 +319,9 @@ const XBR_TOL = 2 / 255;
 const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
- *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5. `previewWhen`: the static
- *  entries (by query) where the switch changes anything (the NPC fade needs a stand-in player, &focus; elsewhere both
- *  arms would be the same frames). */
+ *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5, the Modern battle (Phase 3)
+ *  +3.0 / +0.5. `previewWhen`: the static entries (by query) where the switch changes anything (the NPC fade needs a
+ *  stand-in player, &focus; the battle style a battle preview; elsewhere both arms would be the same frames). */
 interface AbFeature {
   what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string;
   previewWhen?: (q: string) => boolean;
@@ -323,6 +335,14 @@ const AB_FEATURES: Record<string, AbFeature> = {
     what: "NPC occlusion fade on vs off (the player's circle only)", gpuMs: 0.3, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
     previewWhen: (q) => /(^|&)focus=/.test(q),
+  },
+  // (Phase 3: the battle's world style alone — the live page's PostFX keeps its style's tilt-shift; the preview's
+  // setStyle switches both, as Renderer.setWorldStyle does)
+  battle: {
+    what: 'Modern vs Retro battle (BattleView world style)', gpuMs: 3.0, cpuMs: 0.5,
+    live: (on) => `emu.renderer.battle.setWorldStyle('${on ? 'modern' : 'retro'}')`,
+    preview: (on) => `preview.setStyle('${on ? 'modern' : 'retro'}')`,
+    previewWhen: (q) => q.startsWith('battle='),
   },
 };
 

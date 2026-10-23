@@ -1,56 +1,56 @@
-// 3D battle scene. Battle sprites are placed by "un-projecting" their GBA screen positions
-// through an orthographic reference camera that reproduces the 240x160 layout, onto depth
-// planes (player side, enemy side, or interpolated for move effects). The arena around them
-// is generated and themed from the game's own terrain background colours.
+// 3D battle scene. Battle sprites are placed by "un-projecting" their GBA screen positions through the battle stage's
+// reference projection (stage.ts) onto depth planes (player side, enemy side, or interpolated for move effects:
+// battleActors.ts). The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the
+// Modern style, else today's arena (arena.ts: the Retro look and the fallback), generated and themed from the game's own
+// terrain background colours. Every program the scene draws compiles at boot (precompile: the battle catalogue).
 
 import * as THREE from 'three';
 import type { GameState, SpriteSnap } from '../../game/state';
 import { SYM } from '../../game/symbols';
 import type { SpriteAtlas } from '../spriteAtlas';
-import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
 import { Sky } from '../overworld/sky';
+import type { WorldStyle } from '../overworld/world';
+import type { Quality } from '../post';
 import { bgr555ToRgba } from '../gbaTextures';
+import { createKitUniforms, type KitUniforms } from '../kit/materials';
+import type { ProgramInfo } from '../actors/inflatedActors';
 import { BattleArena } from './arena';
+import { arenaKind } from './arenaKind';
+import { defaultArenaColors } from './bgSample';
+import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
+import { BattleActors } from './battleActors';
+import { ARENA_PARTS, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
+import { battleCatalogue, type BattleCatalogue } from './catalogue';
 
-/** GBA pixels per world unit in the reference projection. */
-const PX = 32;
-const REF_PITCH = THREE.MathUtils.degToRad(24);
+export { isBattleHudSprite } from './battleActors';
 
-// Where the GBA draws the two platform centres (singles layout).
-const PLATFORM_PLAYER_SCREEN = new THREE.Vector2(64, 117);
-const PLATFORM_ENEMY_SCREEN = new THREE.Vector2(176, 64);
+/** What the battle view reads of the game state (GameState's fields; the static preview fills exactly these). */
+export type BattleViewState = Pick<GameState, 'mem' | 'sprites' | 'battleEnvironment' | 'battleType' | 'trainerClass'
+  | 'mapBattleScene' | 'mapType' | 'hours' | 'minutes' | 'animActive' | 'target'>;
 
-// Templates of HUD sprites (healthboxes, HP bars, party status balls) — drawn in screen space.
-const HUD_TEMPLATE_RANGES: [number, number][] = [
-  [0x0832c140, 0x0832c220], // healthbox player/opponent/safari + healthbars
-  [0x0832c364, 0x0832c3c4], // status summary bar + balls
-];
+/** The precompile (BattleView.precompile): its catalogue, compileAsync's promise, whether its frame was drawn (or it
+ *  failed). */
+interface PrecompileState { catalogue: BattleCatalogue | null; compiled: Promise<void>; done: boolean }
 
-export function isBattleHudSprite(s: SpriteSnap): boolean {
-  for (const [a, b] of HUD_TEMPLATE_RANGES) if (s.template >= a && s.template < b) return true;
-  return false;
-}
+/** The terrain background's colours today's arena takes (sampleTerrain) and their key. */
+interface SampledColors { sky: THREE.Color; platform: THREE.Color; rim: THREE.Color; key: string }
 
 export class BattleView {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(30, 1.5, 0.1, 400);
-  private billboards: Billboards;
+  private actors: BattleActors;
   private sun = new THREE.DirectionalLight(0xffffff, 2.4);
   private hemi = new THREE.HemisphereLight(0xcfe8ff, 0x55603a, 1.1);
   private sky = new Sky();
+  /** Today's arena: the Retro look and the Modern fallback, built (setEnvironment, setColors) only while shown. */
   private arena = new BattleArena();
-  // reference camera basis
-  private refRight = new THREE.Vector3();
-  private refUp = new THREE.Vector3();
-  private refFwd = new THREE.Vector3();
-  private refOrigin = new THREE.Vector3();
-  readonly playerPlatform = new THREE.Vector3();
-  readonly enemyPlatform = new THREE.Vector3();
-  private playerDepth = 0;
-  private enemyDepth = 0;
   private time = 0;
-  private envKey = '';
   private env = -1;
+  /** The environment today's arena was last built for, and the colours' key it last took. */
+  private legacyEnv = -1;
+  private legacyKey = '';
+  /** The last valid sample of the terrain background since the environment changed (null: none yet). */
+  private sampled: SampledColors | null = null;
   private lastSample = -1;
   private charLight = new THREE.Color(1, 1, 1);
   private cameraRight = new THREE.Vector3(1, 0, 0);
@@ -60,10 +60,28 @@ export class BattleView {
   private intro = 0;
   private focus = 0;
   private focusSide = 1;
+  /** The battle's own kit uniforms: the Modern arena's materials pool here; uSky follows today's battle sky colour
+   *  (copied each frame) until Task 6 drives it from the arena's look (Task 5's battler rim reads it). */
+  readonly uniforms: KitUniforms = createKitUniforms();
+  private modern: ModernArena;
+  private style: WorldStyle = 'modern';
+  private failPart: string | null = null;
+  /** Arena build quality (the renderer's). */
+  quality: Quality = 'medium';
+  /** The precompile (started once). */
+  private pre: PrecompileState | null = null;
+  private compileReady = false;
+  /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel), the frame that compiles the rest
+   *  (blocking), and when that frame was drawn (performance.now()). */
+  readonly precompileStats = { compileMs: 0, frameMs: 0, frameAt: 0 };
+  /** Draws one frame as it is presented (the owner's PostFX: its passes, GTAO's override materials at High quality): the
+   *  precompile draws it with the catalogue shown. null: the scene alone, into a 1×1 target. */
+  precompileFrame: (() => void) | null = null;
 
-  constructor(private spriteAtlas: SpriteAtlas) {
-    this.billboards = new Billboards(spriteAtlas);
-    this.scene.add(this.billboards.mesh, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.arena.group);
+  /** `instanceUniforms`: the inflated battlers' instance-data path (Task 5; instanceUniformsFit, as the overworld's). */
+  constructor(spriteAtlas: SpriteAtlas, opts: { instanceUniforms?: boolean } = {}) {
+    this.actors = new BattleActors(spriteAtlas, { rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
+    this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.arena.group);
     this.scene.fog = new THREE.Fog(0xcfe8ff, 40, 120);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -71,65 +89,143 @@ export class BattleView {
     sc.left = -14; sc.right = 14; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 80;
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.02;
-    this.setupReference();
+    this.arena.setPlatforms(STAGE.player, STAGE.enemy);
+    this.modern = new ModernArena(this.uniforms, this.parts());
+    this.modern.group.visible = false;
+    this.scene.add(this.modern.group);
   }
 
-  /** Orthographic reference camera: GBA pixel (sx, sy) -> ray origin + direction. */
-  private setupReference(): void {
-    this.refFwd.set(0, -Math.sin(REF_PITCH), -Math.cos(REF_PITCH));
-    this.refRight.set(1, 0, 0);
-    this.refUp.crossVectors(this.refRight, this.refFwd); // right x forward = up
-    // Place the reference camera so the player platform lands where the GBA draws it.
-    this.refOrigin.set(0, 0, 0);
-    const pp = this.groundHit(PLATFORM_PLAYER_SCREEN.x, PLATFORM_PLAYER_SCREEN.y);
-    this.refOrigin.sub(pp).add(new THREE.Vector3(0, 0, 0));
-    this.refOrigin.y += 0; // keep ground at y = 0
-    // recompute with the shifted origin
-    this.playerPlatform.copy(this.groundHit(PLATFORM_PLAYER_SCREEN.x, PLATFORM_PLAYER_SCREEN.y));
-    this.enemyPlatform.copy(this.groundHit(PLATFORM_ENEMY_SCREEN.x, PLATFORM_ENEMY_SCREEN.y));
-    this.playerDepth = this.depthOf(this.playerPlatform);
-    this.enemyDepth = this.depthOf(this.enemyPlatform);
-    this.arena.setPlatforms(this.playerPlatform, this.enemyPlatform);
+  get worldStyle(): WorldStyle {
+    return this.style;
   }
 
-  private rayOrigin(sx: number, sy: number): THREE.Vector3 {
-    return this.refOrigin.clone()
-      .addScaledVector(this.refRight, (sx - 120) / PX)
-      .addScaledVector(this.refUp, (80 - sy) / PX)
-      .addScaledVector(this.refFwd, -40);
+  /** Modern / Retro: applies at the next update (the arena the style draws; today's arena built when first shown). */
+  setWorldStyle(s: WorldStyle): void {
+    this.style = s;
   }
 
-  private groundHit(sx: number, sy: number): THREE.Vector3 {
-    const o = this.rayOrigin(sx, sy);
-    const t = -o.y / this.refFwd.y;
-    return o.addScaledVector(this.refFwd, t);
+  /** The preview's &arenaFail=<name>: the arena part of that name throws (with no such part, one of that name covering
+   *  every kind is added), so the Modern battle falls back to today's arena. null: the parts as they are. */
+  get arenaFailPart(): string | null {
+    return this.failPart;
   }
 
-  private depthOf(p: THREE.Vector3): number {
-    return p.clone().sub(this.rayOrigin(120, 80)).dot(this.refFwd);
+  set arenaFailPart(name: string | null) {
+    if (name === this.failPart) return;
+    this.failPart = name;
+    this.modern.dispose();
+    this.modern = new ModernArena(this.uniforms, this.parts());
+    this.modern.group.visible = false;
+    this.scene.add(this.modern.group);
   }
 
-  /** Point on the ray through GBA pixel (sx, sy) at reference depth d. */
-  private at(sx: number, sy: number, d: number): THREE.Vector3 {
-    return this.rayOrigin(sx, sy).addScaledVector(this.refFwd, d);
+  /** The arena parts the Modern arena builds (and the catalogue compiles): ARENA_PARTS, one made to fail by arenaFailPart. */
+  private parts(): readonly ArenaPart[] {
+    return this.failPart === null ? ARENA_PARTS : withFailingPart(ARENA_PARTS, this.failPart);
   }
 
-  private sampleTerrain(state: GameState): void {
-    // Sample the GBA terrain background (BG3: char base 2, screen base 26) for theme colours.
-    const m = state.mem;
-    const bus = m.bus;
-    // Use the unfaded palette buffer: hardware palette RAM is mid-fade during the intro.
-    const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
-    const pal = bus.ewram16.subarray(palOff, palOff + 256);
-    if (state.battleEnvironment !== this.env) {
-      this.env = state.battleEnvironment;
-      this.arena.setEnvironment(this.env);
-      this.intro = 0;
-      this.envKey = '';
+  /**
+   * Starts compiling every program the battle scene draws, once, whatever the style: the battle catalogue (every arena
+   * part's program variants, today's arena for every environment: catalogue.ts) in the battle scene, with every actor
+   * shown — compileAsync issues them all at once (parallel where the browser has KHR_parallel_shader_compile) into a 1×1
+   * target, as PostFX draws the scene, off the main thread; finishPrecompile then draws the frame that compiles the rest
+   * (shadow-depth, PostFX's passes), blocking. Live play starts it at boot (Renderer's constructor), the battle preview
+   * before its first frame. Resolves when compileAsync's programs are ready; a failure is logged once and never retried
+   * (the programs then compile on first use).
+   */
+  precompile(renderer: THREE.WebGLRenderer): Promise<void> {
+    if (this.pre) return this.pre.compiled;
+    const pre: PrecompileState = { catalogue: null, compiled: Promise.resolve(), done: false };
+    this.pre = pre;
+    const t0 = performance.now();
+    // (an async body: a synchronous throw becomes the rejection)
+    pre.compiled = (async () => {
+      // the catalogue's kit materials pool apart: an arena build never takes them (their ids, the opaque draw order, stay)
+      const catalogue = pre.catalogue = battleCatalogue({ uniforms: createKitUniforms(), parts: this.parts() });
+      const target = new THREE.WebGLRenderTarget(1, 1);
+      const prev = renderer.getRenderTarget();
+      let ready: Promise<unknown>;
+      this.scene.add(catalogue.root);
+      const restore = this.actors.showAll();
+      try {
+        renderer.setRenderTarget(target);
+        ready = renderer.compileAsync(this.scene, this.camera);
+      } finally {
+        restore();
+        catalogue.root.removeFromParent();
+        renderer.setRenderTarget(prev);
+        target.dispose();
+      }
+      await ready;
+      this.precompileStats.compileMs = performance.now() - t0;
+    })().catch((e) => {
+      // (after the frame: it compiled the programs and freed the catalogue — nothing failed that matters)
+      if (pre.done) return;
+      pre.done = true;
+      pre.catalogue?.dispose();
+      console.warn('[battle] precompile failed (programs compile on first use instead)', e);
+    }).finally(() => {
+      this.compileReady = true;
+    });
+    return pre.compiled;
+  }
+
+  /** Whether the precompile's parallel compile is done (or failed): the frame finishPrecompile draws then blocks little. */
+  get precompileReady(): boolean {
+    return this.compileReady;
+  }
+
+  /**
+   * Draws the precompile frame once (starting the precompile if it was not): the catalogue's meshes and every actor
+   * shown, drawn as frames are presented (precompileFrame) — the shadow pass and PostFX's passes compile there; whatever
+   * compileAsync has not finished yet is waited for. Live play draws it in Renderer.finishPrecompile (boot, behind the
+   * loader; the harness's eval) or, without that, at the first battle sync — never inside an overworld frame; the battle
+   * preview before its first frame.
+   */
+  finishPrecompile(renderer: THREE.WebGLRenderer): void {
+    void this.precompile(renderer);
+    const pre = this.pre!;
+    const catalogue = pre.catalogue;
+    // (no catalogue: building it failed — precompile's rejection logs it once)
+    if (pre.done || !catalogue) return;
+    pre.done = true;
+    const t0 = performance.now();
+    this.scene.add(catalogue.root);
+    const restore = this.actors.showAll();
+    try {
+      if (this.precompileFrame) this.precompileFrame();
+      else {
+        const target = new THREE.WebGLRenderTarget(1, 1);
+        const prev = renderer.getRenderTarget();
+        try {
+          renderer.setRenderTarget(target);
+          renderer.render(this.scene, this.camera);
+        } finally {
+          renderer.setRenderTarget(prev);
+          target.dispose();
+        }
+      }
+      // (the frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
+      this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[]);
+    } catch (e) {
+      console.warn('[battle] precompile frame failed (programs compile on first use instead)', e);
+    } finally {
+      restore();
+      catalogue.dispose();
+      this.precompileStats.frameMs = performance.now() - t0;
+      this.precompileStats.frameAt = t0;
     }
+  }
+
+  /** Samples the GBA terrain background (BG3) every 0.5 s: today's arena's sky, platform and rim colours. */
+  private sampleTerrain(state: BattleViewState): void {
     // Re-sample now and then: BG3 is loaded a little after the battle starts.
     if (this.time - this.lastSample < 0.5) return;
     this.lastSample = this.time;
+    // Use the unfaded palette buffer: hardware palette RAM is mid-fade during the intro.
+    const bus = state.mem.bus;
+    const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
+    const pal = bus.ewram16.subarray(palOff, palOff + 256);
     const colorAt = (sx: number, sy: number): THREE.Color => {
       const bgcnt = bus.io16[0x0e >>> 1];
       const charBase = ((bgcnt >>> 2) & 3) * 0x4000;
@@ -151,61 +247,43 @@ export class BattleView {
     const rim = colorAt(PLATFORM_ENEMY_SCREEN.x - 56, PLATFORM_ENEMY_SCREEN.y);
     const lum = (c: THREE.Color) => c.r + c.g + c.b;
     if (lum(platform) < 0.02 && lum(sky) < 0.02) return; // not loaded yet
-    const key = [sky, platform, rim].map((c) => c.getHexString()).join(':');
-    if (key === this.envKey) return;
-    this.envKey = key;
-    this.arena.setColors(sky, platform, rim);
+    this.sampled = { sky, platform, rim, key: [sky, platform, rim].map((c) => c.getHexString()).join(':') };
   }
 
-  private isActor(s: SpriteSnap): boolean {
-    return s.template === SYM.gMultiuseSpriteTemplate || (s.template >= SYM.gBattlerSpriteTemplates && s.template < SYM.gBattlerSpriteTemplates + 0x60);
-  }
-
-  private buildBillboards(state: GameState, hudSprites: SpriteSnap[]): BillboardSpec[] {
-    const list: BillboardSpec[] = [];
-    const xP = 72, xE = 176;
-    const pxSize = 1 / PX;
-    for (const s of state.sprites) {
-      if (s.invisible) continue;
-      if (isBattleHudSprite(s)) { hudSprites.push(s); continue; }
-      const slot = this.spriteAtlas.slots.get(s.index);
-      if (!slot) continue;
-      // Visible rectangle on the GBA screen (double-size sprites are offset by half).
-      let x = s.screenX, y = s.screenY;
-      if (s.doubleSize) { x += s.width / 2; y += s.height / 2; }
-      x = ((x % 512) + 512) % 512; if (x >= 256) x -= 512;
-      y = ((y % 256) + 256) % 256; if (y >= 192) y -= 256;
-      const cx = x + s.width / 2;
-      const cy = y + s.height / 2;
-      let depth: number;
-      if (this.isActor(s)) {
-        depth = cx < 120 ? this.playerDepth : this.enemyDepth;
-      } else {
-        const t = THREE.MathUtils.clamp((cx - xP) / (xE - xP), 0, 1);
-        depth = this.playerDepth + (this.enemyDepth - this.playerDepth) * t;
-      }
-      const w = s.width * s.scaleX;
-      const h = s.height * s.scaleY;
-      const centre = this.at(cx, cy, depth);
-      // Upright cards: stretch by 1/cos(pitch) so they cover the same screen height as the
-      // sprite does under the tilted reference camera.
-      const hw = (h * pxSize) / Math.cos(REF_PITCH);
-      list.push({
-        footX: centre.x, footY: centre.y - hw / 2, footZ: centre.z,
-        width: w * pxSize,
-        height: hw,
-        lift: 0,
-        flat: false,
-        slot,
-      });
+  /**
+   * The arena of this frame: the Modern arena when the style is Modern, it covers the arena kind and its build succeeded;
+   * else today's arena, built lazily — only while shown — with exactly today's calls at today's frames (setEnvironment on
+   * an environment change, setColors when a background sample changes the colours). An environment change restarts the
+   * intro sweep in both styles.
+   */
+  private updateArena(state: BattleViewState): void {
+    if (state.battleEnvironment !== this.env) {
+      this.env = state.battleEnvironment;
+      this.intro = 0;
+      this.sampled = null;
     }
-    return list;
+    const kind = arenaKind({ environment: state.battleEnvironment, battleType: state.battleType, trainerClass: state.trainerClass,
+      mapBattleScene: state.mapBattleScene, mapType: state.mapType });
+    const modern = this.style === 'modern' && this.modern.covers(kind) && this.modern.build(kind, defaultArenaColors(kind), this.quality);
+    this.modern.group.visible = modern;
+    this.arena.group.visible = !modern;
+    if (!modern && this.legacyEnv !== this.env) {
+      this.arena.setEnvironment(this.env);
+      this.legacyEnv = this.env;
+      this.legacyKey = '';
+    }
+    this.sampleTerrain(state);
+    const c = this.sampled;
+    if (!modern && c && c.key !== this.legacyKey) {
+      this.legacyKey = c.key;
+      this.arena.setColors(c.sky, c.platform, c.rim);
+    }
   }
 
-  update(state: GameState, dt: number, input: { yaw: number; pitch: number; zoom: number }, hudSprites: SpriteSnap[]): void {
+  update(state: BattleViewState, dt: number, input: { yaw: number; pitch: number; zoom: number }, hudSprites: SpriteSnap[]): void {
     this.time += dt;
     this.intro = Math.min(1, this.intro + dt / 2.2);
-    this.sampleTerrain(state);
+    this.updateArena(state);
     this.yaw = THREE.MathUtils.clamp(this.yaw + input.yaw, -0.9, 0.9);
     if (input.zoom) this.zoom = THREE.MathUtils.clamp(this.zoom * Math.pow(1.1, input.zoom), 0.6, 1.6);
 
@@ -213,8 +291,8 @@ export class BattleView {
     // breathing sway and an intro sweep.
     // Look down the reference camera's centre ray; a narrow FOV keeps perspective close to
     // the GBA's flat projection while still giving depth.
-    const midDepth = (this.playerDepth + this.enemyDepth) / 2;
-    const mid = this.at(120, 82, midDepth);
+    const midDepth = (STAGE.playerDepth + STAGE.enemyDepth) / 2;
+    const mid = STAGE.at(120, 82, midDepth);
     // Cinematic focus: while a move animation plays, ease towards the target and push in.
     const targetFocus = state.animActive ? 1 : 0;
     this.focus += (targetFocus - this.focus) * Math.min(1, dt * 2.5);
@@ -222,7 +300,7 @@ export class BattleView {
       // Player side = even battler ids; aim at whoever is being hit.
       this.focusSide = (state.target & 1) === 1 ? 1 : -1;
     }
-    const focusPoint = this.focusSide > 0 ? this.enemyPlatform : this.playerPlatform;
+    const focusPoint = this.focusSide > 0 ? STAGE.enemy : STAGE.player;
     mid.lerp(new THREE.Vector3(focusPoint.x, mid.y, focusPoint.z), this.focus * 0.25);
     const ease = 1 - Math.pow(1 - this.intro, 3);
     const sway = Math.sin(this.time * 0.25) * 0.04;
@@ -259,8 +337,9 @@ export class BattleView {
     fog.color.copy(this.arena.horizon);
     this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor, this.time);
     this.sky.mesh.position.copy(this.camera.position);
+    this.uniforms.uSky.value.copy(this.arena.skyColor);
 
-    this.billboards.set(this.buildBillboards(state, hudSprites), this.cameraRight, this.charLight);
+    this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites);
   }
 
   resize(aspect: number): void {
@@ -268,8 +347,8 @@ export class BattleView {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Draws the battle cards flat magenta (the harness's visible-actor mask) or normally. */
+  /** Draws the battle actors flat magenta (the harness's visible-actor mask) or normally. */
   setActorMask(on: boolean): void {
-    this.billboards.setMask(on);
+    this.actors.setMask(on);
   }
 }

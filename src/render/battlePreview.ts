@@ -1,11 +1,15 @@
 // Static battle preview: any arena kind with any battlers, straight from the ROM, through the live battle path (no
 // emulator). The kind's BG3 picture and the battlers' pictures are laid into scratch "hardware" (VRAM, palette RAM, the
-// game's unfaded palette buffer, DISPCNT / BG3CNT) exactly as the game lays them out in battle, and a fake GameState drives
-// today's BattleView; referencePng() is the GBA's own picture of the same hardware (BG3 + the battler sprites).
+// game's unfaded palette buffer, DISPCNT / BG3CNT) exactly as the game lays them out in battle, and a fake game state
+// (exactly the fields BattleView reads) drives the live BattleView; referencePng() is the GBA's own picture of the same
+// hardware (BG3 + the battler sprites). Every battle program is compiled before the first frame (BattleView.precompile).
 //   /?battle=<kind>          an ArenaKind (arenaKind.ts: grass … rayquaza)
 //   &player=<species>&enemy=<species>   internal species ids (include/constants/species.h); Torchic vs Zigzagoon
 //   &double=1&player2=…&enemy2=…        a double battle: four battlers (positions 0–3)
 //   &hour=11 &style=modern|retro &quality=low|medium|high &yaw=<rad> (once, on the first frame)
+//   (a value that does not parse falls back to the default: a species not a non-negative integer, an hour outside 0–24,
+//   an unknown quality, a yaw not a number; a species past the ROM's picture tables throws readMonPic's RomError)
+//   &arenaFail=<part>        that Modern arena part throws: the battle falls back to today's arena (BattleView.arenaFailPart)
 //   &spriteFilter=smooth|pixel   accepted; today's battle cards have no sprite edges setting (no effect yet)
 //   &manual=1                no frame loop: frames advance through preview.frames(n) (1/60 s each)
 // Drag turns the camera (±0.9 rad, as live play's), the wheel zooms.
@@ -14,14 +18,14 @@ import * as THREE from 'three';
 import { Bus } from '../gba/bus';
 import { Mem } from '../game/mem';
 import { SYM } from '../game/symbols';
-import type { GameState, SpriteSnap } from '../game/state';
+import type { SpriteSnap } from '../game/state';
 import { RomReader } from '../game/rom/reader';
 import {
   installBattleBackground, readBattleBackground, readMonPic, readEnemyShadow, battlerScreenPos, type MonPic,
 } from '../game/rom/battleGraphics';
 import { arenaInputsFor, type ArenaKind } from './battle/arenaKind';
 import { decodeBg3, BG_W, BG_H } from './battle/bgSample';
-import { BattleView } from './battle/battleView';
+import { BattleView, type BattleViewState } from './battle/battleView';
 import { GbaTextures, bgr555ToRgba } from './gbaTextures';
 import { SpriteAtlas } from './spriteAtlas';
 import { PostFX, tiltShiftFor, type Quality } from './post';
@@ -57,6 +61,7 @@ const PAL_UNFADED = (SYM.gPlttBufferUnfaded & 0x3ffff) >> 1;
 /** A picture with no offsets: battlerScreenPos of it is sBattlerCoords[double][position] − 32. */
 const NO_OFFSET: MonPic = { tiles: new Uint8Array(0), palette: new Uint16Array(0), yOffset: 0, elevation: 0 };
 const DEFAULT_SPECIES = { player: 280, enemy: 288, player2: 277, enemy2: 286 }; // Torchic, Zigzagoon, Treecko, Poochyena
+const DEFAULT_HOUR = 11;
 
 /** The battlers' sprites as the game creates them (gMultiuseSpriteTemplate, 64×64 affine OAM, 4bpp, 1D tiles: battler i
  *  at tile 64·i, OBJ palette slot = its position) and, under a floating enemy at position 1 (elevation > 0), the shadow
@@ -88,10 +93,17 @@ export function previewBattleSprites(battlers: readonly PreviewBattler[], double
   return sprites;
 }
 
-/** A species id of the URL, or the default. */
+/** A species id of the URL (a non-negative integer), else the default — as &quality / &yaw fall back. (One past the ROM's
+ *  picture tables still throws: readMonPic's RomError.) */
 function species(params: URLSearchParams, key: keyof typeof DEFAULT_SPECIES): number {
   const v = params.get(key);
-  return v === null ? DEFAULT_SPECIES[key] : Number(v);
+  return v !== null && /^\d+$/.test(v) ? Number(v) : DEFAULT_SPECIES[key];
+}
+
+/** The hour of the URL (0 ≤ h < 24), else 11 — as &quality / &yaw fall back. */
+function hourOf(params: URLSearchParams): number {
+  const h = parseFloat(params.get('hour') ?? '');
+  return Number.isFinite(h) && h >= 0 && h < 24 ? h : DEFAULT_HOUR;
 }
 
 export class BattlePreviewApp {
@@ -105,7 +117,7 @@ export class BattlePreviewApp {
   private spriteAtlas: SpriteAtlas;
   private battle: BattleView;
   private post: PostFX;
-  private state: GameState;
+  private state: BattleViewState;
   private hud: SpriteSnap[] = [];
   /** Camera input of the next frame: per-frame deltas, as live play's (BattleView adds yaw, scales zoom by 1.1^zoom). */
   private input = { yaw: 0, pitch: 0, zoom: 0 };
@@ -153,22 +165,26 @@ export class BattlePreviewApp {
     bus.ewram16.set(pal, PAL_UNFADED);
 
     const inputs = arenaInputsFor(kind);
-    const hour = parseFloat(params.get('hour') ?? '11');
+    const hour = hourOf(params);
+    // (exactly what BattleView reads: reading more fails to typecheck here)
     this.state = {
       mem: new Mem(bus), sprites, battleEnvironment: inputs.environment,
       battleType: inputs.battleType | (double ? BATTLE_TYPE_DOUBLE : 0), trainerClass: inputs.trainerClass,
       mapBattleScene: inputs.mapBattleScene, mapType: inputs.mapType,
-      hours: Math.floor(hour), minutes: Math.round((hour % 1) * 60), animActive: false, target: 0, battlers: [],
-    } as unknown as GameState;
+      hours: Math.floor(hour), minutes: Math.round((hour % 1) * 60), animActive: false, target: 0,
+    } satisfies BattleViewState;
 
-    // the live battle path: hardware palette RAM (paletteSource null), the sprite atlas (1D tiles), today's BattleView
-    // and PostFX on the battle scene
+    // the live battle path: hardware palette RAM (paletteSource null), the sprite atlas (1D tiles), the BattleView (the
+    // arenas of both styles) and PostFX on the battle scene
     this.tex = new GbaTextures(bus);
     this.tex.update(true);
     this.spriteAtlas = new SpriteAtlas(this.tex);
     this.battle = new BattleView(this.spriteAtlas);
     const q = params.get('quality');
     const quality: Quality = q === 'low' || q === 'high' ? q : 'medium';
+    this.battle.quality = quality;
+    // &arenaFail=<name>: that arena part throws (the fallback to today's arena)
+    this.battle.arenaFailPart = params.get('arenaFail');
     this.post = new PostFX(this.webgl, this.battle.scene, this.battle.camera, quality);
     this.setStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
     // &yaw: once, on the first frame (BattleView.update takes per-frame deltas)
@@ -187,6 +203,10 @@ export class BattlePreviewApp {
     canvas.addEventListener('wheel', (e) => { this.input.zoom += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
     window.addEventListener('resize', () => this.resize());
     this.resize();
+    // every battle program compiled before the first frame, as live play's boot does (the precompile frame blocks until
+    // they are ready: deterministic program counts)
+    this.battle.precompileFrame = () => this.post.render(0);
+    this.battle.finishPrecompile(this.webgl);
     if (params.get('manual') === '1') return; // (frames advance through frames(n) only)
     const tick = () => {
       this.frame();
@@ -195,9 +215,10 @@ export class BattlePreviewApp {
     requestAnimationFrame(tick);
   }
 
-  /** The battle's world style. Today's battle path draws the same scene in both; the style's tilt-shift applies, as in
-   *  live play (Renderer.setWorldStyle sets the PostFX both scenes share). */
+  /** The battle's world style: the arena the style draws (BattleView) and the style's tilt-shift, as in live play
+   *  (Renderer.setWorldStyle sets both views' styles and the PostFX both scenes share). */
   setStyle(s: WorldStyle): void {
+    this.battle.setWorldStyle(s);
     const t = tiltShiftFor(s);
     this.post.setTiltShift(t.focus, t.band, t.strength);
   }

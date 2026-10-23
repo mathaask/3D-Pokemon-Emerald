@@ -38,16 +38,20 @@ function materialSignature(m: THREE.Material): string {
  * its material's program kind (a kit material's pool kind, else its type, program cache key and options), the object
  * (plain mesh, instanced mesh with or without per-instance colours, instanced geometry), whether it casts a shadow and
  * with which depth material, and its geometry's attributes. Two meshes with the same signature draw with the same
- * programs, the shadow-depth ones included.
+ * programs, the shadow-depth ones included. A mesh drawing with a material array (one material per geometry group) has
+ * its materials' signatures in order, joined by ' + '.
  */
 export function programSignature(mesh: THREE.Mesh): string {
-  const m = mesh.material as THREE.Material;
+  // (a material array — today's battle arena platforms: [side, top, side] — gives its materials' signatures in order,
+  // joined; a single material's is exactly as it was)
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const material = mats.map((m) => kitMaterialKind(m) ?? materialSignature(m)).join(' + ');
   const im = mesh as THREE.InstancedMesh;
   const object = im.isInstancedMesh ? (im.instanceColor ? 'instanced+colors' : 'instanced')
     : (mesh.geometry as THREE.InstancedBufferGeometry).isInstancedBufferGeometry ? 'instancedGeometry' : 'mesh';
   const depth = mesh.customDepthMaterial;
   const shadow = mesh.castShadow ? `cast:${depth ? kitMaterialKind(depth) ?? materialSignature(depth) : 'default'}` : 'nocast';
-  return [kitMaterialKind(m) ?? materialSignature(m), object, shadow, attributeSignature(mesh.geometry)].join(' ; ');
+  return [material, object, shadow, attributeSignature(mesh.geometry)].join(' ; ');
 }
 
 /** The meshes under `root` (the catalogue's, a built world's). */
@@ -76,8 +80,9 @@ export interface WorldCatalogue {
   dispose(): void;
 }
 
-/** A small triangle carrying `attrs` (name → item size; Float32 as every family's geometry). */
-function triangle(attrs: Record<string, number>): THREE.BufferGeometry {
+/** A small triangle carrying `attrs` (name → item size; Float32 as every family's geometry): a catalogue mesh's
+ *  geometry (the world's, the battle's). */
+export function catalogueTriangle(attrs: Record<string, number>): THREE.BufferGeometry {
   const g = new THREE.BufferGeometry();
   for (const [name, size] of Object.entries(attrs)) {
     const a = new Float32Array(3 * size).fill(name === 'color' ? 1 : 0);
@@ -130,12 +135,12 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
     root.add(mesh);
   };
   const kit = (o: KitMaterialOptions, attrs: Record<string, number>, castShadow: boolean) => {
-    add(new THREE.Mesh(triangle(attrs), kitMaterial(src.uniforms, o).material), castShadow);
+    add(new THREE.Mesh(catalogueTriangle(attrs), kitMaterial(src.uniforms, o).material), castShadow);
   };
   // (InstancedMesh with per-instance colours, setColorAt; the kit's depth twin for the shadow pass)
   const instanced = (o: KitMaterialOptions, attrs: Record<string, number>, castShadow: boolean) => {
     const km = kitMaterial(src.uniforms, o);
-    const mesh = new THREE.InstancedMesh(triangle(attrs), km.material, 1);
+    const mesh = new THREE.InstancedMesh(catalogueTriangle(attrs), km.material, 1);
     applyKitMaterial(mesh, km);
     mesh.setColorAt(0, new THREE.Color(1, 1, 1));
     add(mesh, castShadow);
@@ -166,13 +171,13 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
   kit(terrainMaterial(placeholder(), v2(), v2()), PN, true);
 
   // the legacy pixel geometry (World.addMesh: the water casts no shadow), its tree cards, the ground plane under all
-  add(new THREE.Mesh(triangle(LEGACY), src.legacy.opaque), true);
-  add(new THREE.Mesh(triangle(LEGACY), src.legacy.cutout), true);
-  add(new THREE.Mesh(triangle(LEGACY), src.legacy.water), false);
+  add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.opaque), true);
+  add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.cutout), true);
+  add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.water), false);
   const cardMats = new TreeCardMaterials(src.atlas);
   const cards = new TreeCards(cardMats, [{ px: 0, py: 0, pz: 0, y0: 0, u0: 0, v0: 0, u1: 1, v1: 1 }]);
   add(cards.mesh, true);
-  add(new THREE.Mesh(triangle(PNU), groundMaterial()), false);
+  add(new THREE.Mesh(catalogueTriangle(PNU), groundMaterial()), false);
 
   return {
     root,

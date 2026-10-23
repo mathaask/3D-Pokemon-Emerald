@@ -66,6 +66,8 @@ export class Renderer {
   private syncGate = new SyncGate();
   /** The emulated state read ahead of a sync while the game is loading a map: would the sync rebuild the world? */
   private probe: GameState | null = null;
+  /** Whether finishPrecompile compiled the fade quad, ScreenView, the HUD and the transition effect. */
+  private screensCompiled = false;
   cameraInput = { yaw: 0, pitch: 0, zoom: 0 };
 
   constructor(private canvas: HTMLCanvasElement, private gba: Gba, quality: Quality = 'medium') {
@@ -89,7 +91,7 @@ export class Renderer {
     // (the inflated actors' instance data: a uniform array where the device has the vertex uniform vectors; ?actorUniforms=0|1)
     const actorUniforms = instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, new URLSearchParams(location.search).get('actorUniforms'));
     this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField, actorUniforms);
-    this.battle = new BattleView(this.spriteAtlas);
+    this.battle = new BattleView(this.spriteAtlas, { instanceUniforms: actorUniforms });
     this.classifier = new SpriteClassifier(this.state.mem);
     this.overworld.classifier = this.classifier;
     gba.ppu.overlayMask = 0x01; // BG0: text boxes and menus
@@ -98,11 +100,16 @@ export class Renderer {
     this.quality = q === 'low' || q === 'high' ? q : 'medium';
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
+    this.battle.quality = this.quality;
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
-    // the overworld's precompile frame (before the start gesture, or at its first sync) is drawn through PostFX, as frames
-    // are presented
+    // the overworld's and the battle's precompile frames (before the start gesture, or at the view's first sync) are drawn
+    // through PostFX, as frames are presented
     this.overworld.precompileFrame = () => {
       this.post.setCamera(this.overworld.scene, this.overworld.camera);
+      this.post.render(0);
+    };
+    this.battle.precompileFrame = () => {
+      this.post.setCamera(this.battle.scene, this.battle.camera);
       this.post.render(0);
     };
     this.applyTiltShift(this.overworld.worldStyle);
@@ -112,10 +119,12 @@ export class Renderer {
     // a restored context has lost every render target's pixels: the atlas redraws only on change
     canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
     this.resize();
-    // every overworld program (the world's catalogue, the actors') compiles from boot on, in parallel: a map's first
-    // visit compiles nothing. The frame that compiles the rest blocks: main.ts draws it while the loader waits for the
-    // start gesture if the programs are ready by then (finishPrecompile), else the first overworld sync draws it
+    // every overworld program (the world's catalogue, the actors') and every battle program (the battle catalogue: the
+    // arenas of both styles) compiles from boot on, in parallel: a map's first visit and a battle's entry compile nothing.
+    // The frames that compile the rest block: main.ts draws them while the loader waits for the start gesture if the
+    // programs are ready by then (finishPrecompile), else each view's first sync draws its own
     void this.overworld.precompile(this.webgl);
+    void this.battle.precompile(this.webgl);
   }
 
   resize(): void {
@@ -137,6 +146,8 @@ export class Renderer {
   setWorldStyle(s: WorldStyle): void {
     const changed = s !== this.overworld.worldStyle;
     this.overworld.setWorldStyle(s);
+    // (the battle draws its style's arena from its next frame on: BattleView.update runs every frame)
+    this.battle.setWorldStyle(s);
     this.applyTiltShift(s);
     // The world is rebuilt by the next sync, which follows an emulated frame; while the settings
     // panel is open emulation is paused, so sync at the next render: the new world shows at once,
@@ -187,6 +198,9 @@ export class Renderer {
       this.hud.updateOverlay();
       this.hud.setSprites(st.sprites.filter((s) => !s.coordOffset && !s.invisible && this.classifier.kind(s) !== SpriteKind.Hidden), this.spriteAtlas);
     } else if (this.presented === 'battle') {
+      // (every battle program compiled before the first battle frame: at boot, or here at the latest — never in an
+      // overworld frame)
+      this.battle.finishPrecompile(this.webgl);
       this.gbaTex.paletteSource = null;
       this.gbaTex.update();
       const dispcnt = this.gba.bus.io16[0];
@@ -233,20 +247,52 @@ export class Renderer {
     };
   }
 
-  /** Resolves when the overworld precompile's parallel compile is done (or failed: logged). */
+  /** Resolves when the overworld's and the battle's precompiles' parallel compiles are done (or failed: logged). */
   precompiled(): Promise<void> {
-    return this.overworld.precompile(this.webgl);
+    return Promise.all([this.overworld.precompile(this.webgl), this.battle.precompile(this.webgl)]).then(() => undefined);
   }
 
   /**
-   * Draws the overworld precompile frame now (once; it blocks while the rest compiles: shadow-depth, PostFX passes), then
-   * clears the canvas it painted. main.ts calls it while the loader still covers the page, before anything runs; without
-   * it the first overworld sync draws it, before the first world build.
+   * Draws the overworld's and the battle's precompile frames now (once each; they block while the rest compiles:
+   * shadow-depth, PostFX passes), then compiles the renderer-level programs nothing else precompiles (compileScreens),
+   * then clears the canvas it painted. main.ts calls it while the loader still covers the page, before anything runs (the
+   * harness's battle entry and exit walks in their eval); without it the first overworld sync draws the overworld's frame,
+   * before the first world build, and the first battle sync the battle's — never an overworld frame.
    */
   finishPrecompile(): void {
     this.overworld.finishPrecompile(this.webgl);
+    this.battle.finishPrecompile(this.webgl);
+    this.compileScreens();
     this.webgl.setRenderTarget(null);
     this.webgl.clear();
+  }
+
+  /**
+   * Compiles (once) what the views' precompiles leave to first use, so a battle's entry and exit compile nothing (the
+   * battle_enter / battle_exit walks): the fade quad (a palette fade: a battle's end, a warp), ScreenView (its blur pass and
+   * screen quad: the `screen2d` frames of the transition after a battle), the HUD (overlay and sprites: first drawn after a
+   * wild battle's transition) and the battle transition effect. Each is drawn once as at run time, on the canvas (a render
+   * target would compile other variants: linear output, no tone mapping) — invisibly (the fade at opacity 0, the effect at
+   * progress 0, no HUD sprites) or cleared by finishPrecompile.
+   */
+  private compileScreens(): void {
+    if (this.screensCompiled) return;
+    this.screensCompiled = true;
+    const r = this.webgl;
+    const auto = r.autoClear;
+    try {
+      r.setRenderTarget(null);
+      r.autoClear = false;
+      r.render(this.fadeScene, this.fadeCamera);
+      this.transitionFx.precompile(r);
+      this.hud.render(r);
+      this.screen.precompile(r);
+    } catch (e) {
+      console.warn('[render] precompiling the screen programs failed (they compile on first use instead)', e);
+    } finally {
+      r.autoClear = auto;
+      r.setRenderTarget(null);
+    }
   }
 
   /**

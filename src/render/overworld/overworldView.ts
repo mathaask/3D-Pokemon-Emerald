@@ -261,7 +261,8 @@ export class OverworldView {
    * Starts compiling every program the overworld draws, once, whatever the style (a Retro session switching to Modern
    * must not hitch): the world's — one mesh per variant of the program catalogue (kit/catalogue.ts: the kit families',
    * the legacy pixel geometry's, the tree cards', the ground plane's) — the Phase 2 actors' (inflated actors, object
-   * models), the sprite atlas's bake and the inflation field's passes. compileAsync issues them all at once (parallel
+   * models), the sprite atlas's bake, the inflation field's passes and the metatile atlas's decode (first drawn by the
+   * first world build: a battle's way back to the overworld from a save state). compileAsync issues them all at once (parallel
    * where the browser has KHR_parallel_shader_compile) into a target as PostFX draws the scene, off the main thread;
    * finishPrecompile then draws the frame that compiles the rest (shadow-depth, GTAO's override materials, PostFX's
    * passes), blocking. Live play starts it at boot (Renderer's constructor), the map preview before its build. Resolves
@@ -287,6 +288,7 @@ export class OverworldView {
           renderer.compileAsync(this.actors.group, this.camera, this.scene),
           this.field?.compile(renderer),
           this.spriteAtlas.compile(renderer),
+          this.atlas.compile(renderer),
         ]);
       } finally {
         renderer.setRenderTarget(prev);

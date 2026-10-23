@@ -220,6 +220,12 @@ export class MetatileAtlas {
     this.dryNeeded = needed;
   }
 
+  /** Compiles the decode program (compileAsync) before the first world build draws the atlas (OverworldView.precompile).
+   *  Resolves when it is ready. */
+  compile(renderer: THREE.WebGLRenderer): Promise<void> {
+    return renderer.compileAsync(this.scene, this.camera).then(() => undefined);
+  }
+
   /** Forces a redraw on the next render(). */
   invalidate(): void {
     this.dirty = true;

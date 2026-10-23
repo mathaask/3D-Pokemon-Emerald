@@ -129,6 +129,24 @@ export class ScreenView {
     this.material.uniforms.uScreenRect.value.set(Math.floor(240 * scale), Math.floor(160 * scale));
   }
 
+  /**
+   * Compiles the view's programs without a frame of its own (Renderer.finishPrecompile): the blur pass into a scratch 1×1
+   * target (as it draws into its 60×40 ones) and the screen quad on the current target (the canvas, as render() draws it:
+   * a render target would compile another variant). Neither the backdrop nor the refresh cadence changes.
+   */
+  precompile(r: THREE.WebGLRenderer): void {
+    const prev = r.getRenderTarget();
+    const target = new THREE.WebGLRenderTarget(1, 1);
+    try {
+      r.setRenderTarget(target);
+      r.render(this.blurScene, this.camera);
+    } finally {
+      r.setRenderTarget(prev);
+      target.dispose();
+    }
+    r.render(this.scene, this.camera);
+  }
+
   render(r: THREE.WebGLRenderer): void {
     // Refresh the blurred backdrop every few frames (it changes slowly anyway).
     if (this.dirty && this.frame++ % 3 === 0) {
