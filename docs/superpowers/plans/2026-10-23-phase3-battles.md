@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+Pre-flight rulings 1–21 applied (2026-10-23; see the SDD ledger).
+
 **Goal:** In Modern style, battles take place in a modelled arena rebuilt from the kit per battle background the GBA draws (grass, long grass, plain, sand, sea, pond, underwater, mountain, cave, indoor halls, gyms, Frontier, team hideouts, the Elite Four rooms, the Champion's room, the legendaries' arenas), with platforms modelled per terrain, colours sampled from the live battle background, and the battlers drawn as Phase 2 inflated sprites — while Retro renders every battle exactly as today and entering a battle compiles no shader program in either style.
 
 **Architecture:** `BattleView` splits by world style. Retro keeps today's `BattleArena` and cards untouched. Modern builds a `ModernArena` from *arena parts* (ground, platforms, flora, horizon, water, rock, rooms…) that reuse the kit's material definitions (`terrainMaterial`, `waterMaterial`, `treeMaterial`, `GRASS_MATERIAL`, `CLIFF_MATERIAL`, `SOIL_MATERIAL`, `BUILDING_*`, `PROP_*`) on new arena-specific geometry; colours come from the BG3 picture the game loaded (`decodeBg3` → `sampleArenaColors` → `arenaPalette`). Battle sprites are routed per frame (`BattleActors`): battlers → `InflatedActors` (battle variant, own `SpriteField`), move effects → today's cards, HUD → the screen-space HUD. Every program the battle scene can draw is compiled at boot from a battle catalogue (parts' declared entries + today's arena variants + the actors), held to what the arenas really build by a node drift-guard test. Verification first: battle save-state entries, a static battle preview of every arena kind from ROM data with the GBA's own picture beside it.
@@ -33,7 +35,7 @@
 1. **Battle → overworld and back, and style switches mid-battle.** The two inflation fields share one sprite atlas; nothing of the battle may leak into the overworld (stale field, a lingering arena, a compile on return), and a Modern ↔ Retro or HD ↔ Pixel switch inside a battle applies at once and returns to the identical frame. Pinned: Task 1/4 `battle_exit` (first battle played to Route 101, gated no-compile from Task 4, overworld field self-test at its end from Task 5) and Task 5 `battle_switch` (`sameAs: 'battle'`).
 2. **Double battles and arena kinds no save state reaches** (gyms, Elite Four, Frontier, hideouts, legendaries, cave ponds): four battlers on two platforms, the background chosen by battle type → trainer class → map battle scene → environment. Pinned: Task 2 `arenaKind` precedence tests, Task 3 static `b_double` and one static entry per kind, Task 5 four-battler `BattleActors` test.
 3. **The background is not loaded yet, or mid-load, when the battle starts.** Colours sampled from an empty BG3 must not freeze into the arena, and the arena must not rebuild every frame. Pinned: Task 2 (`sampleArenaColors` → null on black / one-colour pictures) and Task 6 (`ArenaColorLock`: defaults first, exactly one switch to the first valid sample, none after).
-4. **GBA sprite effects the cards ignore**: OBJ-window clones (masks the GBA never shows), affine growth from nothing at send-out, tile rows cleared during a faint, palette blends and shiny palettes, Substitute / Transform tile swaps. No duplicate battler, no NaN geometry. Pinned: Task 5 `battleRoute` tests (OBJ window skipped in Modern), the zero-width instance test, live `battle_intro`, `battle_move`, `battle_exit` (a faint) looked at frame by frame.
+4. **GBA sprite effects the cards ignore**: OBJ-window clones (masks the GBA never shows), affine growth from nothing at send-out, tile rows cleared during a faint, palette blends and shiny palettes, Substitute / Transform tile swaps. No duplicate battler, no NaN geometry. Pinned: Task 5 `battleRoute` tests (OBJ window skipped in Modern), the zero-width tests (the battle shader's `max(…, 1.0)` texel guard; finite card and decal specs at scale 0), live `battle_intro`, `battle_move`, `battle_exit` (a faint) looked at frame by frame.
 5. **Dark and unusual light** (outdoor night, caves, underwater, Phoebe's and Sidney's dark rooms): inflated battlers are never black and stay within 0.9–1.15× Retro's actor luminance. Pinned: Task 5 static `b_grass_night`, `b_cave`, `b_underwater` actor-luminance gate; re-checked by Tasks 9 and 11 when those arenas' looks land.
 
 ## Key design decisions (deviations from spec §7 are marked ⚑)
@@ -61,8 +63,8 @@ Created:
 - `src/render/battlePreview.ts` — `BattlePreviewApp` (`?battle=`), `previewBattleSprites`, the GBA reference composite.
 - `src/render/battle/stage.ts` — the reference projection (extracted from `BattleView`): `Stage`, `STAGE`, `PX`, `REF_PITCH`, platform footprints, `GROUND_Y`, `WATER_Y`.
 - `src/render/battle/battleActors.ts` — per-frame routing of battle sprites (HUD / card / inflated / decal / skip) and their specs.
-- `src/render/battle/modernArena.ts` — `ArenaPart`, `ArenaContext`, `ARENA_PARTS`, `ModernArena` (build per kind/colours/quality, try/catch fallback), `ArenaColorLock`.
-- `src/render/battle/catalogue.ts` — `CatalogueEntry`, `battleCatalogue()`, `legacyArenaMeshes()`.
+- `src/render/battle/modernArena.ts` — `ArenaPart`, `CatalogueEntry`, `ArenaContext`, `ARENA_PARTS`, `ModernArena` (build per kind/colours/quality, try/catch fallback), `ArenaColorLock`.
+- `src/render/battle/catalogue.ts` — `BattleCatalogue`, `battleCatalogue()`, `legacyArenaMeshes()` (the `CatalogueEntry` type it reads lives in `modernArena.ts`, next to `ArenaPart`).
 - `src/render/battle/palette.ts` — `ArenaPalette`, `arenaPalette()`.
 - `src/render/battle/look.ts` — `ArenaLook`, `arenaLook()` (lights, fog, night per kind and hour).
 - `src/render/overworld/timeOfDay.ts` — the overworld's outdoor keyframes (`timeOfDay`, `nightFactor`), extracted.
@@ -79,7 +81,7 @@ Modified:
 - `src/render/battle/arena.ts` — **untouched** (today's arena: Retro and fallback).
 - `src/render/renderer.ts` — battle precompile joined to `precompiled()` / `finishPrecompile()`, battle field update, style / sprite filter / mask / self-test routed to the battle view.
 - `src/render/actors/inflateMath.ts` (`BATTLE_INFLATE`), `src/render/actors/inflatedActors.ts` (`InflatedVariant`), `src/render/actors/selfTest.ts` (`inflateMax` in the result).
-- `src/render/kit/catalogue.ts` (export `catalogueTriangle`), `src/render/kit/trees.ts` (export `treeGeometry`, `TREE_VARIANTS`, the crown detail per quality), `src/render/kit/flowers.ts` (export `flowerGeometry`) — exports only, no behaviour change. (The arena's ground and water compose `terrainMaterial(...)` / `waterMaterial(...)`'s returned options, which carry their hooks: those modules are not touched.)
+- `src/render/kit/catalogue.ts` (export `catalogueTriangle`; `programSignature` also takes a mesh with a material array — today's arena platforms — while every single-material signature stays as it is, so the overworld guard is unaffected), `src/render/kit/trees.ts` (export `treeGeometry` — the private `treeGeo` renamed —, `TREE_VARIANTS` — the private `VARIANTS = 3` renamed —, and `treeCrownDetail(style, quality)` — the inline `detailOf` closure of the tree family's `build`, lifted), `src/render/kit/flowers.ts` (export `flowerGeometry`) — the trees and flowers changes are renames and exports only, no behaviour change. (The arena's ground and water compose `terrainMaterial(...)` / `waterMaterial(...)`'s returned options, which carry their hooks: those modules are not touched.)
 - `src/render/overworld/overworldView.ts` — uses `timeOfDay()` (output identical).
 - `src/game/state.ts` — `trainerClass`, `mapBattleScene`, `mapType` read in battle.
 - `tools/gen-symbols.ts` (+ regenerated `src/game/symbols.ts`), `src/main.ts` (`?battle=`, `emu.gbaPng()`), `tools/regress-live.ts`, `README.md`, `CLAUDE.md`.
@@ -97,7 +99,7 @@ Save states in `out/` (probed): `battle1.state` (battle, environment 9 PLAIN, fi
 
 **Interfaces:**
 - Produces (page, manual mode): `emu.gbaPng(): string` — PNG data URL of the PPU's current frame (`gba.ppu.framebuffer`, 240×160 RGBA8 as bytes — the words ScreenView uploads), upscaled 2× nearest on a canvas.
-- Produces (harness): `LiveEntry.sceneChange?: 'record' | 'gate'` — a walk between scenes (battle entry/exit): its steps after the first (an idle settle of ≥ 30 frames) run drained frame by frame exactly like the hitch fix's `crossings` entries and record, into stats `sceneChange`, `{ frames: { max, at, median, slowest: number[] }, programs: [afterSettle, end] }`; with `'gate'` the entry fails when a program compiles during the walk or a frame exceeds `SCENE_CHANGE_MS = 150`.
+- Produces (harness): `LiveEntry.sceneChange?: 'record' | 'gate'` — a walk between scenes (battle entry/exit): its steps after the first (an idle settle of ≥ 30 frames) run drained frame by frame exactly like the hitch fix's `crossings` entries and record, into stats `sceneChange`, the crossings' own `CrossingStats` (`frames`, `maxMs`, `maxAt`, `medianMs`, `slowest`, `programs: [afterSettle, end]`; a walk between scenes counts no world builds: `builds: [null, null]`, `lastBuildMs: null`); with `'gate'` the entry fails when a program compiles during the walk or a frame exceeds `SCENE_CHANGE_MS = 150`.
 - Produces (harness): `--battles` = the live entries whose name starts with `battle` plus (from Task 3) the static battle entries; every live battle entry also saves `gba_<entry>.png` (`emu.gbaPng()` after the steps).
 - Produces (harness): `const repeat = (n: number, steps: [string, number][]): [string, number][] => Array.from({ length: n }, () => steps).flat();`
 
@@ -111,14 +113,15 @@ Save states in `out/` (probed): `battle1.state` (battle, environment 9 PLAIN, fi
   { name: 'battle_move', state: 'out/battle1.state', steps: [['', 20], ['A', 2], ['', 70]] },
   // overworld transition → the battle's first 60 frames (record today's entry cost; gated from Task 4)
   { name: 'battle_enter', state: 'out/wild_transition.state', steps: [['', 30], ['', 330]], sceneChange: 'record' },
-  // the first battle played to its end (Zigzagoon faints) and back on Route 101 (≥ 30 overworld frames at the shot)
-  { name: 'battle_exit', state: 'out/battle1.state', steps: [['', 20], ...repeat(45, [['A', 2], ['', 38]])], sceneChange: 'record' },
+  // the first battle played to its end (Zigzagoon faints) and back on Route 101 (≥ 30 overworld frames at the shot);
+  // the first step is the scene-change walk's idle settle (≥ 30 frames), the A presses are retuned to it in Step 3
+  { name: 'battle_exit', state: 'out/battle1.state', steps: [['', 30], ...repeat(45, [['A', 2], ['', 38]])], sceneChange: 'record' },
 ```
 
-- [ ] **Step 2: Implement** `sceneChange` by sharing the crossing entries' drained loop and stats code (one helper for both; a sceneChange walk checks programs and frame times, not world builds), `--battles`, `gba_<entry>.png`, and `emu.gbaPng()` in `exposeManual` (`new ImageData(new Uint8ClampedArray(gba.ppu.framebuffer.buffer.slice(0)), 240, 160)` → canvas → 2× canvas with `imageSmoothingEnabled = false` → `toDataURL()`).
-- [ ] **Step 3: Tune the steps** with a probe script `.scratch/p3_battle_probe.ts` (load a state with `Gba.loadState`, step frames with `keyMask`, print per frame `GameState.scene`, `animActive`, and the sprites' templates/screen positions — as `tests/smoke/state.test.ts` does): `battle_move` ends with `animActive` true and a sprite that is neither a battler (`template === SYM.gMultiuseSpriteTemplate`) nor a HUD sprite on screen; `battle_enter` ends ≥ 60 frames after its first `battle` frame; `battle_exit` ends ≥ 30 frames after its first `overworld` frame. Record the frames that matter in the entry comments.
+- [ ] **Step 2: Implement** `sceneChange` by sharing the crossing entries' drained loop and stats code (one helper for both, one stats type: `CrossingStats`; a sceneChange walk checks programs and frame times, not world builds; its first step must be a settle of ≥ 30 frames, as a crossing's), `--battles`, `gba_<entry>.png`, and `emu.gbaPng()` in `exposeManual` (`new ImageData(new Uint8ClampedArray(gba.ppu.framebuffer.buffer.slice(0)), 240, 160)` → canvas → 2× canvas with `imageSmoothingEnabled = false` → `toDataURL()`).
+- [ ] **Step 3: Tune the steps** with a probe script `.scratch/p3_battle_probe.ts` (load a state with `Gba.loadState`, step frames with `keyMask`, print per frame `GameState.scene`, `animActive`, and the sprites' templates/screen positions — as `tests/smoke/state.test.ts` does): `battle_move` ends with `animActive` true and a sprite that is neither a battler (`template === SYM.gMultiuseSpriteTemplate`) nor a HUD sprite on screen; `battle_enter` ends ≥ 60 frames after its first `battle` frame; `battle_exit` (30-frame settle first) ends ≥ 30 frames after its first `overworld` frame — retune its A presses after the settle until it does. Record the frames that matter in the entry comments.
 - [ ] **Step 4: Determinism.** `npm run regress:live -- --label p3det1 --battles` then `--label p3det2 --battles --compare p3det1` → 0.00 % on every battle entry, both styles.
-- [ ] **Step 5: Baseline.** `npm run regress:live -- --label p3-base --gpu` (every live entry, both styles), then `npm run regress:live -- --label p3chk --only battle,transition --compare p2-base` → Retro 0.00 % (if not, find why and report it: the hitch fix must not have changed battles). Report per battle entry and style: calls, triangles, programs; for `battle_enter` / `battle_exit`: programs compiled during the walk and the five slowest drained frames — today's battle costs, which later tasks improve on.
+- [ ] **Step 5: Baseline.** `npm run regress:live -- --label p3-base --static --gpu` (every live entry and every static map entry, both styles: every later gate runs `--static --compare p3-base`, and a missing reference fails the run; no static battle entry exists yet — Task 3 adds the `b_*` ones to `p3-base`), then `npm run regress:live -- --label p3chk --only battle,transition --compare p2-base` → Retro 0.00 % (if not, find why and report it: the hitch fix must not have changed battles). Report per battle entry and style: calls, triangles, programs; for `battle_enter` / `battle_exit`: programs compiled during the walk and the five slowest drained frames — today's battle costs, which later tasks improve on.
 - [ ] **Step 6: Typecheck, test, commit.** `npx tsc --noEmit && npm test`; `git add tools/regress-live.ts src/main.ts && git commit -m "tools: battle save-state entries (intro, move, grass, entry, exit), GBA frame dumps, scene-change walks"`
 
 **Gates:** Retro — `battle`/`transition` 0.00 % vs `p2-base` (no renderer code changed). Programs — none new; `battle_enter`/`battle_exit` *record* today's compiles (gated from Task 4).
@@ -413,7 +416,7 @@ No save state reaches 21 of the 24 arena kinds, double battles or floating Poké
 
 **Files:**
 - Create: `src/render/battlePreview.ts`, `tests/battlePreview.test.ts`
-- Modify: `src/main.ts` (`?battle=` dispatch next to `?map=`), `tools/regress-live.ts` (`STATIC_BATTLE`, `ref_<entry>.png`, `--review`, `--review-before <label>`)
+- Modify: `src/main.ts` (`?battle=` dispatch next to `?map=`), `tools/regress-live.ts` (`STATIC_BATTLE`, `ref_<entry>.png`, `--review`, `--review-before <label>`), `src/render/battle/battleView.ts` (`setActorMask(on: boolean)`: today's cards' `Billboards.setMask(on)` — the harness masks every static entry)
 
 **Interfaces:**
 - Consumes: `arenaInputsFor`, `ARENA_KINDS` (Task 2); `readBattleBackground`, `installBattleBackground`, `readMonPic`, `battlerScreenPos`, `readEnemyShadow` (Task 2); `blankSprite` (`previewActors.ts`).
@@ -426,6 +429,11 @@ No save state reaches 21 of the 24 arena kinds, double battles or floating Poké
   export function previewBattleSprites(battlers: readonly PreviewBattler[], double: boolean): SpriteSnap[];
   export class BattlePreviewApp {
     constructor(canvas: HTMLCanvasElement, rom: Uint8Array, kind: ArenaKind, params: URLSearchParams);
+    // the existing static-entry path reads these from every preview page: `webgl` (GPU name, first entry static),
+    // `focusError` (always null here: no focus), `setActorMask` before the mask shot
+    readonly webgl: THREE.WebGLRenderer;
+    focusError: string | null;          // = null
+    setActorMask(on: boolean): void;    // BattleView.setActorMask: the cards' mask (Task 5 routes it through BattleActors)
     frames(n: number): void;            // n frames at 1/60 s
     renderStill(): void;                // one frame, no time step (the mask shot)
     gpuFrames(n: number): Promise<GpuTiming>;
@@ -435,7 +443,7 @@ No save state reaches 21 of the 24 arena kinds, double battles or floating Poké
     setStyle(s: WorldStyle): void;      // the battle's world style (harness --ab-feature battle, Task 4)
   }
   ```
-  URL: `/?battle=<kind>&player=<species>&enemy=<species>[&double=1&player2=<species>&enemy2=<species>][&hour=11][&style=modern|retro][&quality=…][&spriteFilter=…][&manual=1][&yaw=<rad>]`. Scratch hardware: `new Bus(rom)`; `installBattleBackground` into `bus.vram` and BG palettes; `bus.io16[0x0e >> 1] = BG3CNT_BATTLE`, `bus.io16[0] = 0xbf40` (OBJ 1D mapping, as live battles); battler tiles at `0x10000 + tile * 32`, palettes into OBJ palette slots (`pram16[256 + slot * 16]`); every palette written also into the EWRAM unfaded buffer at `(SYM.gPlttBufferUnfaded & 0x3ffff) >> 1` (BattleView samples the background there); fake `GameState`: `{ mem: new Mem(bus), sprites, battleEnvironment, battleType, trainerClass, mapBattleScene, mapType, hours, minutes, animActive: false, target: 0, battlers: [] }` from `arenaInputsFor(kind)` and `&hour`. Frame: `spriteAtlas.update(webgl, sprites, false)` → `battle.update(state, dt, { yaw, pitch: 0, zoom }, [])` → `post.render(dt)` (PostFX on the battle scene).
+  URL: `/?battle=<kind>&player=<species>&enemy=<species>[&double=1&player2=<species>&enemy2=<species>][&hour=11][&style=modern|retro][&quality=…][&spriteFilter=…][&manual=1][&yaw=<rad>]`. Scratch hardware: `new Bus(rom)`; `installBattleBackground` into `bus.vram` and BG palettes; `bus.io16[0x0e >> 1] = BG3CNT_BATTLE`, `bus.io16[0] = 0xbf40` (OBJ 1D mapping, as live battles); battler tiles at `0x10000 + tile * 32`, palettes into OBJ palette slots (`pram16[256 + slot * 16]`); every palette written also into the EWRAM unfaded buffer at `(SYM.gPlttBufferUnfaded & 0x3ffff) >> 1` (BattleView samples the background there); fake `GameState`: `{ mem: new Mem(bus), sprites, battleEnvironment, battleType, trainerClass, mapBattleScene, mapType, hours, minutes, animActive: false, target: 0, battlers: [] }` from `arenaInputsFor(kind)` and `&hour`. Frame: `spriteAtlas.update(webgl, sprites, false)` → `battle.update(state, dt, input, [])` → `post.render(dt)` (PostFX on the battle scene), where `input` = `{ yaw: Number(params.get('yaw') ?? 0), pitch: 0, zoom: 0 }` on the preview's first frame and `{ yaw: 0, pitch: 0, zoom: 0 }` on every later one (`BattleView.update` adds `input.yaw` and scales the zoom by 1.1^`input.zoom` every frame: per-frame deltas, which the renderer zeroes after each frame too).
 - Produces (harness), run with `--static` or `--battles`; each: `/?battle=…&manual=1&<q>&style=…`, `preview.frames(150)` (the battle camera's 2.2 s intro sweep has ended), screenshot, `preview.stats()`, `ref_<entry>.png` from `preview.referencePng()`:
   ```ts
   const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/constants/species.h)
@@ -500,10 +508,10 @@ describe('previewBattleSprites', () => {
 ```
 
 - [ ] **Step 2: Run** `npx vitest run tests/battlePreview.test.ts` → FAIL.
-- [ ] **Step 3: Implement** `previewBattleSprites` (each sprite from `blankSprite({ index, template, width, height, tileNum, palette, affine: true, coordOffset: false, screenX, screenY })`, `index` = its order), `BattlePreviewApp` (as Interfaces; `referencePng` decodes BG3 with `decodeBg3` and draws each sprite's 4bpp tiles with its palette, index 0 transparent), the `?battle=` dispatch, the harness additions.
+- [ ] **Step 3: Implement** `previewBattleSprites` (each sprite from `blankSprite({ index, template, width, height, tileNum, palette, affine: true, coordOffset: false, screenX, screenY })`, `index` = its order), `BattlePreviewApp` (as Interfaces; `referencePng` decodes BG3 with `decodeBg3` and draws each sprite's 4bpp tiles with its palette, index 0 transparent; `webgl`, `focusError = null` and `setActorMask` so the existing static-entry path runs unchanged), `BattleView.setActorMask`, the `?battle=` dispatch, the harness additions.
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
 - [ ] **Step 5: Look.** `npm run regress:live -- --label t3 --battles --review` and read `_review_battle.png`: every static entry's Modern and Retro shots show today's battle look (no arena change yet) with the battlers where the GBA column draws them (platform side, height, the Zubat shadow under the floating enemy); `b_double` shows four battlers; live entries unchanged (`--compare p3-base`: 0.00 %). Then add the static baseline without touching the live one: `npm run regress:live -- --label p3-base --only <every b_* entry> --gpu` (both styles).
-- [ ] **Step 6: Commit** — `git add src/render/battlePreview.ts tests/battlePreview.test.ts src/main.ts tools/regress-live.ts && git commit -m "preview: static battles of every arena kind from ROM data, GBA reference pictures, battle review sheet"`
+- [ ] **Step 6: Commit** — `git add src/render/battlePreview.ts tests/battlePreview.test.ts src/main.ts tools/regress-live.ts src/render/battle/battleView.ts && git commit -m "preview: static battles of every arena kind from ROM data, GBA reference pictures, battle review sheet"`
 
 **Gates:** Retro — live entries 0.00 % vs `p3-base`; static battle entries captured into `p3-base` (Retro = today's look). Programs — none new (today's battle path only).
 
@@ -517,7 +525,7 @@ Restructures the battle without changing a pixel: the reference projection moves
 
 **Files:**
 - Create: `src/render/battle/stage.ts`, `src/render/battle/battleActors.ts`, `src/render/battle/modernArena.ts`, `src/render/battle/catalogue.ts`, `tests/battleStage.test.ts`, `tests/battleActors.test.ts`, `tests/modernArena.test.ts`, `tests/battleCatalogue.test.ts`
-- Modify: `src/render/battle/battleView.ts`, `src/render/renderer.ts`, `src/render/battlePreview.ts`, `src/render/kit/catalogue.ts` (export the private `triangle` as `catalogueTriangle`), `tools/regress-live.ts` (`--ab-feature battle`; `battle_enter` / `battle_exit` → `sceneChange: 'gate'`; a static entry `b_grass_fail` = `b_grass` + `&arenaFail=ground`)
+- Modify: `src/render/battle/battleView.ts`, `src/render/renderer.ts`, `src/render/battlePreview.ts`, `src/render/kit/catalogue.ts` (export the private `triangle` as `catalogueTriangle`; `programSignature` takes a material array: today's arena platforms draw with `[platformSide, platformTop, platformSide]`), `tools/regress-live.ts` (`--ab-feature battle`; `battle_enter` / `battle_exit` → `sceneChange: 'gate'`; a static entry `b_grass_fail` = `b_grass` + `&arenaFail=ground`)
 
 **Interfaces:**
 - Produces (`stage.ts`) — moved verbatim from `BattleView.setupReference` / `rayOrigin` / `groundHit` / `depthOf` / `at` (same operations in the same order: bit-identical):
@@ -547,8 +555,9 @@ Restructures the battle without changing a pixel: the reference projection moves
   /** Today's isActor: a battler or trainer picture (gMultiuseSpriteTemplate, gBattlerSpriteTemplates[4]). */
   export function isBattler(s: SpriteSnap): boolean;
   export function isEnemyShadow(s: SpriteSnap): boolean;          // template === SYM.gSpriteTemplate_EnemyShadow
-  /** invisible → skip; HUD template → hud; Retro or !inflation → card; Modern: objMode 2 (OBJ window) → skip, battler →
-   *  inflated, enemy shadow → decal, else card. (Task 4 draws 'inflated' and 'decal' as cards.) */
+  /** Task 4: invisible → skip; HUD template → hud; every other sprite → card, in both styles (today's: OBJ-window clones
+   *  and the enemy shadow included). Task 5 adds the Modern routing: Retro or !inflation → card; Modern: objMode 2 (OBJ
+   *  window) → skip, battler → inflated, enemy shadow → decal, else card. */
   export function battleRoute(s: SpriteSnap, style: WorldStyle, inflation: boolean): BattleRoute;
   /** Today's card (BattleView.buildBillboards' maths, moved verbatim): visible rectangle (double-size offset, 512/256
    *  wrap), depth = player/enemy depth for battlers (cx < 120), else interpolated across xP 72 .. xE 176; height stretched
@@ -564,7 +573,10 @@ Restructures the battle without changing a pixel: the reference projection moves
       charLight: THREE.Color, hud: SpriteSnap[]): void;
     counts(): { cards: number; inflated: number; decals: number };
     setSpriteFilter(f: SpriteFilter): void; setMask(on: boolean): void; showAll(): () => void;
-    checkInstanceUniforms(programs: readonly ProgramInfo[]): boolean;   // Task 5
+    /** Task 4: a stub returning false (no inflated mesh yet; finishPrecompile already calls it). Task 5: when the battle
+     *  variant's uniform-array programs failed (instanceUniformsFailed(programs, 'battle')), rebuilds the inflated mesh on
+     *  instance attributes and returns true. */
+    checkInstanceUniforms(programs: readonly ProgramInfo[]): boolean;
   }
   ```
 - Produces (`modernArena.ts`):
@@ -597,6 +609,7 @@ Restructures the battle without changing a pixel: the reference projection moves
   ```
 - Produces (`catalogue.ts`):
   ```ts
+  // (imports the CatalogueEntry and ArenaPart types from modernArena.ts)
   export interface BattleCatalogue { root: THREE.Group; dispose(): void }
   /** One tiny mesh per program variant of the parts' catalogue entries (kit materials from `uniforms`' pool, deduped by
    *  programSignature) plus legacyArenaMeshes(). */
@@ -604,8 +617,8 @@ Restructures the battle without changing a pixel: the reference projection moves
   /** Today's arena (BattleArena) built for environments 0..9 at the stage's platforms: one detached mesh per program signature. */
   export function legacyArenaMeshes(): THREE.Mesh[];
   ```
-- Produces (`BattleView`): constructor `(spriteAtlas: SpriteAtlas, opts?: { instanceUniforms?: boolean })`; `quality: Quality`; `get worldStyle(): WorldStyle`; `setWorldStyle(s)`; `precompile(renderer): Promise<void>`; `get precompileReady(): boolean`; `finishPrecompile(renderer): void`; `precompileFrame: (() => void) | null`; `arenaFailPart: string | null` (the preview's `&arenaFail=<name>`: the part of that name throws; with no such part — before Task 6 — a throwing part of that name covering every kind is added, so the fallback path is exercised from this task on). Rule: the Modern arena is drawn when `worldStyle === 'modern' && modern.covers(kind) && build succeeded`; otherwise today's arena — built (`setEnvironment`, `setColors`) lazily, only while shown, with exactly today's calls and timing in Retro (the intro reset on an environment change happens in both styles).
-- Produces (`Renderer`): `precompiled()` awaits the overworld's and the battle's; `finishPrecompile()` draws both frames; `render()` draws the battle precompile frame when ready while the battle is not presented, and at the first battle sync at the latest; `setWorldStyle(s)` also sets the battle's; `this.battle.quality = this.quality`; `battle.precompileFrame = () => { post.setCamera(battle.scene, battle.camera); post.render(0); }`.
+- Produces (`BattleView`): constructor `(spriteAtlas: SpriteAtlas, opts?: { instanceUniforms?: boolean })`; the battle's own `KitUniforms` (`createKitUniforms()`, created here: `new ModernArena(uniforms)` takes them, Task 5's battler rim reads their `uSky`), whose `uSky` follows today's battle sky colour (`arena.skyColor`, copied each frame) until Task 6 drives it from `arenaLook`; `setActorMask(on)` (Task 3's) forwards to `actors.setMask`; `quality: Quality`; `get worldStyle(): WorldStyle`; `setWorldStyle(s)`; `precompile(renderer): Promise<void>`; `get precompileReady(): boolean`; `finishPrecompile(renderer): void`; `precompileFrame: (() => void) | null`; `arenaFailPart: string | null` (the preview's `&arenaFail=<name>`: the part of that name throws; with no such part — before Task 6 — a throwing part of that name covering every kind is added, so the fallback path is exercised from this task on). Rule: the Modern arena is drawn when `worldStyle === 'modern' && modern.covers(kind) && build succeeded`; otherwise today's arena — built (`setEnvironment`, `setColors`) lazily, only while shown, with exactly today's calls and timing in Retro (the intro reset on an environment change happens in both styles).
+- Produces (`Renderer`): `precompiled()` awaits the overworld's and the battle's; `finishPrecompile()` draws both frames, then compiles the renderer-level programs nothing else precompiles, each drawn once into a 1×1 target — the fade quad (`fadeScene` at an opacity > 0: the palette fade at a battle's end), `ScreenView` (its blur passes and screen quad: the `screen2d` frames of the `transition` after a battle) and the HUD (overlay + one sprite: first drawn after `wild_transition`'s battleTransition settle) — so `battle_enter` / `battle_exit` compile nothing (Task 1's recorded walk programs confirm the list; any other program those walks first use is added the same way); the battle precompile frame is drawn only there (boot, behind the loader; the harness's `eval`) or, when `finishPrecompile()` has not run, at the first battle sync — never inside an overworld frame (the hitch-fix ruling: a blocking compile frame mid-overworld is a hitch and breaks the crossing gates); `setWorldStyle(s)` also sets the battle's; `this.battle.quality = this.quality`; `battle.precompileFrame = () => { post.setCamera(battle.scene, battle.camera); post.render(0); }`.
 
 - [ ] **Step 1: Write the failing tests.** `tests/battleStage.test.ts`
 
@@ -663,8 +676,14 @@ describe('battleCardSpec (today\'s placement)', () => {
 describe('battleRoute', () => {
   it('Task 4: Retro and Modern both draw every visible non-HUD sprite as a card until Task 5 routes it', () => {
     expect(isBattler(battler(0, 40, 53))).toBe(true);
-    expect(battleRoute(battler(0, 40, 53), 'retro', true)).toBe('card');
-    expect(battleRoute(blankSprite({ invisible: true }), 'retro', true)).toBe('skip');
+    const shadow = blankSprite({ index: 2, template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, coordOffset: false, screenX: 160, screenY: 65 });
+    for (const style of ['retro', 'modern'] as const) {
+      expect(battleRoute(battler(0, 40, 53), style, true)).toBe('card');
+      expect(battleRoute({ ...battler(0, 40, 53), objMode: 2 }, style, true)).toBe('card');   // an OBJ-window clone: today's card
+      expect(battleRoute(shadow, style, true)).toBe('card');
+      expect(battleRoute(effect(1, 108), style, true)).toBe('card');
+      expect(battleRoute(blankSprite({ invisible: true }), style, true)).toBe('skip');
+    }
     expect(battleRoute(blankSprite({ template: 0x0832c140 }), 'modern', true)).toBe('hud');   // a healthbox
   });
 });
@@ -781,13 +800,13 @@ describe('battle program catalogue (drift guard)', () => {
 - [ ] **Step 2: Run** `npx vitest run tests/battleStage.test.ts tests/battleActors.test.ts tests/modernArena.test.ts tests/battleCatalogue.test.ts` → FAIL.
 - [ ] **Step 3: Implement** in this order, re-running the harness subset (`--only battle,battle_move --compare p3-base`) after each move so a pixel slip is caught where it happens:
   1. `stage.ts` (moved maths) and `BattleView` using `STAGE` (`arena.setPlatforms(STAGE.player, STAGE.enemy)` in the constructor as today).
-  2. `battleActors.ts`: `battleCardSpec` = `buildBillboards`' body for one sprite; `BattleActors` owns today's `Billboards` (same constructor argument, added to the scene as before) and builds the list in sprite order into a reused spec pool; `BattleView.update` calls it with today's `cameraRight` / `charLight`.
-  3. `modernArena.ts` (`build` loops the covering parts in `ARENA_PARTS` order inside try/catch; `dispose`/rebuild via the kit's `disposeKit(group, ctx)`; `arenaFailPart` wraps the part of that name in a throwing one), the style switch and the lazy today's-arena rule in `BattleView` (Retro: the same `setEnvironment` / `setColors` calls at the same frames as today).
-  4. `catalogue.ts`: per entry `new THREE.Mesh | InstancedMesh(catalogueTriangle(e.attrs), km.material, 1)` + `applyKitMaterial`, `setColorAt(0, white)` for `instancedColors`, `castShadow` / `receiveShadow`, `frustumCulled = false`, dedupe by `programSignature`; `legacyArenaMeshes()` builds ten `BattleArena`s and keeps one detached mesh per signature.
-  5. `BattleView.precompile` mirrors `OverworldView.precompile`: the catalogue root added to the battle scene with `actors.showAll()`, `compileAsync(this.scene, this.camera)` into a 1×1 target, scene restored; `finishPrecompile` draws one frame (`precompileFrame`, else a 1×1 render) with them shown, then `actors.checkInstanceUniforms(renderer.info.programs)`, restores, disposes the catalogue; a failure logs once ("[battle] precompile failed (programs compile on first use instead)").
-  6. `Renderer` wiring (Interfaces), preview `setStyle` / `&arenaFail=` / precompile before its first frame, harness: `--ab-feature battle` (`live: on => emu.renderer.battle.setWorldStyle(on ? 'modern' : 'retro')`, `preview: on => preview.setStyle(on ? 'modern' : 'retro')`, `previewWhen: q => q.startsWith('battle=')`, budgets 3.0 / 0.5), `battle_enter` and `battle_exit` switched to `sceneChange: 'gate'` with `eval: 'emu.renderer.precompiled().then(() => emu.renderer.finishPrecompile())'` (in manual mode nothing waits for the boot compile: the gate measures play, not boot).
+  2. `battleActors.ts`: `battleCardSpec` = `buildBillboards`' body for one sprite; `battleRoute` sends every visible non-HUD sprite to a card in both styles (the Modern routing is Task 5's); `BattleActors` owns today's `Billboards` (same constructor argument, added to the scene as before) and builds the list in sprite order into a reused spec pool; `BattleView.update` calls it with today's `cameraRight` / `charLight`; `BattleView.setActorMask` (Task 3) now calls `actors.setMask`.
+  3. `modernArena.ts` (`build` loops the covering parts in `ARENA_PARTS` order inside try/catch; `dispose`/rebuild via the kit's `disposeKit(group, ctx)`; `arenaFailPart` wraps the part of that name in a throwing one), the battle `KitUniforms` (Interfaces) handed to `new ModernArena(uniforms)`, the style switch and the lazy today's-arena rule in `BattleView` (Retro: the same `setEnvironment` / `setColors` calls at the same frames as today).
+  4. `kit/catalogue.ts`: `programSignature` takes a mesh whose material is an array (today's arena platforms: `[platformSide, platformTop, platformSide]`): its material part becomes the signatures of the array's materials in order, joined — `(Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((m) => kitMaterialKind(m) ?? materialSignature(m)).join(' + ')` — so a single material's signature is exactly today's (no overworld mesh uses arrays: `tests/smoke/catalogue.test.ts` is unaffected); `triangle` exported as `catalogueTriangle`. Then `catalogue.ts`: per entry `new THREE.Mesh | InstancedMesh(catalogueTriangle(e.attrs), km.material, 1)` + `applyKitMaterial`, `setColorAt(0, white)` for `instancedColors`, `castShadow` / `receiveShadow`, `frustumCulled = false`, dedupe by `programSignature`; `legacyArenaMeshes()` builds ten `BattleArena`s and keeps one detached mesh per signature.
+  5. `BattleView.precompile` mirrors `OverworldView.precompile`: the catalogue root added to the battle scene with `actors.showAll()`, `compileAsync(this.scene, this.camera)` into a 1×1 target, scene restored; `finishPrecompile` draws one frame (`precompileFrame`, else a 1×1 render) with them shown, then `actors.checkInstanceUniforms(renderer.info.programs)` (this task's stub: returns false), restores, disposes the catalogue; a failure logs once ("[battle] precompile failed (programs compile on first use instead)").
+  6. `Renderer` wiring (Interfaces: the fade quad, `ScreenView` and the HUD compiled in `finishPrecompile()`; the battle precompile frame only there or at the first battle sync), preview `setStyle` / `&arenaFail=` / precompile before its first frame, harness: `--ab-feature battle` (`live: on => emu.renderer.battle.setWorldStyle(on ? 'modern' : 'retro')`, `preview: on => preview.setStyle(on ? 'modern' : 'retro')`, `previewWhen: q => q.startsWith('battle=')`, budgets 3.0 / 0.5), `battle_enter` and `battle_exit` switched to `sceneChange: 'gate'` with `eval: 'emu.renderer.precompiled().then(() => emu.renderer.finishPrecompile())'` (in manual mode nothing waits for the boot compile: the gate measures play, not boot).
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS (the drift guard compares today's arenas only: `ARENA_PARTS` is empty).
-- [ ] **Step 5: Verify.** `npm run regress:live -- --label t4 --static --battles --compare p3-base` → **0.00 % on every entry in both styles** (Modern still draws today's arena); `battle_enter` and `battle_exit` pass the scene-change gate in both styles (0 programs compiled, slowest frame ≤ 150 ms; report the numbers against Task 1's); `b_grass_fail` Modern looks like `b_grass` Modern and the page logged the part warning once; the A/B runs (`--ab --ab-feature battle --only battle,b_grass`: both arms are today's arena, Δ within the A/A floor ±0.3 ms — a sanity run of the switch). The overworld guard `npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/catalogue.test.ts` passes.
+- [ ] **Step 5: Verify.** First check `b_grass_fail` against `b_grass` and give it its own reference (it is new: without one, every `--compare p3-base` run fails on it): copy `out/regress-live/p3-base/b_grass_<style>.png` (Task 3's) to `out/regress-live/p3failref/b_grass_fail_<style>.png` for both styles, run `npm run regress:live -- --label t4fail --only b_grass_fail --compare p3failref` → 0.00 % in both styles, the page logging the part warning once; then `npm run regress:live -- --label p3-base --only b_grass_fail --gpu` (both styles). That equality to `b_grass` holds only until Task 6 (from then on Modern `b_grass` draws the Modern arena, `b_grass_fail` today's), so the entry carries no `sameAs`: every later gate compares it to its own `p3-base` reference. Then `npm run regress:live -- --label t4 --static --battles --compare p3-base` → **0.00 % on every entry in both styles** (Modern still draws today's arena); `battle_enter` and `battle_exit` pass the scene-change gate in both styles (0 programs compiled, slowest frame ≤ 150 ms; report the numbers against Task 1's); the A/B runs (`--ab --ab-feature battle --only battle,b_grass`: both arms are today's arena, Δ within the A/A floor ±0.3 ms — a sanity run of the switch). The overworld guard `npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/catalogue.test.ts` passes.
 - [ ] **Step 6: Commit** — `git add src/render/battle/stage.ts src/render/battle/battleActors.ts src/render/battle/modernArena.ts src/render/battle/catalogue.ts src/render/battle/battleView.ts src/render/renderer.ts src/render/battlePreview.ts src/render/kit/catalogue.ts tools/regress-live.ts tests/battleStage.test.ts tests/battleActors.test.ts tests/modernArena.test.ts tests/battleCatalogue.test.ts && git commit -m "refactor(battle): stage, actors and arenas split by world style; every battle program compiled at boot (catalogue + drift guard)"`
 
 **Gates:** Retro — 0.00 % everywhere, and Modern 0.00 % everywhere (nothing Modern-specific is drawn yet). Programs — drift guard passes; `battle_enter` / `battle_exit` compile 0 programs in both styles; overworld guard passes.
@@ -801,7 +820,7 @@ describe('battle program catalogue (drift guard)', () => {
 Battlers (and trainer pictures) become Phase 2 inflated sprites in Modern: a battle `SpriteField` with parameters for 64-px pictures, a battle variant of `InflatedActors` (own program keys, relief down to the feet), silhouette sun shadows on the platforms, HD sprite edges and the Sprite edges setting. Effects stay cards; the enemy shadow lies flat on its platform; OBJ-window masks are skipped. Arenas are still today's.
 
 **Files:**
-- Modify: `src/render/actors/inflateMath.ts` (`BATTLE_INFLATE`), `src/render/actors/inflatedActors.ts` (`InflatedVariant`; `instanceUniformsFailed(programs, tag?)`), `src/render/actors/selfTest.ts` (`FieldSelfTest.inflateMax`), `src/render/battle/battleActors.ts`, `src/render/battle/battleView.ts` (owns the battle `SpriteField`, `updateField(renderer)`, `setSpriteFilter`, `setActorMask`, `inflation`), `src/render/renderer.ts` (battle branch: `battle.updateField(webgl)` after the atlas update; `setSpriteFilter` and a new `setActorMask(on)` reach both views; `actorSelfTest` / `actorFieldDump` use the presented view's field), `src/render/battlePreview.ts` (same; `selfTest`, `fieldDump`, `setActorMask`, `setInflation`), `tools/regress-live.ts` (masks through `emu.renderer.setActorMask` / `preview.setActorMask` for every entry; self-test tolerance from the result's `inflateMax`; `selftest` on `battle` and `b_grass`; `--ab-feature battlers`; live `battle_switch`; `battle_exit` gains `selftest: true`)
+- Modify: `src/render/actors/inflateMath.ts` (`BATTLE_INFLATE`), `src/render/actors/inflatedActors.ts` (`InflatedVariant`; `instanceUniformsFailed(programs, tag?)`), `src/render/actors/selfTest.ts` (`FieldSelfTest.inflateMax`), `src/render/battle/battleActors.ts`, `src/render/battle/battleView.ts` (owns the battle `SpriteField`, `updateField(renderer)`, `setSpriteFilter`, `inflation`; Task 3's `setActorMask` masks through `BattleActors.setMask`: cards, inflated mesh and decals), `src/render/renderer.ts` (battle branch: `battle.updateField(webgl)` after the atlas update; `setSpriteFilter` and a new `setActorMask(on)` reach both views; `actorSelfTest` / `actorFieldDump` use the presented view's field), `src/render/battlePreview.ts` (same; `selfTest`, `fieldDump`, `setInflation`; its Task 3 `setActorMask` now reaches the inflated battlers through `BattleActors`), `tools/regress-live.ts` (masks through `emu.renderer.setActorMask` / `preview.setActorMask` for every entry; self-test tolerance from the result's `inflateMax`; `selftest` on `battle` and `b_grass`; `--ab-feature battlers`; live `battle_switch`; `battle_exit` gains `selftest: true`)
 - Test: `tests/inflatedActors.test.ts`, `tests/inflateMath.test.ts`, `tests/battleActors.test.ts`
 
 **Interfaces:**
@@ -824,7 +843,7 @@ Battlers (and trainer pictures) become Phase 2 inflated sprites in Modern: a bat
   // selfTest.ts: FieldSelfTest gains `inflateMax: number` (inflateMax(field.params)); the harness gates
   // maxErr / fixtureMaxErr ≤ max(0.02, 0.003 · inflateMax) per result.
   ```
-  `BattleActors` (Modern, `inflation` on): `'inflated'` → `InflatedActors.set(list, cameraRight, eye)` with `BATTLE_VARIANT`, the battle field, `rim` = the battle's `uSky` colour object, `setLightFloor(charLight)`; `'decal'` → a flat card (`flat: true`) whose rectangle lies on the platform top (y = 0) under the sprite's screen rectangle: `footX` = the ground hit of its centre, footZ / height spanning the ground hits of its top and bottom edges, `width` = its screen width / `PX`; `'skip'` → nothing. `skipOverridePasses` on the cards and the inflated mesh (GTAO). No contact shadows (the sun silhouette lands on the platform). Retro: unchanged cards; the inflated mesh hidden with an empty list.
+  `BattleActors` (Modern, `inflation` on): `'inflated'` → `InflatedActors.set(list, cameraRight, eye)` with `BATTLE_VARIANT`, the battle field, `rim` = the battle's `uSky` colour object (Task 4's battle `KitUniforms`; it keeps today's battle sky colour in this task — Task 6 drives it from `arenaLook` and re-runs the luminance gate), `setLightFloor(charLight)`; `'decal'` → a flat card (`flat: true`) whose rectangle lies on the platform top (y = 0) under the sprite's screen rectangle: `footX` = the ground hit of its centre, footZ / height spanning the ground hits of its top and bottom edges, `width` = its screen width / `PX`; `'skip'` → nothing. `skipOverridePasses` on the cards and the inflated mesh (GTAO). No contact shadows (the sun silhouette lands on the platform). Retro: unchanged cards; the inflated mesh hidden with an empty list.
 
 - [ ] **Step 1: Write the failing tests** — in `tests/inflatedActors.test.ts` (with `patched(a)` = the material's `onBeforeCompile` applied to `THREE.ShaderLib.standard`, as the existing chunk test does):
 
@@ -845,10 +864,10 @@ it('checks the uniform-array programs of the variant it is asked about', () => {
   expect(instanceUniformsFailed(failed)).toBe(false);
   expect(instanceUniformsFailed(failed, 'battle')).toBe(true);
 });
-it('keeps a zero-width actor finite (a battler growing from nothing at send-out)', () => {
-  const a = make();
-  a.set([{ footX: 1, footY: 0, footZ: 3, width: 0, height: 0, lift: 0, flat: false, slot: { u0: 0, v0: 0.125, u1: 0, v1: 0 } }], new THREE.Vector3(1, 0, 0));
-  expect([...a.instances.subarray(0, 12)].every(Number.isFinite)).toBe(true);
+it('keeps a zero-width actor finite (a battler growing from nothing at send-out): the battle shader guards its texel size', () => {
+  // (set() only copies finite spec numbers: a NaN could only arise in the shader, dividing by the slot's texel width)
+  const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
+  expect(patched(a).vertexShader).toContain('float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);');
 });
 ```
 
@@ -863,7 +882,7 @@ it('battle parameters inflate a 64-px Pokémon in proportion to a 16-px characte
 });
 ```
 
-  in `tests/battleActors.test.ts` (replace the Task 4 route test; extend the import from `battleActors` with `battleDecalSpec`; `shadow = blankSprite({ index: 2, template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, coordOffset: false, screenX: 160, screenY: 65 })`):
+  in `tests/battleActors.test.ts` (replace the Task 4 route test; extend the import from `battleActors` with `battleDecalSpec`; add `import type { SpriteSnap } from '../src/game/state';`; `const shadow = blankSprite({ index: 2, template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, coordOffset: false, screenX: 160, screenY: 65 });` at the top level):
 
 ```ts
 it('Modern inflates battlers, lays the enemy shadow flat, skips OBJ-window masks; Retro draws cards', () => {
@@ -880,7 +899,8 @@ it('Modern inflates battlers, lays the enemy shadow flat, skips OBJ-window masks
 it('routes a battle frame per style, four battlers in a double battle', () => {
   const atlas = { slots: new Map([0, 1, 2, 3, 4, 5].map((i) => [i, slot])), target: { texture: new THREE.Texture() } };
   const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
-  const args = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), []] as const;
+  const hud: SpriteSnap[] = [];
+  const args = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), hud] as const;
   const single = [battler(0, 40, 53), battler(1, 144, 23), shadow, effect(3, 108)];
   a.update(single, 'modern', ...args); expect(a.counts()).toEqual({ cards: 1, inflated: 2, decals: 1 });
   a.update(single, 'retro', ...args);  expect(a.counts()).toEqual({ cards: 4, inflated: 0, decals: 0 });
@@ -889,10 +909,15 @@ it('routes a battle frame per style, four battlers in a double battle', () => {
   const decal = battleDecalSpec(shadow, slot, STAGE);
   expect(decal.flat).toBe(true); expect(decal.footY).toBeCloseTo(0, 6);
 });
+it('gives a sprite scaled to nothing (affine growth at send-out) finite card and decal specs', () => {
+  const finite = (s: ReturnType<typeof battleCardSpec>) => [s.footX, s.footY, s.footZ, s.width, s.height, s.lift].every(Number.isFinite);
+  expect(finite(battleCardSpec({ ...battler(0, 40, 53), scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
+  expect(finite(battleDecalSpec({ ...shadow, scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
+});
 ```
 
 - [ ] **Step 2: Run** `npx vitest run tests/inflatedActors.test.ts tests/inflateMath.test.ts tests/battleActors.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** `InflatedVariant` threads through `vertPrelude`/`FIELD_GLSL` (`shadeSlope`'s constant from `variant.params.amp`; `VERT_POSITION` emits `float relief = 1.0;` for a null fade, else today's line — the overworld's generated GLSL stays byte-identical) and `programKey`; `battleActors` routes and the decal spec (`battleDecalSpec(s, slot, stage, out?)`, exported); `BattleView` owns `new SpriteField(undefined, undefined, BATTLE_INFLATE)`, updates it after the atlas in Modern with inflation on, compiles it in `precompile` (`field.compile(renderer)`), and passes `instanceUniforms` from the renderer (`instanceUniformsFit(...)`); renderer/preview/harness wiring as listed. Live `battle_switch`: `{ name: 'battle_switch', state: 'out/battle1.state', sameAs: 'battle', steps: [['', 6], ['', 6, TOGGLE_STYLE], ['', 6, TOGGLE_STYLE], ['', 6, "emu.renderer.setSpriteFilter('pixel')"], ['', 6, "emu.renderer.setSpriteFilter('smooth')"]] }` (`TOGGLE_STYLE` switches `emu.renderer`'s world style, which now reaches the battle).
+- [ ] **Step 3: Implement.** `InflatedVariant` threads through `vertPrelude`/`FIELD_GLSL` (`shadeSlope`'s constant from `variant.params.amp`; `VERT_POSITION` emits `float relief = 1.0;` for a null fade, else today's line — the overworld's generated GLSL stays byte-identical) and `programKey`; `battleActors` routes (the Modern routing, OBJ-window skip included, lands here) and the decal spec (`battleDecalSpec(s, slot, stage, out?)`, exported), and `checkInstanceUniforms` replaces Task 4's stub (the attribute fallback, as `ActorLayer.checkInstanceUniforms`, with `instanceUniformsFailed(programs, 'battle')`); `BattleView` owns `new SpriteField(undefined, undefined, BATTLE_INFLATE)`, updates it after the atlas in Modern with inflation on, compiles it in `precompile` (`field.compile(renderer)`), and passes `instanceUniforms` from the renderer (`instanceUniformsFit(...)`); renderer/preview/harness wiring as listed. Live `battle_switch`: `{ name: 'battle_switch', state: 'out/battle1.state', sameAs: 'battle', steps: [['', 6], ['', 6, TOGGLE_STYLE], ['', 6, TOGGLE_STYLE], ['', 6, "emu.renderer.setSpriteFilter('pixel')"], ['', 6, "emu.renderer.setSpriteFilter('smooth')"]] }` (`TOGGLE_STYLE` switches `emu.renderer`'s world style, which now reaches the battle).
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
 - [ ] **Step 5: Look and tune.** `npm run regress:live -- --label t5 --static --battles --selftest --gpu --compare p3-base --review --review-before p3-base`; tune `BATTLE_INFLATE` (amp, cap, sigma), keeping `RIM`, `LIGHT_FLOOR`, `SHOULDER` as Phase 2's, until on the review sheet and the Modern shots:
   - battlers read as soft rounded volumes (Torchic's head and body, Zigzagoon's back) with the GBA silhouette and every animation frame unchanged; their silhouette shadow falls on the platforms; no acne stripes; HD edges smooth at the battle's ≈ 5× magnification (`b_*` with `&spriteFilter=pixel` equals the card's texels);
@@ -915,7 +940,7 @@ Everything every Modern arena stands on: the arena palette derived from the samp
 
 **Files:**
 - Create: `src/render/overworld/timeOfDay.ts`, `src/render/battle/palette.ts`, `src/render/battle/look.ts`, `src/render/battle/clouds.glsl.ts`, `src/render/battle/parts/ground.ts`, `src/render/battle/parts/platforms.ts`, `tests/timeOfDay.test.ts`, `tests/arenaPalette.test.ts`, `tests/arenaLook.test.ts`, `tests/arenaGround.test.ts`, `tests/arenaPlatforms.test.ts`
-- Modify: `src/render/overworld/overworldView.ts` (the outdoor keyframe blend and the window-glow ramp call `timeOfDay` / `nightFactor`; output identical), `src/render/battle/modernArena.ts` (`ArenaContext.palette` / `.ground`, `ArenaColorLock`, `ARENA_PARTS = [GROUND_PART, PLATFORM_PART]`), `src/render/battle/battleView.ts` (Modern: own `KitUniforms`, sampling every 0.5 s through `decodeBg3` + `sampleArenaColors` + the lock, `arenaLook` applied to sun / hemisphere / fog / `uSky` / `uNight`, Modern shadows `shadowSettings(quality, 'modern')`, `charLight` by the overworld formula; Retro untouched), `tests/modernArena.test.ts`, `tests/smoke/battleGraphics.test.ts` (palette of every ROM background)
+- Modify: `src/render/overworld/overworldView.ts` (the outdoor keyframe blend and the window-glow ramp call `timeOfDay` / `nightFactor`; output identical), `src/render/battle/modernArena.ts` (`ArenaContext.palette` / `.ground`, `ArenaColorLock`, `ARENA_PARTS = [GROUND_PART, PLATFORM_PART]`), `src/render/battlePreview.ts` (`measureArenaBuild()`: the Gates' arena build timing), `src/render/battle/battleView.ts` (Modern: Task 4's battle `KitUniforms`, sampling every 0.5 s through `decodeBg3` + `sampleArenaColors` + the lock, `arenaLook` applied to sun / hemisphere / fog / `uSky` / `uNight`, Modern shadows `shadowSettings(quality, 'modern')`, `charLight` by the overworld formula; Retro untouched), `tests/modernArena.test.ts`, `tests/smoke/battleGraphics.test.ts` (palette of every ROM background)
 
 **Interfaces:**
 - Produces (`timeOfDay.ts`, the overworld's code moved unchanged):
@@ -950,9 +975,10 @@ Everything every Modern arena stands on: the arena palette derived from the samp
   /** outdoor and water settings: timeOfDay(hour), night = nightFactor(hour), fog 30..80, clouds 1; sky (rayquaza): the
    *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.55, 0.8, 1.0) × 1.2, sky (0.3, 0.6,
    *  0.9), hemi 1.2, fog (0.05, 0.22, 0.42) 10..38, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
-   *  hemi 1.2, fog = linear(palette.wall) × 0.12, 14..40 (groudon: fog (0.18, 0.07, 0.04), sun (1.0, 0.6, 0.35)); indoor:
-   *  today's indoor battle light (sun 1.6, hemi 1.6) in warm white, fog = linear(palette.wall) × 0.6, 22..60, night 0.
-   *  hemiGround = linear(palette.ground) × 0.6. */
+   *  hemi 1.2, fog = new THREE.Color(...toLinear(palette.wall)) × 0.12, 14..40 (groudon: fog (0.18, 0.07, 0.04),
+   *  sun (1.0, 0.6, 0.35)); indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
+   *  fog = new THREE.Color(...toLinear(palette.wall)) × 0.6, 22..60, night 0.
+   *  hemiGround = new THREE.Color(...toLinear(palette.ground)) × 0.6. (toLinear: kit/palette.ts, sRGB RGB → linear RGB.) */
   export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, out?: ArenaLook): ArenaLook;
   ```
 - Produces (`clouds.glsl.ts`): `export const CLOUD_GLSL` — `float arenaClouds(vec2 p)` (domain-warped `kitFbm2` coverage, `smoothstep(0.5, 0.75, …)`) and `vec2 skyCloudUv(vec3 dir, float time)` (`dir.xz / (dir.y + 0.15) * 0.54 + time * vec2(0.004, 0.002)`), shared by the sky (Task 7), the ground's cloud shadows and the water's reflection (Task 8). Needs `KIT_NOISE_GLSL` before it (every kit material's fragment prelude has it).
@@ -1179,13 +1205,14 @@ it('builds every kind with the foundation parts', () => {
 - [ ] **Step 2: Run** `npx vitest run tests/timeOfDay.test.ts tests/arenaPalette.test.ts tests/arenaLook.test.ts tests/arenaGround.test.ts tests/arenaPlatforms.test.ts tests/modernArena.test.ts` → FAIL.
 - [ ] **Step 3: Implement.** First the extraction (`timeOfDay.ts` = the overworld's keyframe table and blend, moved; `OverworldView` calls it) and check it right away: `npm run regress:live -- --label t6ow --static --compare p3-base --styles modern` → 0.00 % on every overworld entry. Then `palette.ts`, `look.ts`, `clouds.glsl.ts`, `ground.ts` (`arenaGroundMaterial` = `terrainMaterial(...)` options with `fragHead += CLOUD_GLSL + uniforms`, `fragColor += ` the cloud-shadow (`diffuseColor.rgb *= 1.0 - uClouds * 0.18 * arenaClouds((vKitWorld.xz + uTime * vec2(0.6, 0.25)) / 40.0)`) and caustics (the seabed's two-voronoi term from `kit/water.ts`, × uCaustics) lines, `hookKey: 'arenaGround'`; the disc's geometry carries exactly position + normal), `platforms.ts` (three's primitives lose `uv`; bodies get 3-component vertex colours), the parts' `catalogue` entries (`{ material: arenaGroundMaterial(ph(), v2, v2, 0, 0), mesh: 'mesh', attrs: PN, castShadow: false }`; platforms: SOIL and CLIFF `mesh`/PNC/cast, `GRASS_MATERIAL` `instancedColors`/PNC/no cast, `RIPPLE_MATERIAL` `mesh`/PN/no cast), `ArenaColorLock`, and the `BattleView` Modern path (sampling with `decodeBg3(bus.vram, unfaded BG palette, bgcnt)`; `modern.build(kind, lock.observe(kind, sample), quality)`; `arenaLook(kind, palette, hours + minutes / 60)` applied each frame). Battle grass needs no actor bend: `uActors` stay far.
 - [ ] **Step 4: Run** the tests → PASS; `npx tsc --noEmit && npm test` → PASS (the drift guard now compares the foundation parts too).
-- [ ] **Step 5: Look.** `npm run regress:live -- --label t6 --static --battles --gpu --compare p3-base --review --review-before p3-base`; on `_review_battle.png` for all 27 static and 6 live battle entries:
+- [ ] **Step 5: Look.** `npm run regress:live -- --label t6 --static --battles --gpu --compare p3-base --review --review-before p3-base`; on `_review_battle.png` for all 28 static (Task 3's 27 + `b_grass_fail`) and 7 live (Task 1's 6 + `battle_switch`) battle entries:
   - the ground is painterly, not pixel speckle: soft two-tone grass in broad patches, warm worn earth around the platforms, sand ripples, paving stones, cave rock; colours recognisably those of the GBA column (grass green from the GBA's platform, Magma orange, the E4 rooms' platform colours, pale Sky Pillar stone);
-  - platforms sit where today's stand, each reads as its terrain (earth disc with grass skirt, sand mound, stone slab with plinth, lily pad with notch, ripple rings animating on water, rough cave rock), with battler silhouettes' shadows on them;
+  - platforms sit where today's stand, each reads as its terrain (earth disc with grass skirt, sand mound, stone slab with plinth, rough cave rock), with battler silhouettes' shadows on them; the water kinds' lily pad and ripple rings float over an empty basin / seabed until Task 8 adds the water, whose review judges them;
   - outdoor light follows the hour (`b_grass` vs `b_grass_night` lit like the overworld's 11 h / 21 h), caves and underwater close their fog, indoor kinds are evenly lit;
   - no Modern battle entry draws today's arena any more (no trees yet: Tasks 7–11);
-  - `battle_enter`: the first battle frames show a default-coloured arena at most until the background loads, then the sampled one (two builds), and the walk passes its gate.
-- [ ] **Step 6: Commit** — `git add src/render/overworld/timeOfDay.ts src/render/overworld/overworldView.ts src/render/battle/palette.ts src/render/battle/look.ts src/render/battle/clouds.glsl.ts src/render/battle/parts/ground.ts src/render/battle/parts/platforms.ts src/render/battle/modernArena.ts src/render/battle/battleView.ts tests/timeOfDay.test.ts tests/arenaPalette.test.ts tests/arenaLook.test.ts tests/arenaGround.test.ts tests/arenaPlatforms.test.ts tests/modernArena.test.ts tests/smoke/battleGraphics.test.ts && git commit -m "feat(battle): Modern arena foundation — sampled palette, look per kind and hour, painterly ground, platforms per terrain"`
+  - `battle_enter`: the first battle frames show a default-coloured arena at most until the background loads, then the sampled one (two builds), and the walk passes its gate;
+  - actor luminance Modern/Retro re-run on every battle entry (Task 5's gate: the battlers' rim is the battle `uSky`, which now follows `arenaLook` per kind and hour): median ≥ 0.95, every entry within 0.9–1.15.
+- [ ] **Step 6: Commit** — `git add src/render/overworld/timeOfDay.ts src/render/overworld/overworldView.ts src/render/battle/palette.ts src/render/battle/look.ts src/render/battle/clouds.glsl.ts src/render/battle/parts/ground.ts src/render/battle/parts/platforms.ts src/render/battle/modernArena.ts src/render/battle/battleView.ts src/render/battlePreview.ts tests/timeOfDay.test.ts tests/arenaPalette.test.ts tests/arenaLook.test.ts tests/arenaGround.test.ts tests/arenaPlatforms.test.ts tests/modernArena.test.ts tests/smoke/battleGraphics.test.ts && git commit -m "feat(battle): Modern arena foundation — sampled palette, look per kind and hour, painterly ground, platforms per terrain"`
 
 **Gates:** Retro — 0.00 % on every Retro entry; Modern overworld and `transition` 0.00 % (time-of-day extraction). Programs — drift guard passes with the ground and platform entries; `battle_enter` / `battle_exit` / `battle_switch` compile nothing in either style; `ModernArena.build` ≤ 60 ms warm (`preview.measureArenaBuild()`, median of 5, added here to `BattlePreviewApp`: rebuild with a fresh colour key, timed).
 
@@ -1199,7 +1226,7 @@ The four outdoor ground kinds get their scenery, shaped for what the battle came
 
 **Files:**
 - Create: `src/render/battle/sky.ts`, `src/render/battle/parts/scatter.ts`, `src/render/battle/parts/flora.ts`, `src/render/battle/parts/horizon.ts`, `src/render/battle/parts/dunes.ts`, `src/render/battle/parts/rocks.ts`, `tests/battleSky.test.ts`, `tests/arenaScatter.test.ts`, `tests/arenaFlora.test.ts`
-- Modify: `src/render/kit/trees.ts` (export `treeGeometry(style, variant, detail)` — today's private `treeGeo` — `TREE_VARIANTS` and the per-quality crown detail it uses), `src/render/kit/flowers.ts` (export `flowerGeometry()` — today's private `flower()`), `src/render/battle/modernArena.ts` (`ARENA_PARTS` += `HORIZON_PART`, `FLORA_PART`, `DUNES_PART`, `ROCKS_PART`), `src/render/battle/battleView.ts` (Modern draws `BattleSky`; both skies shown during the precompile), `src/render/battle/catalogue.ts` (the `BattleSky` mesh in the catalogue root)
+- Modify: `src/render/kit/trees.ts` (renames and exports, every use inside the file updated: the private `treeGeo` → `export function treeGeometry(style: TreeStyle, variant: number, detail: number)`; the private `const VARIANTS = 3` → `export const TREE_VARIANTS = 3`; the inline `detailOf` closure of `treeFamily.build` → `export const treeCrownDetail = (style: TreeStyle, quality: Quality) => (quality === 'high' && style === 'round' ? 2 : 1)`, which `build` calls with `kit.quality`), `src/render/kit/flowers.ts` (export `flowerGeometry()` — today's private `flower()`), `src/render/battle/modernArena.ts` (`ARENA_PARTS` += `HORIZON_PART`, `FLORA_PART`, `DUNES_PART`, `ROCKS_PART`), `src/render/battle/battleView.ts` (Modern draws `BattleSky`; both skies shown during the precompile — the sky is a scene member, compiled by the scene's `compileAsync` and the precompile frame: it stays out of `battleCatalogue()`, whose drift guard admits only what arena parts build)
 
 **Interfaces:**
 - Produces (`scatter.ts`):
@@ -1229,7 +1256,7 @@ The four outdoor ground kinds get their scenery, shaped for what the battle came
   export function flowerPlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[];   // grass / plain: 120, r 3–14
   export const FLORA_PART: ArenaPart;   // grass, longGrass, plain, sand, pond
   ```
-  Build: trees grouped by (style, variant) → `InstancedMesh(treeGeometry(style, variant, detail(quality)), kitMaterial(u, treeMaterial(style, linear(palette.trunk))))`, leaf colour × shade through instance colours (as the tree family), yaw, scale, `castShadow`; grass → `InstancedMesh(clump(BLADES[quality], v), GRASS_MATERIAL)`, colours `palette.blade × shade`; flowers → `InstancedMesh(flowerGeometry(), flowerMaterial(centre, leaf))`, petal colours from `[palette.accent, white, soft yellow, soft pink]`.
+  Build: trees grouped by (style, variant; round and bushy trees take variants `0 .. TREE_VARIANTS − 1`) → `InstancedMesh(treeGeometry(style, variant, treeCrownDetail(style, quality)), kitMaterial(u, treeMaterial(style, new THREE.Color(...toLinear(palette.trunk)))))` (`treeMaterial` takes a linear `THREE.Color`; `toLinear` from `kit/palette.ts`), leaf colour × shade through instance colours (as the tree family), yaw, scale, `castShadow`; grass → `InstancedMesh(clump(BLADES[quality], v), GRASS_MATERIAL)`, colours `palette.blade × shade`; flowers → `InstancedMesh(flowerGeometry(), flowerMaterial(centre, leaf))`, petal colours from `[palette.accent, white, soft yellow, soft pink]`.
 - Produces (`horizon.ts`): `ridgeGeometry(seed, stage, o: { r: number; height: [number, number]; arc: number; color: RGB }): THREE.BufferGeometry` (a band of rolling hills around the back and sides — angles ±`arc` from straight behind — profile from `noise2`, crest lighter; position, normal, color(3)); `HORIZON_PART` (grass, longGrass, plain, sand, pond, mountain): a near ring r 34 (height 2–5) and a far ring r 44 (height 4–9), `SOIL_MATERIAL`, no shadows, coloured from `palette.leaf` darkened (sand / mountain: their ground) — fog carries them into the distance.
 - Produces (`dunes.ts`): `duneGeometry(seed, stage, color: RGB): THREE.BufferGeometry` — 12 soft mounds (half-ellipsoids rx 6–12, rz 3–6, height 1.2–3.5, noise, lighter crests) on the tall rule; `DUNES_PART` (sand), `SOIL_MATERIAL`, receive shadows.
 - Produces (`rocks.ts`): `boulderGeometry(seed: number, size: number, color: RGB): THREE.BufferGeometry` (icosphere detail 1 displaced ±25 % by `noise3`, flat bottom at y = 0, flat normals, lighter top), `rockCluster(seeds…)` merging several; `ROCKS_PART`: plain 5 mossy (r 9–20), sand 9 desert rocks, grass 4, longGrass 3 — `CLIFF_MATERIAL`, cast + receive shadows.
@@ -1339,7 +1366,7 @@ describe('BattleSky', () => {
 ```
 
 - [ ] **Step 2: Run** `npx vitest run tests/arenaScatter.test.ts tests/arenaFlora.test.ts tests/battleSky.test.ts` → FAIL.
-- [ ] **Step 3: Implement** the modules, the kit exports (exports only: the overworld's trees and flowers are built exactly as before), the parts' `catalogue` entries (trees: one `instancedColors` entry per `TREE_STYLES` style with `treeMaterial(style, …)`, PNC4, cast; grass: `GRASS_MATERIAL` `instancedColors` PNC; flowers: `flowerMaterial(...)` `instancedColors` PNC4; horizon / dunes: `SOIL_MATERIAL` `mesh` PNC (horizon no cast, dunes cast); rocks: `CLIFF_MATERIAL` `mesh` PNC cast), and `BattleSky` (shader includes `KIT_NOISE_GLSL` + `CLOUD_GLSL`).
+- [ ] **Step 3: Implement** the modules, the kit renames and exports (`treeGeometry`, `TREE_VARIANTS`, `treeCrownDetail`, `flowerGeometry`: the overworld's trees and flowers are built exactly as before), the parts' `catalogue` entries (trees: one `instancedColors` entry per `TREE_STYLES` style with `treeMaterial(style, …)`, PNC4, cast; grass: `GRASS_MATERIAL` `instancedColors` PNC; flowers: `flowerMaterial(...)` `instancedColors` PNC4; horizon / dunes: `SOIL_MATERIAL` `mesh` PNC (horizon no cast, dunes cast); rocks: `CLIFF_MATERIAL` `mesh` PNC cast), and `BattleSky` (shader includes `KIT_NOISE_GLSL` + `CLOUD_GLSL`).
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
 - [ ] **Step 5: Look.** `npm run regress:live -- --label t7 --static --battles --gpu --compare p3-base --review --review-before p3-base`; on the review sheet for `b_grass`, `b_grass_night`, `b_double`, `b_longgrass`, `b_plain`, `b_sand`, `battle`, `battle_grass`, `battle_move`, `battle_intro`:
   - the top band of every outdoor shot is filled by a soft treeline (crowns merge into a canopy, no lollipop trees) with hills fading into the haze behind; sand shows dunes and a few palms instead;
@@ -1348,9 +1375,9 @@ describe('BattleSky', () => {
   - night (`b_grass_night`): moonlit, readable, battlers lit (actor luminance gate as Task 5);
   - Modern beats "before" (today's cone grass and icosahedron trees) on every outdoor row; Retro 0.00 %.
   - budgets: calls ≤ 150, triangles ≤ 1.5 M on every Modern battle entry; `--ab --ab-feature battle --only battle,battle_grass,b_grass,b_longgrass,b_sand` Δgpu ≤ +3.0 ms, Δcpu ≤ +0.5 ms; `ModernArena.build` ≤ 60 ms warm.
-- [ ] **Step 6: Commit** — `git add src/render/battle/sky.ts src/render/battle/parts/scatter.ts src/render/battle/parts/flora.ts src/render/battle/parts/horizon.ts src/render/battle/parts/dunes.ts src/render/battle/parts/rocks.ts src/render/battle/modernArena.ts src/render/battle/battleView.ts src/render/battle/catalogue.ts src/render/kit/trees.ts src/render/kit/flowers.ts tests/battleSky.test.ts tests/arenaScatter.test.ts tests/arenaFlora.test.ts && git commit -m "feat(battle): outdoor arenas — treelines, grass, flowers, dunes, rocks, horizon hills, sky with soft clouds and cloud shadows"`
+- [ ] **Step 6: Commit** — `git add src/render/battle/sky.ts src/render/battle/parts/scatter.ts src/render/battle/parts/flora.ts src/render/battle/parts/horizon.ts src/render/battle/parts/dunes.ts src/render/battle/parts/rocks.ts src/render/battle/modernArena.ts src/render/battle/battleView.ts src/render/kit/trees.ts src/render/kit/flowers.ts tests/battleSky.test.ts tests/arenaScatter.test.ts tests/arenaFlora.test.ts && git commit -m "feat(battle): outdoor arenas — treelines, grass, flowers, dunes, rocks, horizon hills, sky with soft clouds and cloud shadows"`
 
-**Gates:** Retro — 0.00 % everywhere; Modern overworld 0.00 % (the kit exports change nothing). Programs — drift guard passes (flora, horizon, dunes, rocks entries; `BattleSky` in the catalogue root); battle walks compile nothing.
+**Gates:** Retro — 0.00 % everywhere; Modern overworld 0.00 % (the kit renames and exports change nothing). Programs — drift guard passes (flora, horizon, dunes, rocks entries; `BattleSky` stays out of the catalogue: the scene precompile compiles it); battle walks compile nothing.
 
 **Acceptance:** the Step 5 bullets.
 
@@ -1420,7 +1447,7 @@ describe('arena water', () => {
 - [ ] **Step 4: Run** `npx tsc --noEmit && npm test` → PASS.
 - [ ] **Step 5: Look.** `npm run regress:live -- --label t8 --static --battles --gpu --compare p3-base --review --review-before p3-base`; on `b_water`, `b_water_night`, `b_pond`, `b_underwater`, `b_cavepond`, `b_kyogre`:
   - the sea is the overworld's stylised water (shallow-deep tint, moving normals, sun glints) with soft clouds reflected near the top band and foam collars around the rocks; the ripple rings under the battlers animate; islets fill the top band;
-  - the pond reads as a pond: lily pads, reeds, a visible sandy shallow edge, trees beyond the bank;
+  - the pond reads as a pond: the battlers' lily-pad platforms (notch, veins) floating on the water, lily pads, reeds, a visible sandy shallow edge, trees beyond the bank;
   - underwater: sandy seabed with drifting caustics, swaying kelp, blue haze, battlers lit (luminance gate);
   - night water keeps only a faint sheen and dark reflections; budgets as Task 7; Retro 0.00 %.
 - [ ] **Step 6: Commit** — `git add src/render/battle/parts/water.ts src/render/battle/parts/flora.ts src/render/battle/modernArena.ts tests/arenaWater.test.ts && git commit -m "feat(battle): water arenas — sea with reflected clouds and rocks, pond with lily pads and reeds, kelp seabed"`
@@ -1517,7 +1544,8 @@ describe('rock arenas', () => {
   export interface RoomSpec { back: number; halfWidth: number; height: number; front: number }   // back / front: z from stage.centre
   export const HALLS: Readonly<Record<'building' | 'gym' | 'leader' | 'frontier',
     RoomSpec & { pillars: number; windows: number; banners: number; seats: boolean; lights: number }>>;
-  /** Walls 0.4 thick across the back (z = centre.z + back) and down both sides to z = centre.z + front (≤ 4: the tall rule),
+  /** Walls 0.4 thick across the back (z = centre.z + back) and down both sides to z = centre.z + front (3.9 in every hall:
+   *  0.1 inside the tall rule's z ≤ centre.z + 4, so Float32 vertex positions never round past it),
    *  a darker 0.35 baseboard, a lighter wainscot to 1.8 with a trim line, a crown trim; position, normal, color(3). */
   export function roomShell(spec: RoomSpec, stage: Stage, p: ArenaPalette): THREE.BufferGeometry;
   export function pillarGeometry(radius: number, height: number, color: RGB): THREE.BufferGeometry;   // base, shaft, capital
@@ -1527,7 +1555,7 @@ describe('rock arenas', () => {
   export function seatTiers(stage: Stage, rows: number, color: RGB): THREE.BufferGeometry;   // stepped rows behind the back wall's arc
   export const HALL_PART: ArenaPart;   // building, gym, leader, frontier
   ```
-  `HALLS`: building `{ back: −15, halfWidth: 20, height: 8, front: 4, pillars: 0, windows: 4, banners: 0, seats: false, lights: 0 }` (wooden floor, shelves as boxes along the back wall, windows of `BUILDING_GLASS`); gym `{ back: −17, halfWidth: 22, height: 10, front: 4, pillars: 6, windows: 0, banners: 3, seats: false, lights: 0 }` (court lines, banners in `palette.accent`); leader as gym with darker walls and 5 banners; frontier `{ back: −18, halfWidth: 24, height: 11, front: 4, pillars: 8, windows: 0, banners: 0, seats: true, lights: 6 }` (tiers of seats, light panels of `PROP_GLOW` high on the walls).
+  `HALLS`: building `{ back: −15, halfWidth: 20, height: 8, front: 3.9, pillars: 0, windows: 4, banners: 0, seats: false, lights: 0 }` (wooden floor, shelves as boxes along the back wall, windows of `BUILDING_GLASS`); gym `{ back: −17, halfWidth: 22, height: 10, front: 3.9, pillars: 6, windows: 0, banners: 3, seats: false, lights: 0 }` (court lines, banners in `palette.accent`); leader as gym with darker walls and 5 banners; frontier `{ back: −18, halfWidth: 24, height: 11, front: 3.9, pillars: 8, windows: 0, banners: 0, seats: true, lights: 6 }` (tiers of seats, light panels of `PROP_GLOW` high on the walls).
 
 - [ ] **Step 1: Write the failing test** `tests/arenaRooms.test.ts`
 
@@ -1550,7 +1578,7 @@ describe('indoor halls', () => {
     const p = g.getAttribute('position');
     for (let i = 0; i < p.count; i++) if (p.getY(i) > 1) expect(ko.tallOk(p.getX(i), p.getZ(i))).toBe(true);
   });
-  it('paints court lines on the floor, around the platforms, not on them', () => {
+  it('paints court lines flat on the floor and stands pillars at their height', () => {
     const g = courtLines(STAGE, [0.95, 0.95, 0.9]), p = g.getAttribute('position');
     for (let i = 0; i < p.count; i++) {
       expect(p.getY(i)).toBeGreaterThanOrEqual(GROUND_Y); expect(p.getY(i)).toBeLessThanOrEqual(GROUND_Y + 0.01);
@@ -1655,7 +1683,7 @@ describe('stadiums and the Sky Pillar', () => {
 - [ ] **Step 3: Quality levels and DPR.** `--query quality=high --only battle,battle_move,b_grass,b_water,b_cave,b_gym` (GTAO: no dark quads at the arena origin — the battle cards and inflated mesh skip GTAO's prepass —, programs stable through the walks) and `--query quality=low` (fewer clumps, no tilt-shift, still a full arena); `--dpr 2 --styles modern --only battle,b_grass,b_water` (no page errors, crisp HD edges).
 - [ ] **Step 4: Robustness.** `b_grass_fail` (Modern: today's arena with inflated battlers, one warning); every battle entry with `--query actorUniforms=0` equals the uniform path (0 px, Modern); V during a battle (`emu.renderer.mode = 'classic'` as an entry step) shows the GBA screen and back; a style switch inside each arena kind's preview (`preview.setStyle` twice) returns 0 px from its own shot.
 - [ ] **Step 5: Live sanity by eye.** `npx tsx tools/shot3d.ts --state out/fuzz.state --wait 3000` and `--state out/battle1.state --keys "A:100"` (a move animation), then from `out/r101.state` walk into tall grass until a wild battle starts (`--keys "LEFT:1800,DOWN:300,UP:4000"`, or hold the keys of `battle_enter`'s state): the battle starts without a stall, the Modern arena matches its GBA background, battle → Route 101 returns cleanly, no console errors.
-- [ ] **Step 6: Docs.** `README.md`: Phase 3 (Modern battle arenas per GBA background, inflated battlers, what stays: effect cards, HUD, BG layers as 2D overlay). `CLAUDE.md`: `npm run regress:live -- --battles [--review --review-before <label>]`, the `?battle=<kind>&player=&enemy=` preview, `p3-base`, `--ab-feature battle|battlers`. In the report, every known gap for the controller's progress log, at least: affine rotation and OBJ mosaic not reproduced (both styles); GBA blend registers (semi-transparent / brightened effects) not emulated; the sky dome shows only through water reflections and cloud shadows (the camera never frames the horizon); double battles share the two platforms; the Frontier facilities share one hall; trainer intro pictures inflate like battlers; full-screen BG move effects stay the 2D overlay; today's (Retro) arena still exceeds 150 draw calls on outdoor kinds.
+- [ ] **Step 6: Docs.** `README.md`: Phase 3 (Modern battle arenas per GBA background, inflated battlers, what stays: effect cards, HUD, BG layers as 2D overlay). `CLAUDE.md`: `npm run regress:live -- --battles [--review --review-before <label>]`, the `?battle=<kind>&player=&enemy=` preview, `p3-base`, `--ab-feature battle|battlers`. In the report, every known gap for the controller's progress log, at least: affine rotation and OBJ mosaic not reproduced (both styles); GBA blend registers (semi-transparent / brightened effects) not emulated; the sky dome shows only through water reflections and cloud shadows (the camera never frames the horizon); double battles share the two platforms; the Frontier facilities share one hall; trainer intro pictures inflate like battlers; full-screen BG move effects stay the 2D overlay; and only if Task 1's recorded numbers show it (p2-base `battle`, PLAIN, measured 50 calls), that today's (Retro) arena exceeds 150 draw calls on outdoor kinds.
 - [ ] **Step 7: Commit** — `git add -A src tools tests README.md CLAUDE.md && git commit -m "docs+polish: Phase 3 performance checks, battle harness docs"` (check `git status` first: never `out/`, states or the ROM).
 
 **Gates:** Retro — 0.00 % on every entry (the final full run). Programs — drift guards (battle, overworld) pass; every battle walk compiles nothing at Medium and High.
