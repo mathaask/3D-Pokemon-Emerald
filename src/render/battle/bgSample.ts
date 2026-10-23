@@ -10,12 +10,14 @@ export const ENEMY_PLATFORM = { cx: 176, cy: 64, rx: 62, ry: 15 };
 
 /** BG3 as the GBA shows it at scroll 0: BGR555 per pixel, transparent pixels the backdrop colour pal[0]. `vram`: bus VRAM
  *  bytes; `pal`: ≥ 256 BG colours; `bgcnt`: BG3CNT (char base, screen base, screen size 1 = 64×32: tiles x ≥ 32 in the
- *  second 2 KB block). */
+ *  second 2 KB block). 4bpp only, as every battle background: with BGCNT bit 7 (8bpp) set the picture is the backdrop
+ *  colour alone, which sampleArenaColors rejects (null). */
 export function decodeBg3(vram: Uint8Array, pal: Uint16Array, bgcnt: number, out = new Uint16Array(BG_W * BG_H)): Uint16Array {
   const charBase = ((bgcnt >>> 2) & 3) * 0x4000;
   const screenBase = ((bgcnt >>> 8) & 31) * 0x800;
   const size = (bgcnt >>> 14) & 3;   // 0: 32×32, 1: 64×32, 2: 32×64, 3: 64×64 tiles, in 32×32 blocks of 2 KB
   const backdrop = pal[0] & 0x7fff;
+  if (bgcnt & 0x80) return out.fill(backdrop, 0, BG_W * BG_H);
   for (let ty = 0; ty < BG_H / 8; ty++) {
     for (let tx = 0; tx < BG_W / 8; tx++) {
       const block = (size & 1 && tx >= 32 ? 1 : 0) + (size & 2 && ty >= 32 ? (size & 1 ? 2 : 1) : 0);
@@ -87,7 +89,7 @@ const DEFAULTS: Readonly<Record<ArenaKind, string>> = {
   gym: 'f4f4f4 d0bc94 ccbc94 dcd4a8',
   leader: 'f4f4f4 d0bc94 ccbc94 dcd4a8',
   frontier: 'f4f4fc dce4e4 bcbc9c d4d4c4',
-  magma: 'ccc4d4 8c8c8c dc6c08 9c949c',
+  magma: 'ccc4d4 888888 dc6c08 98949c',
   aqua: 'cceef4 44a4d4 4484d4 84c4fc',
   sidney: 'c4ece4 44ac9c dcc494 f4dcac',
   phoebe: 'c4ece4 44ac9c c49ccc e4ccec',

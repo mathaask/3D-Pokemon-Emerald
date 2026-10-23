@@ -48,4 +48,12 @@ describe('decodeBg3', () => {
     expect(img[1]).toBe(bgr(0, 0, 31));                 // transparent → backdrop
     expect(img[15]).toBe(bgr(31, 0, 0));                // flipped: its pixel 7
   });
+  it('gives an 8bpp BG3 (never a battle background) the backdrop colour alone, which sampling rejects', () => {
+    const vram = new Uint8Array(0x18000), pal = new Uint16Array(256);
+    pal[0] = BACK; pal[2 * 16 + 1] = FILL;
+    vram[0x8000 + 3 * 32] = 0x01; vram[0xd000] = 3; vram[0xd001] = 0x20;
+    const img = decodeBg3(vram, pal, 0x5a0b | 0x80);
+    expect(img.every((c) => c === BACK)).toBe(true);
+    expect(sampleArenaColors(img)).toBeNull();
+  });
 });

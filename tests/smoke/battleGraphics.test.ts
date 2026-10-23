@@ -58,6 +58,14 @@ describe('battle graphics from the ROM', () => {
     expect(readMonPic(rom, 280, 'back').tiles).toHaveLength(2048);
     expect(readEnemyShadow(rom).tiles).toHaveLength(128);
   });
+  it('places Castform\'s normal form by the game\'s own offsets, not the tables\'', () => {
+    // battle_anim_mons.c: gCastformFrontSpriteCoords y 17, sCastformElevations 13, sCastformBackSpriteYCoords 0
+    // (the ROM tables hold elevation 16 and back y_offset 13 for species 385)
+    expect(readMonPic(rom, 385, 'front')).toMatchObject({ yOffset: 17, elevation: 13 });
+    expect(readMonPic(rom, 385, 'back')).toMatchObject({ yOffset: 0, elevation: 0 });
+    expect(battlerScreenPos(readMonPic(rom, 385, 'front'), 1, false)).toEqual({ x: 144, y: 12 });
+    expect(battlerScreenPos(readMonPic(rom, 385, 'back'), 0, false)).toEqual({ x: 40, y: 48 });
+  });
   it('reads the arena inputs of a live battle', () => {
     const gba = new Gba(new Uint8Array(loadRom()));
     gba.loadState(new Uint8Array(fs.readFileSync(path.join(root, 'out/battle1.state'))));

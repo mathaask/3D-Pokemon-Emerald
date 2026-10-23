@@ -5,15 +5,9 @@
 
 import { RomError, type RomReader } from './reader';
 import { SYM, SYM_SIZE } from '../symbols';
-import { ARENA_BACKGROUND, type ArenaKind } from '../../render/battle/arenaKind';
+import { ARENA_BACKGROUND, type ArenaKind } from '../battle/arenaKind';
 
 export interface BattleBackgroundGfx { tiles: Uint8Array; tilemap: Uint8Array; palette: Uint16Array /* 48: BG palettes 2–4 */ }
-
-function symAddr(name: string): number {
-  const a = (SYM as Readonly<Record<string, number>>)[name];
-  if (a === undefined) throw new RomError(`no symbol ${name} (add it to tools/gen-symbols.ts)`);
-  return a;
-}
 
 /** `count` BGR555 colours of LZ77 palette data at `addr` (LoadCompressedPalette: the first `count` of it). */
 function compressedPalette(rom: RomReader, addr: number, count: number): Uint16Array {
@@ -28,9 +22,9 @@ function compressedPalette(rom: RomReader, addr: number, count: number): Uint16A
 export function readBattleBackground(rom: RomReader, kind: ArenaKind): BattleBackgroundGfx {
   const bg = ARENA_BACKGROUND[kind];
   return {
-    tiles: rom.lz77(symAddr(bg.tiles)),
-    tilemap: rom.lz77(symAddr(bg.tilemap)),
-    palette: compressedPalette(rom, symAddr(bg.palette), 48),
+    tiles: rom.lz77(SYM[bg.tiles]),
+    tilemap: rom.lz77(SYM[bg.tilemap]),
+    palette: compressedPalette(rom, SYM[bg.palette], 48),
   };
 }
 
@@ -43,7 +37,7 @@ const BG3_PALETTE = 32;       // BG_PLTT_ID(2)
 /** Lays it out as LoadBattleTextboxAndBackground does: tiles at 0x8000, tilemap at 0xD000, palettes into pal[32..79];
  *  returns the BG3CNT to decode it with. */
 export function installBattleBackground(gfx: BattleBackgroundGfx, vram: Uint8Array, pal: Uint16Array): number {
-  // in the game's order: the tilemap lands after (and over) the tiles
+  // tiles 0x8000–0x9FFF, tilemap 0xD000–0xDFFF (every background: 0x2000 and 0x1000 bytes)
   vram.set(gfx.tiles.subarray(0, Math.max(0, vram.length - BG3_TILES)), BG3_TILES);
   vram.set(gfx.tilemap.subarray(0, Math.max(0, vram.length - BG3_TILEMAP)), BG3_TILEMAP);
   pal.set(gfx.palette, BG3_PALETTE);
@@ -57,9 +51,15 @@ const SHEET_SIZE = 8;     // CompressedSpriteSheet { const u32 *data; u16 size; 
 const PALETTE_SIZE = 8;   // CompressedSpritePalette { const u32 *data; u16 tag; } (padded)
 const COORDS_SIZE = 4;    // MonCoords { u8 size; u8 y_offset; } (padded)
 
+const SPECIES_CASTFORM = 385;
+/** Castform's normal form as battle_anim_mons.c places it, in place of the tables: gCastformFrontSpriteCoords /
+ *  sCastformBackSpriteYCoords (GetBattlerYDelta) and sCastformElevations (GetBattlerElevation), [CASTFORM_NORMAL]. */
+const CASTFORM_NORMAL = { frontYOffset: 17, backYOffset: 0, elevation: 13 };
+
 /** gMonFrontPicTable / gMonBackPicTable[species] (CompressedSpriteSheet, 8 bytes: data, size, tag; front pics hold two
  *  frames — frame 0 = first 2048 bytes), gMonPaletteTable (CompressedSpritePalette, 8 bytes), gMon{Front,Back}PicCoords
- *  (MonCoords padded to 4 bytes: size u8, y_offset u8), gEnemyMonElevation (u8 per species; back pics: 0). */
+ *  (MonCoords padded to 4 bytes: size u8, y_offset u8), gEnemyMonElevation (u8 per species; back pics: 0).
+ *  Castform (385) is its normal form: frame 0 and the game's own offsets for it (CASTFORM_NORMAL), not the tables'. */
 export function readMonPic(rom: RomReader, species: number, side: 'front' | 'back'): MonPic {
   const front = side === 'front';
   const table = front ? SYM.gMonFrontPicTable : SYM.gMonBackPicTable;
@@ -69,9 +69,14 @@ export function readMonPic(rom: RomReader, species: number, side: 'front' | 'bac
   if (pic.length < MON_PIC_BYTES) throw new RomError(`species ${species} ${side} pic holds ${pic.length} bytes`);
   const palette = compressedPalette(rom, rom.u32(SYM.gMonPaletteTable + species * PALETTE_SIZE), 16);
   const coords = (front ? SYM.gMonFrontPicCoords : SYM.gMonBackPicCoords) + species * COORDS_SIZE;
+  const tiles = pic.slice(0, MON_PIC_BYTES);
+  if (species === SPECIES_CASTFORM) {
+    const c = CASTFORM_NORMAL;
+    return { tiles, palette, yOffset: front ? c.frontYOffset : c.backYOffset, elevation: front ? c.elevation : 0 };
+  }
   // GetBattlerElevation: species past the table (Unown's letters) use entry 0
   const elevation = front ? rom.u8(SYM.gEnemyMonElevation + (species < SYM_SIZE.gEnemyMonElevation ? species : 0)) : 0;
-  return { tiles: pic.slice(0, MON_PIC_BYTES), palette, yOffset: rom.u8(coords + 1), elevation };
+  return { tiles, palette, yOffset: rom.u8(coords + 1), elevation };
 }
 
 /** sBattlerCoords[double][position]: the battler sprite's centre before its picture's offsets. */
