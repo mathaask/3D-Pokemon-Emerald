@@ -13,7 +13,7 @@ import { flowerMaterial } from './flowers';
 import { SEABED_MATERIAL, WATER_ROCK_MATERIAL, waterMaterial } from './water';
 import { SOIL_MATERIAL } from './soil';
 import { terrainMaterial } from './terrain';
-import type { WorldMaterials } from '../overworld/world';
+import { groundMaterial, type WorldMaterials } from '../overworld/world';
 import { TreeCardMaterials, TreeCards } from '../overworld/treeCards';
 
 /** A mesh's attributes as three's program key and ANGLE's input layouts see them: names, item sizes, array types,
@@ -122,7 +122,8 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
     if (seen.has(sig)) {
       mesh.geometry.dispose();
       if ((mesh as THREE.InstancedMesh).isInstancedMesh) (mesh as THREE.InstancedMesh).dispose();
-      releaseKitMaterial(mesh.material as THREE.Material);
+      // (back to the catalogue's pool; any other material is someone else's: releaseKitMaterial would dispose it)
+      if (kitMaterialKind(mesh.material as THREE.Material) !== null) releaseKitMaterial(mesh.material as THREE.Material);
       return;
     }
     seen.add(sig);
@@ -171,7 +172,7 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
   const cardMats = new TreeCardMaterials(src.atlas);
   const cards = new TreeCards(cardMats, [{ px: 0, py: 0, pz: 0, y0: 0, u0: 0, v0: 0, u1: 1, v1: 1 }]);
   add(cards.mesh, true);
-  add(new THREE.Mesh(triangle(PNU), new THREE.MeshStandardMaterial({ roughness: 1 })), false);
+  add(new THREE.Mesh(triangle(PNU), groundMaterial()), false);
 
   return {
     root,
