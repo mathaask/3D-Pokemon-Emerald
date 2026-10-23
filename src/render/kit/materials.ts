@@ -489,6 +489,8 @@ interface Pooled {
   slots: Slots;
   /** Creation order (as three's material ids). */
   seq: number;
+  /** Its kind: the program-affecting options (poolKey). */
+  kind: string;
   /** The free list of its kind (same program-affecting options), latest made first: handed out
    *  oldest first, so a rebuild of a map gets its materials in the order its first build made them
    *  (three draws opaque objects sorted by material id: the same order, no flicker where surfaces
@@ -571,7 +573,7 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
     depth.onBeforeCompile = (s) => patchKit(s, u, local, slots, h, false);
     depth.customProgramCacheKey = () => key + ':depth';
   }
-  const p: Pooled = { km: { material, depth }, local, slots, seq: made++, free, inUse: true };
+  const p: Pooled = { km: { material, depth }, local, slots, seq: made++, kind, free, inUse: true };
   configure(p, o);
   POOLED.set(material, p);
   if (depth) POOLED.set(depth, p);
@@ -596,6 +598,13 @@ export function releaseKitMaterial(m: THREE.Material): void {
   let at = p.free.length;
   while (at > 0 && p.free[at - 1].seq < p.seq) at--;
   p.free.splice(at, 0, p);
+}
+
+/** The pool kind of a kit material, its depth twin marked (`:depth`): the options it compiles from (null: not a kit
+ *  material). */
+export function kitMaterialKind(m: THREE.Material): string | null {
+  const p = POOLED.get(m);
+  return p ? (m === p.km.depth ? p.kind + ':depth' : p.kind) : null;
 }
 
 /** Assigns a kit material (and its shadow-depth twin) to a mesh. */

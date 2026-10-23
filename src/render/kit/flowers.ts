@@ -15,7 +15,7 @@ import { CLAIM_DECOR, CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/
 import { bgr555ToSrgb, countPixels, luma, lush, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, rng } from './geom';
 import { GRASS_BEHAVIORS } from './grass';
-import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
+import { applyKitMaterial, kitMaterial, type KitMaterial, type KitMaterialOptions } from './materials';
 import { SECONDARY_FLOWERS } from './tables/secondary';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
@@ -267,6 +267,16 @@ const BOTH_FACES = /* glsl */ `
 normal = normalize(vNormal);
 `;
 
+/** A flower kind's material (`centre`, `leaf`: its centre and leaf colours, linear): its only definition (the program
+ *  catalogue, kit/catalogue.ts, precompiles it). */
+export function flowerMaterial(centre: THREE.Color, leaf: THREE.Color): KitMaterialOptions {
+  return {
+    vertexColors: true, roughness: 0.75, side: THREE.DoubleSide, wind: 0.03, windHeight: 0.3, bend: true,
+    uniforms: { uCentre: { value: centre }, uLeaf: { value: leaf } },
+    fragHead: PART_HEAD, fragColor: PART_FRAG, fragNormal: BOTH_FACES, hookKey: 'flowers',
+  };
+}
+
 export const flowerFamily: Family<FlowerCell[]> = {
   name: 'flowers',
 
@@ -319,14 +329,7 @@ export const flowerFamily: Family<FlowerCell[]> = {
       let km = mats.get(matId);
       if (!km) {
         const centre = toLinear(centreOf(list[0])), leaf = toLinear(list[0].leaf ?? LEAF);
-        km = kitMaterial(kit.uniforms, {
-          vertexColors: true, roughness: 0.75, side: THREE.DoubleSide, wind: 0.03, windHeight: 0.3, bend: true,
-          uniforms: {
-            uCentre: { value: new THREE.Color(centre[0], centre[1], centre[2]) },
-            uLeaf: { value: new THREE.Color(leaf[0], leaf[1], leaf[2]) },
-          },
-          fragHead: PART_HEAD, fragColor: PART_FRAG, fragNormal: BOTH_FACES, hookKey: 'flowers',
-        });
+        km = kitMaterial(kit.uniforms, flowerMaterial(new THREE.Color(centre[0], centre[1], centre[2]), new THREE.Color(leaf[0], leaf[1], leaf[2])));
         mats.set(matId, km);
       }
       const mesh = new THREE.InstancedMesh(geo, km.material, list.reduce((n, c) => n + perCell(c), 0));

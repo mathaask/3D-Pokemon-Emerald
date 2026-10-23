@@ -9,7 +9,7 @@ import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP, type Claims } from '../overworl
 import { bgr555ToSrgb, luma, mix, saturation, scale, soften, toLinear, type RGB } from './palette';
 import { MeshBuilder, type V3 } from './geom';
 import { buildingKind, buildingLayout, TERRAIN, type BuildingKind } from './footprints';
-import { kitMaterial, WARM_GLOW_GLSL } from './materials';
+import { kitMaterial, WARM_GLOW_GLSL, type KitMaterialOptions } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 import { pokeballTexture, signTexture, SIGN_ASPECT } from './text';
 import { scale4x } from './upscale';
@@ -316,9 +316,9 @@ export const buildingFamily: Family<BuildingPlacement[]> = {
       mesh.receiveShadow = true;
       root.add(mesh);
     };
-    add(parts.body, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.85, fade: true }).material);
-    add(parts.roof, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.7, pattern: 'roofTiles', fade: true, side: THREE.DoubleSide }).material);
-    add(parts.glass, kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.15, metalness: 0.1, glow: WINDOW_GLOW, fade: true }).material);
+    add(parts.body, kitMaterial(kit.uniforms, BUILDING_BODY).material);
+    add(parts.roof, kitMaterial(kit.uniforms, BUILDING_ROOF).material);
+    add(parts.glass, kitMaterial(kit.uniforms, BUILDING_GLASS).material);
     for (const e of parts.extras) root.add(e);
     return root;
   },
@@ -486,6 +486,23 @@ const GLASS_ALPHA = 0xfe;
 const FACADE_GLASS_GLOW = `totalEmissiveRadiance += ${WARM_GLOW_GLSL} * uNight * ${WINDOW_GLOW.toFixed(2)} * texture(tGlass, vMapUv).r;`;
 /** The roof emblem, in full sun by day (its white would bloom), is lit at night only. */
 const EMBLEM_GLOW = 'totalEmissiveRadiance += diffuseColor.rgb * 0.35 * uNight;';
+
+// The buildings' materials: their only definitions (the program catalogue, kit/catalogue.ts, precompiles each).
+export const BUILDING_BODY: KitMaterialOptions = { vertexColors: true, roughness: 0.85, fade: true };
+export const BUILDING_ROOF: KitMaterialOptions = { vertexColors: true, roughness: 0.7, pattern: 'roofTiles', fade: true, side: THREE.DoubleSide };
+export const BUILDING_GLASS: KitMaterialOptions = { vertexColors: true, roughness: 0.15, metalness: 0.1, glow: WINDOW_GLOW, fade: true };
+/** A sign board's face (`map`: its lettering). */
+export const signMaterial = (map: THREE.Texture): KitMaterialOptions =>
+  ({ map, roughness: 0.6, fade: true, fragEmissive: SIGN_GLOW, hookKey: 'sign' });
+/** The roof's Poké Ball emblem (`map`: the ball). */
+export const emblemMaterial = (map: THREE.Texture): KitMaterialOptions =>
+  ({ map, roughness: 0.4, fade: true, fragEmissive: EMBLEM_GLOW, hookKey: 'emblem' });
+/** A special building's facade (`map`); `lit`: the mask of its window glass, which glows at night (null: none). */
+export const facadeMaterial = (map: THREE.Texture, lit: THREE.Texture | null): KitMaterialOptions => (lit
+  ? { map, roughness: 0.85, fade: true, uniforms: { tGlass: { value: lit } }, fragHead: FACADE_GLASS_HEAD, fragEmissive: FACADE_GLASS_GLOW,
+    hookKey: 'facadeGlass' }
+  : { map, roughness: 0.85, fade: true });
+
 const WHITE = toLinear([0.95, 0.95, 0.93]);
 /** The sign boards' backing, in the canvas frame's colour (text.ts SIGN_FRAME). */
 const SIGN_BACK = toLinear([0x1d / 255, 0x1d / 255, 0x22 / 255]);
@@ -524,9 +541,7 @@ function doorSign(p: BuildingPlacement, f: BuildingFrame, text: string, bg: RGB,
   const w = Math.min(b - a - 0.3, 2.8, (hi - lo) * SIGN_ASPECT);
   const h = w / SIGN_ASPECT, x = (a + b) / 2, y = lo + h / 2, z = frontZ(p, f, p.doorX);
   addBox(parts.body, x, y, z + 0.035, w + 0.06, h + 0.06, 0.07, SIGN_BACK);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), kitMaterial(kit.uniforms, {
-    map: signTexture(text, '#ffffff', css(bg)), roughness: 0.6, fade: true, fragEmissive: SIGN_GLOW, hookKey: 'sign',
-  }).material);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), kitMaterial(kit.uniforms, signMaterial(signTexture(text, '#ffffff', css(bg)))).material);
   mesh.name = `sign:${text}`;
   mesh.position.set(x, y, z + 0.075);
   mesh.receiveShadow = true;
@@ -545,9 +560,7 @@ function addEmblem(f: BuildingFrame, rise: number, parts: BuildingParts, kit: Ki
   const rim = new THREE.CylinderGeometry(r + 0.05, r + 0.05, 0.08, 32);
   parts.body.add(rim, WHITE, new THREE.Matrix4().makeBasis(X, n, up.clone().negate()).setPosition(c.clone().addScaledVector(n, 0.02)));
   rim.dispose();
-  const face = new THREE.Mesh(new THREE.CircleGeometry(r, 32), kitMaterial(kit.uniforms, {
-    map: pokeballTexture(), roughness: 0.4, fade: true, fragEmissive: EMBLEM_GLOW, hookKey: 'emblem',
-  }).material);
+  const face = new THREE.Mesh(new THREE.CircleGeometry(r, 32), kitMaterial(kit.uniforms, emblemMaterial(pokeballTexture())).material);
   face.name = 'emblem';
   face.matrixAutoUpdate = false;
   face.matrix.makeBasis(X, up, n).setPosition(c.addScaledVector(n, 0.065));
@@ -697,13 +710,7 @@ function addSpecialFacade(p: BuildingPlacement, f: BuildingFrame, parts: Buildin
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(index);
-  const km = lit
-    ? kitMaterial(kit.uniforms, {
-      map: tex, roughness: 0.85, fade: true, uniforms: { tGlass: { value: lit } },
-      fragHead: FACADE_GLASS_HEAD, fragEmissive: FACADE_GLASS_GLOW, hookKey: 'facadeGlass',
-    })
-    : kitMaterial(kit.uniforms, { map: tex, roughness: 0.85, fade: true });
-  const mesh = new THREE.Mesh(g, km.material);
+  const mesh = new THREE.Mesh(g, kitMaterial(kit.uniforms, facadeMaterial(tex, lit)).material);
   mesh.name = 'facade';
   mesh.receiveShadow = true;
   parts.extras.push(mesh);

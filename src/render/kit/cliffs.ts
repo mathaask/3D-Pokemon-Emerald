@@ -11,7 +11,7 @@ import { buildingLayout } from './footprints';
 import type { GridEvents } from './events';
 import { bgr555ToSrgb, classifyGroundColor, dominantColor, luma, mix, saturation, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, QuadWriter, type V3 } from './geom';
-import { kitMaterial } from './materials';
+import { kitMaterial, type KitMaterialOptions } from './materials';
 import { groundLayerLook, GroundMat, type CellLook } from './terrain';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 import { SECONDARY_ROCK, SECONDARY_ROCK_TOPS } from './tables/secondary';
@@ -179,6 +179,9 @@ function rockColor(px: Uint16Array, mts: number[], cache: Map<number, Float64Arr
   }
   return n ? [r / n, g / n, b / n] : null;
 }
+
+/** The cliffs' material: its only definition (the program catalogue, kit/catalogue.ts, precompiles it). */
+export const CLIFF_MATERIAL: KitMaterialOptions = { vertexColors: true, roughness: 0.95, flatShading: true };
 
 export const cliffFamily: Family<CliffPlacement> = {
   name: 'cliffs',
@@ -741,7 +744,7 @@ export const cliffFamily: Family<CliffPlacement> = {
         quads.quad(pt(0, t), pt(3, t), pt(4, t), pt(5, t), n, earth);
       }
     }
-    const km = kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95, flatShading: true });
+    const km = kitMaterial(kit.uniforms, CLIFF_MATERIAL);
     const mesh = new THREE.Mesh(quads.geometry(), km.material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
