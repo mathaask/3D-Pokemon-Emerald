@@ -47,7 +47,8 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
  * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
  * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n, keys?)` times n
  * frames on the GPU, idle or with `keys` held (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
- * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames.
+ * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames; `emu.gbaPng()` is the GBA's own
+ * frame (the PPU's composite of the last emulated frame) as a PNG data URL, 2× nearest (480×320).
  */
 function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
   renderer.setFixedTimestep(1 / 60);
@@ -74,7 +75,21 @@ function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>
     const mask = keyMask(keys);
     return timeGpuFrames(gl, n, render, () => emulate(mask));
   };
-  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
+  // (the framebuffer's words are RGBA8 bytes, as ScreenView uploads them)
+  const gbaPng = (): string => {
+    const frame = document.createElement('canvas');
+    frame.width = 240;
+    frame.height = 160;
+    frame.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(gba.ppu.framebuffer.buffer.slice(0)), 240, 160), 0, 0);
+    const out = document.createElement('canvas');
+    out.width = 480;
+    out.height = 320;
+    const g = out.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(frame, 0, 0, 480, 320);
+    return out.toDataURL();
+  };
+  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames, gbaPng };
 }
 
 function debounce(fn: () => void, ms: number): () => void {
