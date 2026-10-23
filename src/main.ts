@@ -219,11 +219,13 @@ async function boot(): Promise<void> {
     // gesture: nothing runs yet (no title screen, no audio). A quicker gesture leaves it to the first overworld sync,
     // under its fade-in. (autostart, manual mode: always there — deterministic for the harness)
     const gesture = shell.waitForGesture('Press any key to start');
-    const first = await Promise.race([gesture.then(() => 'gesture' as const), renderer.precompiled().then(() => 'compiled' as const)]);
+    const compiled = renderer.precompiled().then(() => 'compiled' as const, () => 'failed' as const);
+    const first = await Promise.race([gesture.then(() => 'gesture' as const), compiled]);
     if (first === 'compiled') {
-      renderer.finishPrecompile();
-      await gesture;
+      // a failure here only leaves the frame to the first overworld sync — never the loader up for good
+      try { renderer.finishPrecompile(); } catch (e) { console.warn('precompile frame failed:', e); }
     }
+    await gesture;
   }
   audio.resume();
   shell.hideLoader();

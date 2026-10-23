@@ -6,7 +6,7 @@ import type { MapLoad } from '../game/mapLoad';
 
 /** The longest run of emulated frames deferred in a row, per load; the next frame syncs whatever the state (no stall).
  *  A crossing's load ends within the frame after the one it straddles; a warp loads over several frames, the screen
- *  faded to black (a door: 3). */
+ *  fully faded out — black, or white for cave entries (a door: 3). */
 export const MAX_DEFERRED_FRAMES: Readonly<Record<MapLoad, number>> = { crossing: 3, warp: 30 };
 
 export class SyncGate {

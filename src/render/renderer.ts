@@ -253,7 +253,7 @@ export class Renderer {
    * Whether this render skips its sync with the emulator: the overworld is presented, the game is loading a map
    * (crossing a connection, or a warp's loading frames) and the sync would rebuild the world from it — the previous
    * frame's state is drawn once more instead, the world built once, from the finished map (SyncGate: at most
-   * MAX_DEFERRED_FRAMES emulated frames in a row, 3 for a crossing, 30 for a warp's black loading frames).
+   * MAX_DEFERRED_FRAMES emulated frames in a row, 3 for a crossing, 30 for a warp's faded-out loading frames).
    */
   private deferSync(): boolean {
     return this.syncGate.defer(

@@ -66,7 +66,7 @@ export function crossingInProgress(cpu: CpuRegs, mem: Mem): boolean {
 }
 
 /** A map load in progress: a connection's crossing (inside CameraMove, within a frame or two) or a warp (its loading
- *  frames, black). */
+ *  frames, fully faded out). */
 export type MapLoad = 'crossing' | 'warp';
 
 /** Which map load the game is in, if any: a warp's load (a map-loading main callback, GameState's 'transition' scene: the
