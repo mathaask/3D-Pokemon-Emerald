@@ -11,7 +11,7 @@
 // ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
 // selftest?, selftestMid?, crossing? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
 // cold one; static entries report the preview's cold world build ms instead; `crossing`: the map-crossing entries' walk,
-// gated — see CROSSING_MARGIN_MS).
+// gated — see crossingMargin).
 // --static adds the static map-preview entries (object events from ROM templates; STATIC below);
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
@@ -93,10 +93,14 @@ interface LiveEntry {
  * (`crossing`): every frame's renderer CPU ms (max, its frame, median, the slowest five), the world builds and the
  * shader programs after the settle and at the end (stats().builds / .programs), the last build's ms (.lastBuildMs).
  * Gated (a failure is reported and fails the run, the shot stays): no program compiles during the walk, exactly one
- * build per crossing, and no frame slower than the crossing's build + CROSSING_MARGIN_MS (the build frame also draws
- * the new world for the first time: uploads, the atlas, sprites).
+ * build per crossing, and no frame slower than the crossing's build plus crossingMargin(build).
  */
-const CROSSING_MARGIN_MS = 25;
+/** How much slower than its build the crossing's frame may be (ms). The build frame also draws the new world for the
+ *  first time (its geometry and textures uploaded, the metatile and sprite atlases redrawn) and that part grows with the
+ *  world, as the build does: on the dev iGPU it measured 6-24 ms over builds of 20-82 ms (hitch fix). 40 ms, or half the
+ *  build when larger, stays clear of that spread and of the iGPU's jitter; a first-use compile (40-600 ms) still shows,
+ *  and the programs and builds gates catch a compile or a second build on their own. */
+const crossingMargin = (buildMs: number) => Math.max(40, 0.5 * buildMs);
 
 /** A step's switch: the world style to the other one (Modern ↔ Retro; the world rebuilds on the next sync). */
 const TOGGLE_STYLE = "emu.renderer.setWorldStyle(emu.renderer.overworld.worldStyle === 'modern' ? 'retro' : 'modern')";
@@ -771,11 +775,11 @@ async function main(): Promise<void> {
             entry.crossing = crossing;
             const c = crossing, [b0, b1] = c.builds;
             const builds = b0 !== null && b1 !== null ? b1 - b0 : null;
-            const limit = c.lastBuildMs !== null ? round(c.lastBuildMs + CROSSING_MARGIN_MS, 2) : null;
+            const limit = c.lastBuildMs !== null ? round(c.lastBuildMs + crossingMargin(c.lastBuildMs), 2) : null;
             const broken: string[] = [];
             if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
             if (builds !== e.crossings) broken.push(`${builds ?? 'no build counter:'} builds for ${e.crossings} crossing(s)`);
-            if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > build ${c.lastBuildMs ?? '?'} + ${CROSSING_MARGIN_MS} ms`);
+            if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > ${limit ?? '?'} ms (build ${c.lastBuildMs ?? '?'} + margin)`);
             crossLine = ` | walk ${c.frames} frames: max ${c.maxMs} ms (frame ${c.maxAt}, build ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms),`
               + ` median ${c.medianMs}, builds ${builds ?? '?'}, programs ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
             if (broken.length) crossingFailures.push(`${key} (${broken.join('; ')})`);
