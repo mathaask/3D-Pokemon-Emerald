@@ -64,9 +64,9 @@ const MAP_TYPE_UNDERGROUND = 4;
 const MAP_TYPE_SECRET_BASE = 9;
 const MAP_TYPE_UNDERWATER = 5;
 
-/** The precompile (OverworldView.precompile): its catalogue, compileAsync's promise, whether its programs are ready and
- *  its frame drawn. */
-interface PrecompileState { catalogue: WorldCatalogue | null; compiled: Promise<void>; ready: boolean; done: boolean }
+/** The precompile (OverworldView.precompile): its catalogue, compileAsync's promise, whether its frame was drawn (or it
+ *  failed). */
+interface PrecompileState { catalogue: WorldCatalogue | null; compiled: Promise<void>; done: boolean }
 
 export class OverworldView {
   readonly scene = new THREE.Scene();
@@ -137,12 +137,11 @@ export class OverworldView {
 
   /** The legacy pixel-geometry materials (the World's; the program catalogue draws with them too). */
   private worldMats: WorldMaterials;
-  /** The precompile (started once): what it compiles besides the actors, whether compileAsync's programs are ready, whether
-   *  its frame was drawn. */
+  /** The precompile (started once): what it compiles besides the actors, whether its frame was drawn. */
   private pre: PrecompileState | null = null;
-  /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel, off the main thread), and the
-   *  frame that compiles the rest (blocking). */
-  readonly precompileStats = { compileMs: 0, frameMs: 0 };
+  /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel, off the main thread), the frame
+   *  that compiles the rest (blocking), and when that frame was drawn (performance.now()). */
+  readonly precompileStats = { compileMs: 0, frameMs: 0, frameAt: 0 };
   /** Live play's sprite pixel source (object model colours), updated in place at every sync. */
   private livePixels: SpritePixelSource | null = null;
 
@@ -263,14 +262,15 @@ export class OverworldView {
    * must not hitch): the world's — one mesh per variant of the program catalogue (kit/catalogue.ts: the kit families',
    * the legacy pixel geometry's, the tree cards', the ground plane's) — the Phase 2 actors' (inflated actors, object
    * models), the sprite atlas's bake and the inflation field's passes. compileAsync issues them all at once (parallel
-   * where the browser has KHR_parallel_shader_compile) into a target as PostFX draws the scene; finishPrecompile then
-   * draws the frame that compiles the rest (shadow-depth, GTAO's override materials, PostFX's passes). Live play starts it at boot (the title
-   * screen), the map preview before its build. Resolves when compileAsync's programs are ready; a failure is logged
-   * once and never retried (the programs then compile on first use).
+   * where the browser has KHR_parallel_shader_compile) into a target as PostFX draws the scene, off the main thread;
+   * finishPrecompile then draws the frame that compiles the rest (shadow-depth, GTAO's override materials, PostFX's
+   * passes), blocking. Live play starts it at boot (Renderer's constructor), the map preview before its build. Resolves
+   * when compileAsync's programs are ready; a failure is logged once and never retried (the programs then compile on
+   * first use).
    */
   precompile(renderer: THREE.WebGLRenderer): Promise<void> {
     if (this.pre) return this.pre.compiled;
-    const pre: PrecompileState = { catalogue: null, compiled: Promise.resolve(), ready: false, done: false };
+    const pre: PrecompileState = { catalogue: null, compiled: Promise.resolve(), done: false };
     this.pre = pre;
     const t0 = performance.now();
     // (an async body: a synchronous throw becomes the rejection)
@@ -293,9 +293,10 @@ export class OverworldView {
         target.dispose();
       }
       await ready;
-      pre.ready = true;
       this.precompileStats.compileMs = performance.now() - t0;
     })().catch((e) => {
+      // (after the frame: it compiled the programs and freed the catalogue — nothing failed that matters)
+      if (pre.done) return;
       pre.done = true;
       pre.catalogue?.dispose();
       console.warn('[overworld] precompile failed (programs compile on first use instead)', e);
@@ -303,18 +304,13 @@ export class OverworldView {
     return pre.compiled;
   }
 
-  /** compileAsync's programs are ready and the precompile frame not drawn yet (the owner draws it between frames:
-   *  finishPrecompile). */
-  get precompileReady(): boolean {
-    return !!this.pre && this.pre.ready && !this.pre.done;
-  }
-
   /**
    * Draws the precompile frame once (starting the precompile if it was not): the catalogue's meshes and every Phase 2
    * actor shown, drawn as frames are presented (precompileFrame) — the shadow pass, GTAO's override materials at High,
-   * PostFX's passes compile there; whatever compileAsync has not finished yet is waited for. Live play draws it as soon
-   * as the programs are ready while the overworld is not presented (the title screen), and in any case at the first
-   * overworld sync, before the first world build; the preview before its build.
+   * PostFX's passes compile there; whatever compileAsync has not finished yet is waited for. Live play draws it while the
+   * loader waits for the start gesture if compileAsync is done by then (main.ts), else at the first overworld sync,
+   * before the first world build (under the fade-in; at once in the harness's manual mode); the preview before its
+   * build.
    */
   finishPrecompile(renderer: THREE.WebGLRenderer): void {
     void this.precompile(renderer);
@@ -350,6 +346,7 @@ export class OverworldView {
       restore();
       catalogue.dispose();
       this.precompileStats.frameMs = performance.now() - t0;
+      this.precompileStats.frameAt = t0;
     }
   }
 

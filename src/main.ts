@@ -213,7 +213,18 @@ async function boot(): Promise<void> {
     const res = await fetch(stateUrl);
     if (res.ok) gba.loadState(new Uint8Array(await res.arrayBuffer()));
   }
-  if (!params.has('autostart') && !manual) await shell.waitForGesture('Press any key to start');
+  if (!params.has('autostart') && !manual) {
+    // The overworld's programs compile in parallel from the renderer's construction on; the frame that compiles the rest
+    // blocks (1-2.5 s on a cold shader cache). It is drawn here, behind the loader, if the compile is done before the start
+    // gesture: nothing runs yet (no title screen, no audio). A quicker gesture leaves it to the first overworld sync,
+    // under its fade-in. (autostart, manual mode: always there — deterministic for the harness)
+    const gesture = shell.waitForGesture('Press any key to start');
+    const first = await Promise.race([gesture.then(() => 'gesture' as const), renderer.precompiled().then(() => 'compiled' as const)]);
+    if (first === 'compiled') {
+      renderer.finishPrecompile();
+      await gesture;
+    }
+  }
   audio.resume();
   shell.hideLoader();
   canvas.focus();
