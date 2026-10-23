@@ -18,7 +18,8 @@
 // entries (isBattleEntry): alone it runs only those, with --static every entry;
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
-// pixels (-1: sizes differ) }). --gpu times 60 more frames on the GPU after the screenshot (timer
+// pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png too, reported with the diffs, not in stats; a missing
+// reference fails the run as a shot's does). --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
 // (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
 // --selftest runs the inflation-field self-test (emu/preview.selfTest(): the GPU field vs its CPU reference
@@ -111,9 +112,10 @@ const crossingMargin = (buildMs: number) => Math.max(40, 0.5 * buildMs);
 /**
  * Scene-change entries (`sceneChange`: a battle's entry from the overworld, or its exit back to it) walk exactly as the
  * crossing entries do (the first step an idle settle of ≥ 30 frames, every frame drained) and record the same
- * CrossingStats, into stats (`sceneChange`); a walk between scenes counts no world builds (builds [null, null],
- * lastBuildMs null). 'record' gates nothing (today's cost, reported); 'gate' fails the run (the shot stays) when a program
- * compiles during the walk or a frame takes longer than SCENE_CHANGE_MS (spec §10's rebuild budget).
+ * CrossingStats, into stats (`sceneChange`). 'record' gates nothing (today's cost, reported); 'gate' fails the run (the
+ * shot stays) when a program compiles during the walk or a frame takes longer than SCENE_CHANGE_MS (spec §10's rebuild
+ * budget) — except the frame that makes the session's first world build (`firstBuildAt`): a save state that starts in a
+ * battle builds the overworld for the first time on its way back, which play, having walked into the battle, does not.
  */
 const SCENE_CHANGE_MS = 150;
 
@@ -160,6 +162,15 @@ const LIVE: LiveEntry[] = [
   // Scratch at frame 80: the claw effect sprite (frames 67-86, semi-transparent OBJ, its 4th of 5 claw frames) on Zigzagoon,
   // whose sprite monbg hides meanwhile (it is drawn on a BG layer: the 2D overlay); animActive 61-91; Torchic does not move
   { name: 'battle_move', state: 'out/battle1.state', steps: [['', 20], ['A', 2], ['', 58]] },
+  // Zigzagoon's Tackle (the A presses of battle_exit up to it; animActive 691-730): its sprite lunges 16 px towards Torchic
+  // (gHorizontalLungeSpriteTemplate: x 144 → 128 over 697-700, held to 702, back by 706) while monbg moves Torchic onto a BG
+  // layer (695-715: the 2D overlay draws it). At 702 the lunge is at its peak in both the 3D view (gSprites) and the GBA's
+  // frame (its OAM shows a frame or two later). The hit splat comes after the lunge: in gSprites 705-714, on the GBA's
+  // screen 707-715 (battle_hit)
+  { name: 'battle_lunge', state: 'out/battle1.state', steps: [['', 30], ...repeat(16, [['A', 2], ['', 38]]), ['A', 2], ['', 30]] },
+  // the same Tackle at 708: the hit splat (gBasicHitSplatSpriteTemplate, semi-transparent, affine 0.69) on Torchic, an
+  // effect card at the player's depth; Zigzagoon back in place
+  { name: 'battle_hit', state: 'out/battle1.state', steps: [['', 30], ...repeat(16, [['A', 2], ['', 38]]), ['A', 2], ['', 36]] },
   // the wild battle transition on Route 101 (frames 1-86) → screen2d 87-93 → a GRASS battle (wild Wurmple) from 94: at 360
   // the battlers have slid in (171-274), the HUD is up (275), Wurmple's entry wobble is over (341). Records today's entry
   // cost (gated from Task 4)
@@ -300,12 +311,15 @@ interface EntryStats {
   sceneChange?: CrossingStats;
 }
 
-/** A crossing or scene-change entry's walk (the steps after the settle): frame CPU ms with the GPU drained (`slowest`: the
- *  five slowest, [frame of the walk, ms]), builds and programs after the settle → at the end (null: the page exposes no
- *  build counter, or a walk between scenes), the last world build's ms. */
+/** A crossing or scene-change entry's walk (the steps after the settle): frame CPU ms with the GPU drained (`maxAt` and
+ *  `slowest`, [frame, ms] × 5, count frames of the walk: frame f of the walk is frame `settle` + f from the state's load),
+ *  the session's world builds and programs after the settle → at the end (null: the page exposes no build counter), the
+ *  last world build's ms, and the walk frame that made the session's first world build (null: one was made before the
+ *  walk, or none). */
 interface CrossingStats {
   frames: number; maxMs: number; maxAt: number; medianMs: number; slowest: [number, number][];
   builds: [number | null, number | null]; programs: [number, number]; lastBuildMs: number | null;
+  settle: number; firstBuildAt: number | null;
 }
 
 /** The renderer's stats() fields a walk reads. */
@@ -314,15 +328,15 @@ interface WalkPoint { programs: number; builds?: number; lastBuildMs?: number }
 /** The walk an entry makes (crossings, sceneChange), or null. */
 const walkOf = (e: LiveEntry): 'crossing' | 'sceneChange' | null => (e.crossings ? 'crossing' : e.sceneChange ? 'sceneChange' : null);
 
-/** A walk's CrossingStats from its frames' ms and the renderer's stats after the settle and at the end; a walk between
- *  scenes counts no builds. */
-function walkStats(kind: 'crossing' | 'sceneChange', walk: number[], settled: WalkPoint, end: WalkPoint): CrossingStats {
+/** A walk's CrossingStats from its frames' ms and the session's builds after each, the settle's length and the renderer's
+ *  stats after the settle and at the end. */
+function walkStats(walk: number[], walkBuilds: (number | undefined)[], settle: number, settled: WalkPoint, end: WalkPoint): CrossingStats {
   const order = walk.map((t, i) => [i + 1, round(t, 2)] as [number, number]).sort((a, b) => b[1] - a[1]);
-  const builds = kind === 'crossing';
+  const first = settled.builds === 0 ? walkBuilds.findIndex((b) => (b ?? 0) > 0) : -1;
   return {
     frames: walk.length, maxMs: order[0][1], maxAt: order[0][0], medianMs: round(median(walk), 2), slowest: order.slice(0, 5),
-    builds: builds ? [settled.builds ?? null, end.builds ?? null] : [null, null], programs: [settled.programs, end.programs],
-    lastBuildMs: builds ? end.lastBuildMs ?? null : null,
+    builds: [settled.builds ?? null, end.builds ?? null], programs: [settled.programs, end.programs],
+    lastBuildMs: end.lastBuildMs ?? null, settle, firstBuildAt: first >= 0 ? first + 1 : null,
   };
 }
 
@@ -336,28 +350,36 @@ function walkReport(e: LiveEntry, c: CrossingStats): { line: string; broken: str
     if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
     if (builds !== e.crossings) broken.push(`${builds ?? 'no build counter:'} builds for ${e.crossings} crossing(s)`);
     if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > ${limit ?? '?'} ms (build ${c.lastBuildMs ?? '?'} + margin)`);
-    const line = ` | walk ${c.frames} frames: max ${c.maxMs} ms (frame ${c.maxAt}, build ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms),`
-      + ` median ${c.medianMs}, builds ${builds ?? '?'}, programs ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
+    const line = ` | walk ${c.frames} frames after a ${c.settle}-frame settle: max ${c.maxMs} ms (walk frame ${c.maxAt}, build`
+      + ` ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms), median ${c.medianMs}, builds ${builds ?? '?'}, programs`
+      + ` ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
     return { line, broken };
   }
+  // (frames from the state's load, as the entries' comments count them)
+  const at = (f: number) => c.settle + f;
   if (e.sceneChange === 'gate') {
     if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
-    if (c.maxMs > SCENE_CHANGE_MS) broken.push(`max frame ${c.maxMs} ms > ${SCENE_CHANGE_MS} ms`);
+    // (the slowest frame but the session's first world build's: `slowest` holds five)
+    const [f, ms] = c.slowest.find(([w]) => w !== c.firstBuildAt) ?? [0, 0];
+    if (ms > SCENE_CHANGE_MS) broken.push(`frame ${at(f)}: ${ms} ms > ${SCENE_CHANGE_MS} ms`);
   }
-  const line = ` | scene change ${c.frames} frames: max ${c.maxMs} ms (frame ${c.maxAt}), median ${c.medianMs},`
-    + ` slowest ${c.slowest.map(([f, ms]) => `${ms}@${f}`).join(' ')}, programs ${c.programs.join(' → ')}`
+  const line = ` | scene change, frames ${at(1)}-${at(c.frames)}: max ${c.maxMs} ms @${at(c.maxAt)}, median ${c.medianMs},`
+    + ` slowest ${c.slowest.map(([f, ms]) => `${ms}@${at(f)}`).join(' ')}, programs ${c.programs.join(' → ')}, builds`
+    + ` ${c.builds.map((b) => b ?? '?').join(' → ')}${c.firstBuildAt !== null ? ` (the session's first @${at(c.firstBuildAt)}${e.sceneChange === 'gate' ? ': no frame gate' : ''})` : ''}`
     + (e.sceneChange === 'gate' ? (broken.length ? ` SCENE-CHANGE GATES FAILED: ${broken.join('; ')}` : ' (gated: passed)') : ' (recorded)');
   return { line, broken };
 }
 
-/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms. */
+/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms and the
+ *  session's world builds after each (stats().builds). */
 const drainedStep = (keys: string, frames: number) => `(() => {
-  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), out = [];
+  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), ms = [], builds = [];
   for (let i = 0; i < ${frames}; i++) {
-    out.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
+    ms.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    builds.push(emu.renderer.stats().builds);
   }
-  return out;
+  return { ms, builds };
 })()`;
 
 function arg(name: string, def: string): string {
@@ -832,18 +854,22 @@ async function main(): Promise<void> {
             // the entry's first frame builds the world and compiles programs (seconds, varying with
             // Chrome's program cache): stepMsMax is the largest frame time after it
             stepMsMax = 0;
-            // (a walk: the renderer's stats after the settle, and the walk's frames)
+            // (a walk: the renderer's stats after the settle, and the walk's frames with the session's builds after each)
             let settled: WalkPoint | undefined;
-            const walk: number[] = [];
+            const walk: number[] = [], walkBuilds: (number | undefined)[] = [];
             for (const [n, [keys, frames, before]] of e.steps.entries()) {
               if (before) await page.evaluate(before);
-              const times = await page.evaluate(walkKind ? drainedStep(keys, frames) : `emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
+              const { ms: times, builds } = walkKind ? await page.evaluate(drainedStep(keys, frames)) as { ms: number[]; builds: (number | undefined)[] }
+                : { ms: await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[], builds: [] };
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
               if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
               if (walkKind && n === 0) settled = await page.evaluate('emu.renderer.stats()') as WalkPoint;
-              if (n > 0) walk.push(...times);
+              if (n > 0) {
+                walk.push(...times);
+                walkBuilds.push(...builds);
+              }
             }
-            if (walkKind) walked = walkStats(walkKind, walk, settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint);
+            if (walkKind) walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint);
             // the GBA's own frame of a battle entry (the review's reference column)
             if (isBattleEntry(e)) {
               const png = await page.evaluate('emu.gbaPng()') as string;
@@ -956,6 +982,27 @@ async function main(): Promise<void> {
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
         if (pageErrors > errorsBefore) errored.push(key);
+      }
+      // --compare: the entry's GBA frame (one per battle entry) against the reference run's too (the review's GBA column)
+      if (refDir && gbaShots.has(e.name)) {
+        const name = `gba_${e.name}`, ref = path.join(refDir, `${name}.png`);
+        current = name;
+        const errorsBefore = pageErrors;
+        if (fs.existsSync(ref)) {
+          try {
+            const d = await diffPng(page, path.join(outDir, `${name}.png`), ref);
+            const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
+            diffs.push(`diff ${name.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
+            console.log(`gba  ${name.padEnd(24)} diff ${d.pct.toFixed(2)} % (${d.pixels} px)`);
+          } catch (err) {
+            failures.push(name);
+            console.log(`[${name}] FAILED: ${(err as Error).message}`);
+          }
+        } else {
+          missingRefs.push(name);
+          diffs.push(`diff ${name.padEnd(24)} no reference in ${compare}`);
+        }
+        if (pageErrors > errorsBefore) errored.push(name);
       }
     }
     if (styles.includes('modern') && styles.includes('retro')) {
