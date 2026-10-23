@@ -62,6 +62,12 @@ function newBatch(): QuadBatch {
 
 const UV = new Float32Array(4);
 
+/** The material of the ground plane under every world (its colour set per build): its only definition (the program
+ *  catalogue, kit/catalogue.ts, precompiles it). */
+export function groundMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: 0x5a9a6a, roughness: 1 });
+}
+
 /** Average sRGB colour (0..1) of a metatile's composite pixels. */
 function averageColor(info: { both: Uint16Array }, m: number): [number, number, number] {
   let r = 0, g = 0, b = 0, n = 0;
@@ -86,6 +92,9 @@ export class World {
   private kitGroup: THREE.Group | null = null;
   /** Per-family outcome of the last build (empty when the kit did not run). */
   kitReport: FamilyReport[] = [];
+  /** Builds so far, and the last one's ms (the renderer's stats: a map crossing builds once). */
+  builds = 0;
+  lastBuildMs = 0;
   /** Walkable surface heights the kit draws instead of the analysis' (per grid cell, NaN = none;
    *  null: Retro, or the kit did not run). */
   private surfaceY: Float32Array | null = null;
@@ -93,10 +102,7 @@ export class World {
   private blades: Uint8Array | null = null;
   private cellOf: ((x: number, y: number) => number) | null = null;
 
-  private base = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0x5a9a6a, roughness: 1 }),
-  );
+  private base = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), groundMaterial());
 
   constructor(
     private atlas: MetatileAtlas,
@@ -124,6 +130,13 @@ export class World {
   }
 
   build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
+    const t0 = performance.now();
+    this.buildMeshes(grid, opts, ctx);
+    this.builds++;
+    this.lastBuildMs = performance.now() - t0;
+  }
+
+  private buildMeshes(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
     this.dispose();
     const a = analyze(grid, { ...opts, margin: this.margin });
     let claims: Claims | null = null;

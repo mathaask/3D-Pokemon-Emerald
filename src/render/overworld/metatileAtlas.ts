@@ -171,8 +171,13 @@ export class MetatileAtlas {
   }
 
   /** Loads metatile definitions + attributes for a tileset pair. Returns true if changed. */
+  /** Whether setTilesets(…, primary, secondary) would load other tilesets (reads only). */
+  tilesetsDiffer(primary: number, secondary: number): boolean {
+    return primary !== this.primary || secondary !== this.secondary;
+  }
+
   setTilesets(mem: Mem, primary: number, secondary: number): boolean {
-    if (primary === this.primary && secondary === this.secondary) return false;
+    if (!this.tilesetsDiffer(primary, secondary)) return false;
     this.primary = primary;
     this.secondary = secondary;
     this.defsData.fill(0);

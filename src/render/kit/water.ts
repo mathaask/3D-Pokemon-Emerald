@@ -10,7 +10,7 @@ import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_WATER_UNDER, type Claims } from '../
 import { attrBehavior } from '../../game/rom/tileset';
 import { classifyGroundColor, countPixels, dominantColor, luma, toLinear, type RGB } from './palette';
 import { hashCell } from './geom';
-import { kitMaterial } from './materials';
+import { kitMaterial, type KitMaterialOptions } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 const isWaterColor = (c: RGB) => classifyGroundColor(c) === 'water';
@@ -264,6 +264,33 @@ function faceNormal(pos: Float32Array, nor: Float32Array, o: number): void {
   for (let k = 0; k < 9; k += 3) { nor[o + k] = nx; nor[o + k + 1] = ny; nor[o + k + 2] = nz; }
 }
 
+// The water family's materials: their only definitions (the program catalogue, kit/catalogue.ts, precompiles each).
+/** The water sheet (`tex`: its cells, over the grid from `gridMin`, `gridSize` cells; `tint`: the water's colour). One
+ *  non-overlapping sheet drawn after every opaque object (seabed, rocks, legacy cells test against it as usual), so it
+ *  need not write depth; if it did, the swell (up to +0.05) would hide blob shadows and decals lying just above the
+ *  water level. */
+export function waterMaterial(tex: THREE.Texture, gridMin: THREE.Vector2, gridSize: THREE.Vector2, tint: THREE.Vector3): KitMaterialOptions {
+  return {
+    roughness: 0.12,
+    transparent: true,
+    depthWrite: false,
+    uniforms: { tWater: { value: tex }, uGridMin: { value: gridMin }, uGridSize: { value: gridSize }, uTint: { value: tint } },
+    fragHead: FRAG_HEAD,
+    fragColor: FRAG_COLOR,
+    fragNormal: FRAG_NORMAL,
+    fragEmissive: FRAG_EMISSIVE,
+    vertTransform: VERT_SWELL,
+    hookKey: 'water',
+  };
+}
+export const SEABED_MATERIAL: KitMaterialOptions = {
+  color: new THREE.Color().setRGB(0.74, 0.66, 0.47, THREE.SRGBColorSpace),
+  roughness: 1,
+  fragColor: BED_COLOR,
+  hookKey: 'seabed',
+};
+export const WATER_ROCK_MATERIAL: KitMaterialOptions = { vertexColors: true, roughness: 0.75 };
+
 export const waterFamily: Family<WaterPlacement> = {
   name: 'water',
 
@@ -377,44 +404,21 @@ export const waterFamily: Family<WaterPlacement> = {
     const bounds = new THREE.Sphere(new THREE.Vector3((a.minX + a.maxX) / 2, mid, (a.minY + a.maxY) / 2 + mid),
       Math.hypot(a.GW, a.GH + hi - lo, hi - lo) / 2 + 1);
     const group = new THREE.Group();
-    // One non-overlapping sheet drawn after every opaque object (seabed, rocks, legacy cells test
-    // against it as usual), so it need not write depth; if it did, the swell (up to +0.05) would hide
-    // blob shadows and decals lying just above the water level.
-    const km = kitMaterial(kit.uniforms, {
-      roughness: 0.12,
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        tWater: { value: tex },
-        uGridMin: { value: new THREE.Vector2(a.minX, a.minY) },
-        uGridSize: { value: new THREE.Vector2(a.GW, a.GH) },
-        uTint: { value: new THREE.Vector3(...p.tint) },
-      },
-      fragHead: FRAG_HEAD,
-      fragColor: FRAG_COLOR,
-      fragNormal: FRAG_NORMAL,
-      fragEmissive: FRAG_EMISSIVE,
-      vertTransform: VERT_SWELL,
-      hookKey: 'water',
-    });
+    const km = kitMaterial(kit.uniforms, waterMaterial(tex, new THREE.Vector2(a.minX, a.minY), new THREE.Vector2(a.GW, a.GH),
+      new THREE.Vector3(...p.tint)));
     const water = new THREE.Mesh(upGeometry(surf, bounds), km.material);
     water.receiveShadow = true;
     // First among transparent objects: blob shadows, weather and effects draw over the water.
     water.renderOrder = -1;
     group.add(water);
     if (beds) {
-      const bm = kitMaterial(kit.uniforms, {
-        color: new THREE.Color().setRGB(0.74, 0.66, 0.47, THREE.SRGBColorSpace),
-        roughness: 1,
-        fragColor: BED_COLOR,
-        hookKey: 'seabed',
-      });
+      const bm = kitMaterial(kit.uniforms, SEABED_MATERIAL);
       const bedMesh = new THREE.Mesh(upGeometry(bed, bounds.clone()), bm.material);
       bedMesh.receiveShadow = true;
       group.add(bedMesh);
     }
     if (p.rocks.length) {
-      const rm = kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.75 });
+      const rm = kitMaterial(kit.uniforms, WATER_ROCK_MATERIAL);
       const rockMesh = new THREE.Mesh(rockGeometry(p.rocks, p.rockTint), rm.material);
       rockMesh.castShadow = true;
       rockMesh.receiveShadow = true;

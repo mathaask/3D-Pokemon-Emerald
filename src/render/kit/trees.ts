@@ -19,7 +19,7 @@ import { buildingLayout } from './footprints';
 import { doorStructures } from './cliffs';
 import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';
-import { applyKitMaterial, kitMaterial, type KitMaterial } from './materials';
+import { applyKitMaterial, kitMaterial, type KitMaterial, type KitMaterialOptions } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
 
 export type TreeStyle = 'round' | 'bushy' | 'pine' | 'palm';
@@ -397,6 +397,19 @@ const WIND: Record<TreeStyle, [number, number]> = {
   round: [0.05, 2.6], bushy: [0.045, 1.9], pine: [0.04, 2.4], palm: [0.07, 2.4],
 };
 
+export const TREE_STYLES = Object.keys(WIND) as TreeStyle[];
+
+/** A tree style's material (`trunk`: the map's bark colour, linear): its only definition (the program catalogue,
+ *  kit/catalogue.ts, precompiles every style's). */
+export function treeMaterial(style: TreeStyle, trunk: THREE.Color): KitMaterialOptions {
+  return {
+    vertexColors: true, roughness: 0.85, wind: WIND[style][0], windHeight: WIND[style][1], fade: true,
+    side: style === 'palm' ? THREE.DoubleSide : THREE.FrontSide,
+    uniforms: { uTrunk: { value: trunk } },
+    fragHead: TRUNK_HEAD, fragColor: TRUNK_FRAG, hookKey: 'tree',
+  };
+}
+
 // ---------------------------------------------------------------- family
 
 export const treeFamily: Family<TreePlacement[]> = {
@@ -654,12 +667,7 @@ export const treeFamily: Family<TreePlacement[]> = {
         let bark: RGB = BARK_FALLBACK, best = 0;
         for (const v of barks.get(style)!.values()) if (v.n > best) { best = v.n; bark = v.c; }
         const tl = toLinear(bark);
-        km = kitMaterial(kit.uniforms, {
-          vertexColors: true, roughness: 0.85, wind: WIND[style][0], windHeight: WIND[style][1], fade: true,
-          side: style === 'palm' ? THREE.DoubleSide : THREE.FrontSide,
-          uniforms: { uTrunk: { value: new THREE.Color(tl[0], tl[1], tl[2]) } },
-          fragHead: TRUNK_HEAD, fragColor: TRUNK_FRAG, hookKey: 'tree',
-        });
+        km = kitMaterial(kit.uniforms, treeMaterial(style, new THREE.Color(tl[0], tl[1], tl[2])));
         mats.set(style, km);
       }
       // (palms and pines are rare: one shape each, varied by rotation and scale)

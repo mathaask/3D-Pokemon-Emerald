@@ -14,7 +14,7 @@ import { K } from '../overworld/analyze';
 import { CLAIM_BLADES, CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { bgr555ToSrgb, dominantColor, luma, lush, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise2, rng } from './geom';
-import { applyKitMaterial, kitMaterial } from './materials';
+import { applyKitMaterial, kitMaterial, type KitMaterialOptions } from './materials';
 import type { Quality } from '../post';
 import type { Family, KitContext, SemanticContext } from './semantics';
 
@@ -129,6 +129,12 @@ const BOTH_FACES = /* glsl */ `
 normal = normalize(vNormal);
 `;
 
+/** The grass blades' material: its only definition (the program catalogue, kit/catalogue.ts, precompiles it). */
+export const GRASS_MATERIAL: KitMaterialOptions = {
+  vertexColors: true, roughness: 0.85, side: THREE.DoubleSide, wind: 0.08, windHeight: 0.6, bend: true,
+  fragNormal: BOTH_FACES, hookKey: 'grass',
+};
+
 export const grassFamily: Family<GrassCell[]> = {
   name: 'grass',
 
@@ -156,10 +162,7 @@ export const grassFamily: Family<GrassCell[]> = {
 
   build(cells: GrassCell[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!cells.length) return null;
-    const km = kitMaterial(kit.uniforms, {
-      vertexColors: true, roughness: 0.85, side: THREE.DoubleSide, wind: 0.08, windHeight: 0.6, bend: true,
-      fragNormal: BOTH_FACES, hookKey: 'grass',
-    });
+    const km = kitMaterial(kit.uniforms, GRASS_MATERIAL);
     const blades = BLADES[kit.quality];
     /** Map chunk of a cell (numeric key: x and y chunk, 4096 apart). */
     const chunks = new Map<number, GrassCell[]>();

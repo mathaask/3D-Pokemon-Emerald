@@ -14,7 +14,7 @@ import { MB } from '../../game/behaviors';
 import { K } from '../overworld/analyze';
 import { CLAIM_OBJECT, type Claims } from '../overworld/claims';
 import { hashCell, noise3 } from './geom';
-import { kitMaterial } from './materials';
+import { kitMaterial, type KitMaterialOptions } from './materials';
 import { earthTone, nightSoilScale, toLinear, type RGB } from './palette';
 import { cellLook, type CellLook } from './terrain';
 import type { Family, KitContext, SemanticContext } from './semantics';
@@ -61,6 +61,9 @@ function bedGeo(cx: number, h: number, cz: number, seed: number, soil: RGB): THR
   g.computeVertexNormals();
   return g;
 }
+
+/** The beds' material: its only definition (the program catalogue, kit/catalogue.ts, precompiles it). */
+export const SOIL_MATERIAL: KitMaterialOptions = { vertexColors: true, roughness: 0.95 };
 
 export const soilFamily: Family<SoilCell[]> = {
   name: 'berrySoil',
@@ -110,7 +113,7 @@ function bedMesh(cells: SoilCell[], kit: KitContext): THREE.Mesh {
   const g = mergeGeometries(beds)!;
   for (const b of beds) b.dispose();
   g.computeBoundingSphere();
-  const material = kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.95 }).material;
+  const material = kitMaterial(kit.uniforms, SOIL_MATERIAL).material;
   const mesh = new THREE.Mesh(g, material);
   mesh.receiveShadow = true;
   const soil = cells[0].color, night = kit.uniforms.uNight, scale: RGB = [1, 1, 1];

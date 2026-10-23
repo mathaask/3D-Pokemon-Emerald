@@ -11,7 +11,8 @@ import type { SpriteField } from '../actors/spriteField';
 import type { Quality } from '../post';
 import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
-import { World, type GridData, type WorldStyle } from './world';
+import { World, type GridData, type WorldMaterials, type WorldStyle } from './world';
+import { worldCatalogue, type WorldCatalogue } from '../kit/catalogue';
 import { analyzeMetatiles } from './tileInfo';
 import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
@@ -62,6 +63,10 @@ const MAP_TYPE_INDOOR = 8;
 const MAP_TYPE_UNDERGROUND = 4;
 const MAP_TYPE_SECRET_BASE = 9;
 const MAP_TYPE_UNDERWATER = 5;
+
+/** The precompile (OverworldView.precompile): its catalogue, compileAsync's promise, whether its frame was drawn (or it
+ *  failed). */
+interface PrecompileState { catalogue: WorldCatalogue | null; compiled: Promise<void>; done: boolean }
 
 export class OverworldView {
   readonly scene = new THREE.Scene();
@@ -130,18 +135,24 @@ export class OverworldView {
     charLight: this.charLight,
   };
 
-  /** The Phase 2 programs' compile (precompile), started once. */
-  private precompiled: Promise<void> | null = null;
+  /** The legacy pixel-geometry materials (the World's; the program catalogue draws with them too). */
+  private worldMats: WorldMaterials;
+  /** The precompile (started once): what it compiles besides the actors, whether its frame was drawn. */
+  private pre: PrecompileState | null = null;
+  /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel, off the main thread), the frame
+   *  that compiles the rest (blocking), and when that frame was drawn (performance.now()). */
+  readonly precompileStats = { compileMs: 0, frameMs: 0, frameAt: 0 };
   /** Live play's sprite pixel source (object model colours), updated in place at every sync. */
   private livePixels: SpritePixelSource | null = null;
 
   /** `field`: the sprite atlas's inflation field (Modern), kept up to date by the owner after each atlas bake. */
   /** `instanceUniforms`: the inflated actors read their instance data from a uniform array (default; false: instance
    *  attributes, for a device with too few vertex uniform vectors — instanceUniformsFit). */
-  constructor(private gbaTex: GbaTextures, spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
+  constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
     instanceUniforms = true) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
     const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
+    this.worldMats = mats;
     this.opaqueMat = mats.opaque;
     this.cutoutMat = mats.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
@@ -247,24 +258,98 @@ export class OverworldView {
   }
 
   /**
-   * Compiles the Phase 2 programs once, whatever the style (a Retro session switching to Modern must not
-   * hitch): the inflation field's passes, the inflated actors (main and shadow twin) and the object models
-   * (main and shadow-depth). Live play starts it at the first sync, the map preview after its build.
+   * Starts compiling every program the overworld draws, once, whatever the style (a Retro session switching to Modern
+   * must not hitch): the world's — one mesh per variant of the program catalogue (kit/catalogue.ts: the kit families',
+   * the legacy pixel geometry's, the tree cards', the ground plane's) — the Phase 2 actors' (inflated actors, object
+   * models), the sprite atlas's bake and the inflation field's passes. compileAsync issues them all at once (parallel
+   * where the browser has KHR_parallel_shader_compile) into a target as PostFX draws the scene, off the main thread;
+   * finishPrecompile then draws the frame that compiles the rest (shadow-depth, GTAO's override materials, PostFX's
+   * passes), blocking. Live play starts it at boot (Renderer's constructor), the map preview before its build. Resolves
+   * when compileAsync's programs are ready; a failure is logged once and never retried (the programs then compile on
+   * first use).
    */
   precompile(renderer: THREE.WebGLRenderer): Promise<void> {
-    // (an async body: a synchronous throw becomes the rejection; a failure is logged once, never retried)
-    return this.precompiled ??= (async () => {
-      await Promise.all([
-        this.field?.compile(renderer),
-        this.actors.precompile(renderer, this.scene, this.camera, this.precompileFrame ?? undefined),
-      ]);
-      // (the precompile frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
+    if (this.pre) return this.pre.compiled;
+    const pre: PrecompileState = { catalogue: null, compiled: Promise.resolve(), done: false };
+    this.pre = pre;
+    const t0 = performance.now();
+    // (an async body: a synchronous throw becomes the rejection)
+    pre.compiled = (async () => {
+      // the catalogue's kit materials pool apart: a build never takes them (their ids, the opaque draw order, stay)
+      pre.catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy: this.worldMats, atlas: this.atlas.target.texture });
+      const target = new THREE.WebGLRenderTarget(1, 1);
+      const prev = renderer.getRenderTarget();
+      let ready: Promise<unknown>;
+      try {
+        renderer.setRenderTarget(target);
+        ready = Promise.all([
+          renderer.compileAsync(pre.catalogue.root, this.camera, this.scene),
+          renderer.compileAsync(this.actors.group, this.camera, this.scene),
+          this.field?.compile(renderer),
+          this.spriteAtlas.compile(renderer),
+        ]);
+      } finally {
+        renderer.setRenderTarget(prev);
+        target.dispose();
+      }
+      await ready;
+      this.precompileStats.compileMs = performance.now() - t0;
+    })().catch((e) => {
+      // (after the frame: it compiled the programs and freed the catalogue — nothing failed that matters)
+      if (pre.done) return;
+      pre.done = true;
+      pre.catalogue?.dispose();
+      console.warn('[overworld] precompile failed (programs compile on first use instead)', e);
+    });
+    return pre.compiled;
+  }
+
+  /**
+   * Draws the precompile frame once (starting the precompile if it was not): the catalogue's meshes and every Phase 2
+   * actor shown, drawn as frames are presented (precompileFrame) — the shadow pass, GTAO's override materials at High,
+   * PostFX's passes compile there; whatever compileAsync has not finished yet is waited for. Live play draws it while the
+   * loader waits for the start gesture if compileAsync is done by then (main.ts), else at the first overworld sync,
+   * before the first world build (under the fade-in; at once in the harness's manual mode); the preview before its
+   * build.
+   */
+  finishPrecompile(renderer: THREE.WebGLRenderer): void {
+    void this.precompile(renderer);
+    const pre = this.pre!;
+    const catalogue = pre.catalogue;
+    // (no catalogue: building it failed — precompile's rejection logs it once)
+    if (pre.done || !catalogue) return;
+    pre.done = true;
+    const t0 = performance.now();
+    this.scene.add(catalogue.root);
+    const restore = this.actors.showAll();
+    try {
+      if (this.precompileFrame) this.precompileFrame();
+      else {
+        const target = new THREE.WebGLRenderTarget(1, 1);
+        const prev = renderer.getRenderTarget();
+        try {
+          renderer.setRenderTarget(target);
+          renderer.render(this.scene, this.camera);
+        } finally {
+          renderer.setRenderTarget(prev);
+          target.dispose();
+        }
+      }
+      // (the frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
       this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[]);
-    })().catch((e) => { console.warn('[overworld] precompile failed (programs compile on first use instead)', e); });
+    } catch (e) {
+      console.warn('[overworld] precompile frame failed (programs compile on first use instead)', e);
+    } finally {
+      restore();
+      catalogue.dispose();
+      this.precompileStats.frameMs = performance.now() - t0;
+      this.precompileStats.frameAt = t0;
+    }
   }
 
   /** Draws one frame as it is presented (the owner's PostFX: its passes, GTAO's override materials at High
-   *  quality): the precompile draws it with every Phase 2 mesh shown. null: the scene alone, into a 1×1 target. */
+   *  quality): the precompile draws it with the catalogue and every Phase 2 mesh shown. null: the scene alone, into a
+   *  1×1 target. */
   precompileFrame: (() => void) | null = null;
 
   /** Where the object models sample their sprites' colours (the map preview: its scratch VRAM and palette). */
@@ -281,7 +366,8 @@ export class OverworldView {
     pixels.palette = this.gbaTex.paletteSource ?? bus.pram16;
     pixels.map2d = (bus.io16[0] & 0x40) === 0;
     this.actors.setPixelSource(pixels);
-    void this.precompile(renderer);
+    // (every program compiled before the first world build: at boot, or here at the latest)
+    this.finishPrecompile(renderer);
     if (!state.layout || !state.header) return;
     this.mapType = state.header.mapType;
     this.cave = state.header.cave;
@@ -290,9 +376,9 @@ export class OverworldView {
     const bgcnt = m.bus.io16[0x0c >>> 1]; // BG2CNT
     this.charBase = ((bgcnt >>> 2) & 3) * 0x4000;
 
-    const key = `${state.mapGroup}.${state.mapNum}.${state.header.layout}.${state.backupWidth}x${state.backupHeight}`;
+    const key = OverworldView.mapKey(state);
     const grid = this.readGrid(state);
-    if (grid && (key !== this.gridKey || tsChanged || this.gridChanged(grid))) {
+    if (this.rebuildPending(state, tsChanged, grid)) {
       const mapChanged = key !== this.gridKey;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
       this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state),
@@ -303,6 +389,33 @@ export class OverworldView {
       if (mapChanged) this.onMapChanged(state);
     }
     this.atlas.render(renderer, this.charBase);
+  }
+
+  /** What the world is built for: map, layout, backup grid size. */
+  private static mapKey(state: GameState): string {
+    return `${state.mapGroup}.${state.mapNum}.${state.header?.layout}.${state.backupWidth}x${state.backupHeight}`;
+  }
+
+  /** A sync with `state` rebuilds the world: its grid read, and the map, the tilesets (`tsChanged`) or a cell changed. */
+  private rebuildPending(state: GameState, tsChanged: boolean, grid: GridData | null): grid is GridData {
+    return !!grid && (OverworldView.mapKey(state) !== this.gridKey || tsChanged || this.gridChanged(grid));
+  }
+
+  /** Whether sync(state) would rebuild the world (as it decides; reads, changes nothing): the renderer defers a sync
+   *  that would rebuild from a map load in progress (SyncGate). */
+  wouldRebuild(state: GameState): boolean {
+    if (!state.layout || !state.header) return false;
+    const tsChanged = this.atlas.tilesetsDiffer(state.layout.primaryTileset, state.layout.secondaryTileset);
+    return this.rebuildPending(state, tsChanged, this.readGrid(state));
+  }
+
+  /** World builds so far (live and preview) and the last one's ms. */
+  get builds(): number {
+    return this.world.builds;
+  }
+
+  get lastBuildMs(): number {
+    return this.world.lastBuildMs;
   }
 
   /** Classifies a grid and rebuilds the world mesh (shared by live play and the map preview);

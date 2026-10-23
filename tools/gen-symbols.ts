@@ -19,6 +19,8 @@ const WANTED = [
   'gTileset_Slateport', 'gTileset_BattleFrontierOutsideWest', 'gTileset_BattleFrontierOutsideEast',
   'sPrimaryTilesetAnimCounter',
   'gBGTilemapBuffers1', 'gBGTilemapBuffers2', 'gBGTilemapBuffers3', 'gFlashEffectActive',
+  // code: a map connection being crossed (the game is inside CameraMove: map load in progress)
+  'CameraMove',
   // callbacks used for scene detection
   'CB1_Overworld', 'CB2_Overworld', 'CB2_OverworldBasic', 'BattleMainCB2', 'BattleMainCB1',
   'CB2_InitBattle', 'CB2_HandleStartBattle', 'CB2_InitTitleScreen', 'MainCB2', 'CB2_MainMenu',

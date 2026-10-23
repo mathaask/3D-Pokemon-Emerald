@@ -15,7 +15,7 @@ import { K, type MapAnalysis } from '../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../overworld/claims';
 import { bgr555ToSrgb, dominantColor, luma, mix, saturation, soften, toLinear, scale, type RGB } from './palette';
 import { QuadWriter, hashCell, noise3, type V3 } from './geom';
-import { kitMaterial } from './materials';
+import { kitMaterial, type KitMaterialOptions } from './materials';
 import { blobCrown } from './trees';
 import { isRocky } from './cliffs';
 import { buildingKind, buildingLayout } from './footprints';
@@ -118,6 +118,11 @@ function lookOf(a: MapAnalysis, m: number): Look {
 }
 
 const UP = new THREE.Vector3(0, 1, 0), _d = new THREE.Vector3(), _s = new THREE.Vector3(), _u = new THREE.Vector3();
+
+// The props' materials: their only definitions (the program catalogue, kit/catalogue.ts, precompiles each).
+export const PROP_BODY: KitMaterialOptions = { vertexColors: true, roughness: 0.85, flatShading: true, fade: true };
+/** Lamp heads, lit at night. */
+export const PROP_GLOW: KitMaterialOptions = { vertexColors: true, glow: 2.5, fade: true };
 
 export const propFamily: Family<PropPlacement[]> = {
   name: 'props',
@@ -495,11 +500,11 @@ export const propFamily: Family<PropPlacement[]> = {
       }
     }
     const root = new THREE.Group();
-    const body = new THREE.Mesh(qw.geometry(), kitMaterial(kit.uniforms, { vertexColors: true, roughness: 0.85, flatShading: true, fade: true }).material);
+    const body = new THREE.Mesh(qw.geometry(), kitMaterial(kit.uniforms, PROP_BODY).material);
     body.castShadow = true;
     body.receiveShadow = true;
     root.add(body);
-    if (!glow.empty) root.add(new THREE.Mesh(glow.geometry(), kitMaterial(kit.uniforms, { vertexColors: true, glow: 2.5, fade: true }).material));
+    if (!glow.empty) root.add(new THREE.Mesh(glow.geometry(), kitMaterial(kit.uniforms, PROP_GLOW).material));
     return root;
   },
 };

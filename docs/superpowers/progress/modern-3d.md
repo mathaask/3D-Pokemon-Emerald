@@ -333,6 +333,26 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
 
 ## Next step
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
+- **2026-10-23: hitch fix done** (user chose "hitch fix, then Phase 3"; in-chat design approved; branch `hitch-fix`,
+  reviewed + 1 fix round + re-review, merged):
+  - **First-visit compiles gone:** every overworld program (24-mesh catalogue built from the kit families' own
+    exported material definitions + legacy materials + actors + sprite bake + field passes) compiles at boot in
+    parallel; the one blocking frame (shadow-depth/PostFX programs) is drawn behind the start loader when ready before
+    the click, else at the first overworld sync. Programs constant after boot (58 live). Smoke drift guard
+    `tests/smoke/catalogue.test.ts`: catalogue signature set == drawn set over all 518 maps × Modern low/medium/high +
+    Retro. Before: Oldale water 416–558 ms, flowers 55–600 ms, signs 68 ms on first visits → 0.
+  - **One build per map load:** the second build came from reading the game mid-`LoadMapFromCameraTransition` (new
+    header, old grid) — `cpu.halted` is never set (busy-wait VBlank), so `src/game/mapLoad.ts` detects it by code
+    position (PC/LR/live stacks inside CameraMove) or a warp's 'transition' scene, and `src/render/syncGate.ts` defers
+    the whole sync (cap 3 emulated frames for crossings, 30 for faded-out warps). Crossings 2 builds → 1 (Littleroot
+    Modern 45+43 → 45–48 ms; Oldale 66+416 → 45–94 ms); door warps too. Harness entries `cross_lr`, `cross_oldale`
+    gate programs constant, 1 build, max frame ≤ build + max(40, 0.5×build).
+  - **Boot:** cold shader cache + quick click → ~1.9–2.1 s first overworld frame (was 3.3–3.4 s); waiting on the start
+    screen → 0.16–0.25 s. JIT warm-up build measured, no gain, not shipped.
+  - Remaining: a crossing still costs one world build (≈ 30–75 ms; moving analysis off the main thread would fix it);
+    detection relies on the BPEE rev 0 CameraMove address (unknown ROM → old behaviour, bounded by the cap).
+- **Next: Phase 3 (battles)** — plan being written from spec §7 (draft in `.superpowers/sdd/phase3-draft/`, then
+  `docs/superpowers/plans/`); the user reviews it before execution. The terrain height solver v2 waits.
 - Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
   programs and a cheaper map crossing (the hitches listed in both phases' gaps). Then Phase 3 (battles): reuse
   `InflatedActors` + `SpriteField` for battlers (pass `instanceUniformsFit(renderer.capabilities.maxVertexUniforms)`;

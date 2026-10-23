@@ -8,8 +8,9 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - **Phase 1 (outdoor environment) and Phase 2 (characters, Pokémon, field objects) are done** (merged to
   `main`; results, numbers and known gaps in the progress log; full rulings in `phase1-sdd-ledger.md` /
   `phase2-sdd-ledger.md`).
-- **Next:** Phase 1 follow-up (terrain height solver v2, world-program precompile, cheaper crossings), then
-  Phase 3 (battles) — see "Next step" in the progress log. Write the plan first, then execute
+- **Hitch fix done** (boot-time program catalogue, one build per map load). **Now:** Phase 3 (battles) — plan
+  written from spec §7 (draft `.superpowers/sdd/phase3-draft/`), user reviews it before execution; the terrain
+  height solver v2 waits — see "Next step" in the progress log. Write the plan first, then execute
   subagent-driven (only `opus` subagents work here). Show the user a phase progress bar in every update
   (they write Norwegian; reply in Norwegian). Merge + push to `origin` (private account) without asking.
 - **Spec:** `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`

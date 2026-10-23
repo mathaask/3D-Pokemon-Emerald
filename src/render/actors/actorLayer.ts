@@ -17,7 +17,7 @@ import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
 import { SpriteColorCache, type SpritePixelSource, type SpriteSample } from './spriteColors';
-import { ObjectModels, precompileScene, type ModelInstance } from './objectModels';
+import { ObjectModels, type ModelInstance } from './objectModels';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
 /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. The saved
@@ -269,22 +269,19 @@ export class ActorLayer {
   }
 
   /**
-   * Compiles the Phase 2 actor programs before they are first drawn (also in a Retro session, where they are
-   * hidden): the object models' and the inflated actors' (with their contact shadows), main and shadow-depth
-   * ones — a frame of `scene` compiles the latter (ObjectModels.precompile; `frame`: the owner's PostFX frame,
-   * which also compiles GTAO's override materials at High quality). Resolves when they are ready.
+   * Shows every Phase 2 actor mesh — the inflated actors with their contact shadows, every object model with one
+   * instance — for the precompile frame (also in a Retro session, where they are hidden: OverworldView.precompile
+   * compiles their programs, main and shadow-depth, before they are first drawn); returns what restores them.
    */
-  precompile(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, frame?: () => void): Promise<void> {
+  showAll(): () => void {
     const shown = [this.inflated?.mesh, this.contact?.mesh].filter((m): m is THREE.Mesh => m !== undefined);
     const was = shown.map((m) => m.visible);
     for (const m of shown) m.visible = true;
-    try {
-      return this.models
-        ? this.models.precompile(renderer, scene, camera, this.group, frame)
-        : precompileScene(renderer, this.group, scene, camera, frame).then(() => undefined);
-    } finally {
+    const models = this.models?.showAll();
+    return () => {
+      models?.();
       shown.forEach((m, i) => { m.visible = was[i]; });
-    }
+    };
   }
 
   /** Sprite edges of the inflated actors (Modern): HD smooth (xBR, the default) or Pixel. Cards are unaffected. */

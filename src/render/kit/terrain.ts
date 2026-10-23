@@ -12,7 +12,7 @@ import type { TileInfo } from '../overworld/tileInfo';
 import { bgr555ToSrgb, classifyGroundColor, countPixels, dominantColor, luma, scale, wetGround, type GroundClass, type RGB } from './palette';
 import { bladeColor, GRASS_BEHAVIORS } from './grass';
 import { isPetal } from './flowers';
-import { kitMaterial } from './materials';
+import { kitMaterial, type KitMaterialOptions } from './materials';
 import { isSecretBaseSpot, type Family, type SemanticContext, type KitContext } from './semantics';
 import { SECONDARY_KEEP_LEGACY } from './tables/secondary';
 
@@ -248,6 +248,18 @@ const FRAG_COLOR = /* glsl */ `
 }
 `;
 
+/** The terrain's material (`tex`: its cells' looks, over the grid from `gridMin`, `gridSize` cells): its only definition
+ *  (the program catalogue, kit/catalogue.ts, precompiles it). */
+export function terrainMaterial(tex: THREE.Texture, gridMin: THREE.Vector2, gridSize: THREE.Vector2): KitMaterialOptions {
+  return {
+    roughness: 0.95,
+    uniforms: { tCells: { value: tex }, uGridMin: { value: gridMin }, uGridSize: { value: gridSize } },
+    fragHead: FRAG_HEAD,
+    fragColor: FRAG_COLOR,
+    hookKey: 'terrain',
+  };
+}
+
 export const terrainFamily: Family<TerrainPlacement> = {
   name: 'terrain',
 
@@ -398,17 +410,7 @@ export const terrainFamily: Family<TerrainPlacement> = {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
     geo.computeBoundingSphere();
 
-    const km = kitMaterial(kit.uniforms, {
-      roughness: 0.95,
-      uniforms: {
-        tCells: { value: tex },
-        uGridMin: { value: new THREE.Vector2(a.minX, a.minY) },
-        uGridSize: { value: new THREE.Vector2(a.GW, a.GH) },
-      },
-      fragHead: FRAG_HEAD,
-      fragColor: FRAG_COLOR,
-      hookKey: 'terrain',
-    });
+    const km = kitMaterial(kit.uniforms, terrainMaterial(tex, new THREE.Vector2(a.minX, a.minY), new THREE.Vector2(a.GW, a.GH)));
     const mesh = new THREE.Mesh(geo, km.material);
     mesh.receiveShadow = true;
     mesh.castShadow = true; // terraces shade the ground below them, as the legacy floors did
