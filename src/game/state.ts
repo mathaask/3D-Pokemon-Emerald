@@ -3,7 +3,7 @@
 
 import type { Bus } from '../gba/bus';
 import { Mem } from './mem';
-import { SYM } from './symbols';
+import { SYM, SYM_SIZE } from './symbols';
 import { OBJ_SIZES, SUBSPRITE_TABLE_SIZE, applyComposition, readSubsprites, type PlacedPiece, type SubspritePiece } from './subsprites';
 
 export { OBJ_SIZES };
@@ -122,6 +122,7 @@ export interface BattlerSnap {
 
 const SPRITE_SIZE = 0x44;
 const OBJECT_EVENT_SIZE = 0x24;
+const TRAINER_SIZE = 0x28; // struct Trainer: partyFlags u8, trainerClass u8, …
 
 const OVERWORLD_CB2 = new Set<number>([SYM.CB2_Overworld]);
 const TRANSITION_CB2 = new Set<number>([
@@ -192,6 +193,12 @@ export class GameState {
   battleType = 0;
   battlersCount = 0;
   battleEnvironment = 0;
+  /** gTrainers[gTrainerBattleOpponent_A].trainerClass in a trainer battle, else 0 (DrawMainBattleBackground's Leader /
+   *  Champion test). */
+  trainerClass = 0;
+  /** The map's battle scene (MapHeader.battleType: MAP_BATTLE_SCENE_*) and type (MAP_TYPE_*), read in battle. */
+  mapBattleScene = 0;
+  mapType = 0;
   battlers: BattlerSnap[] = [];
   attacker = 0;
   target = 0;
@@ -399,6 +406,11 @@ export class GameState {
     this.battleType = m.u32(SYM.gBattleTypeFlags);
     this.battlersCount = m.u8(SYM.gBattlersCount);
     this.battleEnvironment = m.u8(SYM.gBattleEnvironment);
+    const opponent = m.u16(SYM.gTrainerBattleOpponent_A);
+    this.trainerClass = (this.battleType & 8) !== 0 && opponent < SYM_SIZE.gTrainers / TRAINER_SIZE
+      ? m.u8(SYM.gTrainers + opponent * TRAINER_SIZE + 1) : 0;
+    this.mapBattleScene = m.u8(SYM.gMapHeader + 0x1b);
+    this.mapType = m.u8(SYM.gMapHeader + 0x17);
     this.attacker = m.u8(SYM.gBattlerAttacker);
     this.target = m.u8(SYM.gBattlerTarget);
     this.animActive = m.u8(SYM.gAnimScriptActive) !== 0;

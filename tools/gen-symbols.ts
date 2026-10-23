@@ -47,6 +47,14 @@ const WANTED = [
   'gTrainerFrontPicPaletteTable', 'gTrainerBackPicTable', 'gTrainerBackPicPaletteTable',
   'gMonIconTable', 'gMonIconPaletteIndices', 'gMonIconPaletteTable', 'gRegionMapEntries',
   'gTrainers', 'gItems', 'gBattleTerrainTable', 'gBattleEnvironmentInfo',
+  // battle backgrounds (battle_bg.c DrawMainBattleBackground), battler placement and the enemy shadow
+  ...['TallGrass', 'LongGrass', 'Sand', 'Underwater', 'Water', 'PondWater', 'Rock', 'Cave', 'Building', 'Stadium', 'Rayquaza']
+    .flatMap((n) => [`gBattleEnvironmentTiles_${n}`, `gBattleEnvironmentTilemap_${n}`]),
+  ...['TallGrass', 'LongGrass', 'Sand', 'Underwater', 'Water', 'PondWater', 'Rock', 'Cave', 'Building', 'Plain', 'Frontier',
+    'BuildingGym', 'BuildingLeader', 'StadiumMagma', 'StadiumAqua', 'StadiumSidney', 'StadiumPhoebe', 'StadiumGlacia',
+    'StadiumDrake', 'StadiumWallace', 'Groudon', 'Kyogre', 'Rayquaza'].map((n) => `gBattleEnvironmentPalette_${n}`),
+  'gMonFrontPicCoords', 'gMonBackPicCoords', 'gEnemyMonElevation', 'gSpriteTemplate_EnemyShadow', 'gEnemyMonShadow_Gfx',
+  'gBattleInterface_BallStatusBarPal',
   // misc
   'UpdateObjectReflectionSprite', 'sCloudSpriteTemplate', 'sRainSpriteTemplate', 'sSnowflakeSpriteTemplate',
   'sFogHorizontalSpriteTemplate', 'sAshSpriteTemplate', 'sFogDiagonalSpriteTemplate', 'sSandstormSpriteTemplate',
