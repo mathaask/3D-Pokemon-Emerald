@@ -316,11 +316,8 @@ export class OverworldView {
     void this.precompile(renderer);
     const pre = this.pre!;
     const catalogue = pre.catalogue;
-    // (a catalogue that failed to build: logged by precompile)
-    if (pre.done || !catalogue) {
-      pre.done = true;
-      return;
-    }
+    // (no catalogue: building it failed — precompile's rejection logs it once)
+    if (pre.done || !catalogue) return;
     pre.done = true;
     const t0 = performance.now();
     this.scene.add(catalogue.root);
