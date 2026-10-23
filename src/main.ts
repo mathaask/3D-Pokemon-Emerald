@@ -11,6 +11,7 @@ import { keyMask } from './input/keyNames';
 import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
 import { frameGuard } from './render/frameGuard';
 import { parseSpriteFilter } from './render/actors/actorLayer';
+import { ARENA_KINDS, type ArenaKind } from './game/battle/arenaKind';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
@@ -114,6 +115,22 @@ async function boot(): Promise<void> {
     shell.hideLoader();
     // (no wall-clock toast in manual mode: harness shots stay deterministic)
     if (previewParams.get('manual') !== '1') shell.toast(`Preview: ${app.name}`);
+    (window as unknown as { preview: unknown }).preview = app;
+    return;
+  }
+  // Battle preview mode (?battle=<arena kind>&player=<species>&enemy=<species>…): a static battle straight from the ROM.
+  const battle = new URLSearchParams(location.search).get('battle');
+  if (battle) {
+    if (!(ARENA_KINDS as readonly string[]).includes(battle)) {
+      shell.toast(`Unknown arena kind "${battle}"`, 5000);
+      throw new Error(`?battle=${battle}: no such arena kind (${ARENA_KINDS.join(', ')})`);
+    }
+    const { BattlePreviewApp } = await import('./render/battlePreview');
+    const previewParams = new URLSearchParams(location.search);
+    const app = new BattlePreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, battle as ArenaKind, previewParams);
+    shell.hideLoader();
+    // (no wall-clock toast in manual mode: harness shots stay deterministic)
+    if (previewParams.get('manual') !== '1') shell.toast(`Battle preview: ${battle}`);
     (window as unknown as { preview: unknown }).preview = app;
     return;
   }

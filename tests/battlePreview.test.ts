@@ -1,0 +1,24 @@
+import { describe, it, expect } from 'vitest';
+import { previewBattleSprites } from '../src/render/battlePreview';
+import { SYM } from '../src/game/symbols';
+import type { MonPic } from '../src/game/rom/battleGraphics';
+
+const pic = (yOffset: number, elevation = 0): MonPic => ({ tiles: new Uint8Array(2048), palette: new Uint16Array(16), yOffset, elevation });
+
+describe('previewBattleSprites', () => {
+  it('places single battlers as the game does, with their tiles and palettes', () => {
+    const s = previewBattleSprites([{ pic: pic(5), position: 0 }, { pic: pic(15), position: 1 }], false);
+    expect(s.map((x) => [x.screenX, x.screenY, x.tileNum, x.palette, x.width, x.height])).toEqual(
+      [[40, 53, 0, 0, 64, 64], [144, 23, 64, 1, 64, 64]]);
+    expect(s.every((x) => x.template === SYM.gMultiuseSpriteTemplate && x.affine && !x.coordOffset)).toBe(true);
+  });
+  it('adds the shadow sprite under a floating enemy', () => {
+    const s = previewBattleSprites([{ pic: pic(5), position: 0 }, { pic: pic(6, 8), position: 1 }], false);
+    expect(s[1].screenY).toBe(40 + 6 - 8 - 32);
+    expect(s[2]).toMatchObject({ template: SYM.gSpriteTemplate_EnemyShadow, width: 32, height: 8, screenX: 160, screenY: 65, palette: 4, tileNum: 128 });
+  });
+  it('places four battlers in a double battle', () => {
+    const s = previewBattleSprites([0, 1, 2, 3].map((position) => ({ pic: pic(0), position })), true);
+    expect(s.map((x) => [x.screenX, x.screenY])).toEqual([[0, 48], [168, 8], [58, 56], [120, 0]]);
+  });
+});

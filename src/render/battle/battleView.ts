@@ -267,4 +267,9 @@ export class BattleView {
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
   }
+
+  /** Draws the battle cards flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.billboards.setMask(on);
+  }
 }

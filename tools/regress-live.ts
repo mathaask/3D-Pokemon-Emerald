@@ -3,23 +3,29 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles]
+//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--review [--review-before <label>]]
 //     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
 // ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
 // selftest?, selftestMid?, crossing?, sceneChange? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames
-// after its first, cold one; static entries report the preview's cold world build ms instead; `crossing`: the map-crossing
+// after its first, cold one; static entries report the preview's cold world build ms instead (a battle preview: its ROM
+// decode and setup); `crossing`: the map-crossing
 // entries' walk, gated — see crossingMargin; `sceneChange`: a battle entry's or exit's walk — see SCENE_CHANGE_MS).
 // Live battle entries also save the GBA's own frame after their steps (emu.gbaPng(): the PPU's composite, 2× nearest) as
-// gba_<entry>.png, one per entry (the emulation is the same in both styles).
-// --static adds the static map-preview entries (object events from ROM templates; STATIC below); --battles the battle
-// entries (isBattleEntry): alone it runs only those, with --static every entry;
+// gba_<entry>.png, one per entry (the emulation is the same in both styles); static battle entries (STATIC_BATTLE) save the
+// GBA's picture of their scratch hardware (preview.referencePng(): BG3 + the battler sprites) as ref_<entry>.png.
+// --static adds the static preview entries (the map previews with object events from ROM templates, STATIC, and the battle
+// previews, STATIC_BATTLE); --battles the battle entries (isBattleEntry: live battle*, static b_*): alone it runs only
+// those, with --static every entry;
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
-// pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png too, reported with the diffs, not in stats; a missing
-// reference fails the run as a shot's does). --gpu times 60 more frames on the GPU after the screenshot (timer
+// pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png / ref_<entry>.png too, reported with the diffs, not in
+// stats; a missing reference fails the run as a shot's does).
+// --review writes _review_battle.png: one row per battle entry of the run, columns GBA (gba_ / ref_<entry>.png) | before
+// (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots).
+// --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
 // (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
 // --selftest runs the inflation-field self-test (emu/preview.selfTest(): the GPU field vs its CPU reference
@@ -235,10 +241,54 @@ const STATIC: StaticEntry[] = [
   { name: 'woods_npc_yaw', q: 'map=24.11&x=32.5&y=34.5&focus=1&yaw=3.1416' },
 ];
 
+/**
+ * Static battle scenes, run with --static or --battles (or named by --only): the battle preview (src/render/battlePreview.ts,
+ * `/?battle=<kind>&manual=1&<q>&style=…`) lays the arena kind's BG3 picture and the battlers' ROM pictures into scratch
+ * hardware as the game does and drives the live battle view: one entry per arena kind (no save state reaches most of
+ * them), plus night, a double battle and a floating enemy (Zubat: the shadow sprite). 150 frames at 1/60 s (the battle
+ * camera's 2.2 s intro sweep has ended), hour 11 unless q sets one; ref_<entry>.png is the GBA's own picture of it.
+ */
+const BATTLE_FRAMES = 150;
+const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/constants/species.h)
+  { name: 'b_grass', q: 'battle=grass&player=280&enemy=288' },          // Torchic vs Zigzagoon
+  { name: 'b_grass_night', q: 'battle=grass&player=280&enemy=288&hour=21' },
+  { name: 'b_double', q: 'battle=grass&double=1&player=280&player2=277&enemy=288&enemy2=286' },
+  { name: 'b_longgrass', q: 'battle=longGrass&player=277&enemy=286' },  // Treecko vs Poochyena
+  { name: 'b_plain', q: 'battle=plain&player=280&enemy=288' },
+  { name: 'b_sand', q: 'battle=sand&player=283&enemy=332' },            // Mudkip vs Trapinch
+  { name: 'b_water', q: 'battle=water&player=283&enemy=72' },           // vs Tentacool
+  { name: 'b_water_night', q: 'battle=water&player=283&enemy=309&hour=21' }, // vs Wingull
+  { name: 'b_pond', q: 'battle=pond&player=277&enemy=311' },            // vs Surskit
+  { name: 'b_underwater', q: 'battle=underwater&player=283&enemy=330' }, // vs Carvanha
+  { name: 'b_mountain', q: 'battle=mountain&player=280&enemy=74' },     // vs Geodude
+  { name: 'b_cave', q: 'battle=cave&player=280&enemy=41' },             // vs Zubat (floating: shadow sprite)
+  { name: 'b_cavepond', q: 'battle=cavePond&player=283&enemy=129' },    // vs Magikarp
+  { name: 'b_building', q: 'battle=building&player=277&enemy=337' },    // vs Electrike
+  { name: 'b_gym', q: 'battle=gym&player=281&enemy=74' },
+  { name: 'b_leader', q: 'battle=leader&player=281&enemy=320' },        // vs Nosepass
+  { name: 'b_frontier', q: 'battle=frontier&player=400&enemy=397' },    // Metagross vs Salamence
+  { name: 'b_magma', q: 'battle=magma&player=284&enemy=340' },          // vs Camerupt
+  { name: 'b_aqua', q: 'battle=aqua&player=281&enemy=331' },            // vs Sharpedo
+  { name: 'b_sidney', q: 'battle=sidney&player=281&enemy=287' },        // vs Mightyena
+  { name: 'b_phoebe', q: 'battle=phoebe&player=281&enemy=361' },        // vs Duskull
+  { name: 'b_glacia', q: 'battle=glacia&player=281&enemy=341' },        // vs Spheal
+  { name: 'b_drake', q: 'battle=drake&player=281&enemy=397' },          // vs Salamence
+  { name: 'b_champion', q: 'battle=champion&player=281&enemy=329' },    // vs Milotic
+  { name: 'b_groudon', q: 'battle=groudon&player=284&enemy=405' },
+  { name: 'b_kyogre', q: 'battle=kyogre&player=284&enemy=404' },
+  { name: 'b_rayquaza', q: 'battle=rayquaza&player=284&enemy=406' },
+];
+
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
 
-/** The entries --battles runs: the live ones named battle*. */
-const isBattleEntry = (e: Entry): boolean => e.kind === 'live' && e.name.startsWith('battle');
+/** A static battle entry (STATIC_BATTLE: the battle preview) rather than a map preview. */
+const isStaticBattle = (e: Entry): boolean => e.kind === 'static' && e.q.startsWith('battle=');
+
+/** The entries --battles runs: the live ones named battle* and the static battle previews. */
+const isBattleEntry = (e: Entry): boolean => (e.kind === 'live' && e.name.startsWith('battle')) || isStaticBattle(e);
+
+/** The GBA's own picture of a battle entry (the review's GBA column): live gba_<entry>, static ref_<entry> (no .png). */
+const gbaName = (e: Entry): string => `${e.kind === 'live' ? 'gba' : 'ref'}_${e.name}`;
 
 const CHROME = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -533,7 +583,7 @@ const CAPTION = 'figcaption{position:absolute;left:4px;top:2px;color:#ff0;font:b
 
 /** Contact sheets (4 thumbnails per row, one per style) and the centre-crop sheet, from every PNG in `dir`. */
 async function buildSheets(page: Page, dir: string): Promise<void> {
-  const order = [...LIVE.map((e) => e.name), ...STATIC.map((e) => e.name)];
+  const order = [...LIVE, ...STATIC, ...STATIC_BATTLE].map((e) => e.name);
   const shots = new Map<string, Set<string>>();
   for (const f of fs.readdirSync(dir)) {
     const m = /^([^_].*)_(modern|retro)\.png$/.exec(f);
@@ -569,6 +619,41 @@ async function buildSheets(page: Page, dir: string): Promise<void> {
   await shootHtml(page, dir, `<style>body{margin:0;background:#222;display:grid;grid-template-columns:repeat(4,${CROP_W}px)}
     figure{margin:0;position:relative;border:0}div{width:${CROP_W}px;height:${CROP_H}px;background-color:#333}${CAPTION}</style>${cells.join('')}`,
   path.join(dir, '_crops.png'), CROP_W * 4, scale);
+}
+
+/** Review sheet cells: 480×300, every picture letterboxed into it. */
+const REVIEW_W = 480;
+const REVIEW_H = 300;
+
+/**
+ * --review: _review_battle.png in `dir`, one row per battle entry of the run (`entries`, in run order): the GBA's picture
+ * (gba_ / ref_<entry>.png in this folder) | before (<entry>_modern.png in `beforeDir`; blank without one) | Modern | Retro
+ * (this run's shots). Each cell names its entry and column; a header row labels the columns. A missing picture is a
+ * blank cell marked "(missing)".
+ */
+async function buildReview(page: Page, dir: string, entries: Entry[], beforeDir: string, beforeLabel: string): Promise<void> {
+  const rows = entries.filter(isBattleEntry);
+  if (!rows.length) return;
+  // (the GBA's pictures scale nearest, the 3D shots smoothly)
+  const columns: { label: string; file: (e: Entry) => string | null; pixelated?: true }[] = [
+    { label: 'GBA', file: (e) => path.join(dir, `${gbaName(e)}.png`), pixelated: true },
+    { label: beforeLabel ? `before (${beforeLabel})` : 'before', file: (e) => (beforeDir ? path.join(beforeDir, `${e.name}_modern.png`) : null) },
+    { label: 'Modern', file: (e) => path.join(dir, `${e.name}_modern.png`) },
+    { label: 'Retro', file: (e) => path.join(dir, `${e.name}_retro.png`) },
+  ];
+  const head = columns.map((c) => `<div class="h">${c.label}</div>`).join('');
+  const cells = rows.flatMap((e) => columns.map((c) => {
+    const f = c.file(e);
+    const caption = `<figcaption>${e.name} · ${c.label}${f && !fs.existsSync(f) ? ' (missing)' : ''}</figcaption>`;
+    // (absolute file URLs: the before column lives in another run's folder)
+    return f && fs.existsSync(f) ? `<figure><img${c.pixelated ? ' class="px"' : ''} src="${pathToFileURL(f).href}">${caption}</figure>`
+      : `<figure>${caption}</figure>`;
+  }));
+  await shootHtml(page, dir, `<style>body{margin:0;background:#222;display:grid;grid-template-columns:repeat(4,${REVIEW_W}px)}
+    .h{height:28px;color:#fff;font:bold 18px sans-serif;line-height:28px;text-align:center;background:#000}
+    figure{margin:0;position:relative;width:${REVIEW_W}px;height:${REVIEW_H}px;background:#111;outline:1px solid #333}
+    img{width:${REVIEW_W}px;height:${REVIEW_H}px;display:block;object-fit:contain}.px{image-rendering:pixelated}${CAPTION}</style>
+    ${head}${cells.join('')}`, path.join(dir, '_review_battle.png'), REVIEW_W * 4, 1);
 }
 
 /**
@@ -759,7 +844,8 @@ async function main(): Promise<void> {
   if (!abFeature) throw new Error(`unknown --ab-feature ${abFeatureName} (${Object.keys(AB_FEATURES).join(', ')})`);
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
-  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
+  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
+    ...[...STATIC, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
@@ -776,6 +862,11 @@ async function main(): Promise<void> {
     throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   }
   if (refDir && !fs.existsSync(refDir)) throw new Error(`no reference run ${refDir}`);
+  // --review: the battle review sheet; --review-before <label>: its "before" column (implies --review)
+  const reviewBefore = arg('review-before', '');
+  const review = flag('review') || !!reviewBefore;
+  const beforeDir = reviewBefore ? path.join(root, 'out/regress-live', reviewBefore) : '';
+  if (beforeDir && !fs.existsSync(beforeDir)) throw new Error(`no --review-before run ${beforeDir}`);
   fs.mkdirSync(outDir, { recursive: true });
   const statsFile = path.join(outDir, 'stats.json');
   const stats: Record<string, EntryStats> = fs.existsSync(statsFile) ? JSON.parse(fs.readFileSync(statsFile, 'utf8')) : {};
@@ -795,7 +886,7 @@ async function main(): Promise<void> {
   const missingRefs: string[] = [];
   const selftestFailures: string[] = [];
   const walkFailures: string[] = []; // crossing and scene-change gates
-  const gbaShots = new Set<string>(); // entries whose gba_<entry>.png this run wrote
+  const gbaShots = new Set<string>(); // entries whose GBA picture (gba_ / ref_<entry>.png) this run wrote
   let pageErrors = 0;
   const diffs: string[] = [];
   try {
@@ -815,12 +906,14 @@ async function main(): Promise<void> {
         current = key;
         const errorsBefore = pageErrors;
         try {
-          // live entries drive the game page (window.emu), static ones the map preview (window.preview)
+          // live entries drive the game page (window.emu), static ones the map or battle preview (window.preview)
           const api = e.kind === 'live' ? 'emu' : 'preview';
           let q: string;
           if (e.kind === 'live') {
             if (!fs.existsSync(path.join(root, e.state))) throw new Error(`missing save state ${e.state}`);
             q = ['manual=1', `state=/${e.state}`, `style=${style}`, e.query, extra].filter(Boolean).join('&');
+          } else if (isStaticBattle(e)) {
+            q = ['manual=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           } else {
             q = ['autostart=1', 'manual=1', 'actors=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           }
@@ -873,14 +966,20 @@ async function main(): Promise<void> {
             // the GBA's own frame of a battle entry (the review's reference column)
             if (isBattleEntry(e)) {
               const png = await page.evaluate('emu.gbaPng()') as string;
-              fs.writeFileSync(path.join(outDir, `gba_${e.name}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+              fs.writeFileSync(path.join(outDir, `${gbaName(e)}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
               gbaShots.add(e.name);
             }
           } else {
             // a focus naming no template would frame the map centre instead: never a baseline
             const focusError = await page.evaluate('preview.focusError') as string | null;
             if (focusError) throw new Error(`preview: ${focusError}`);
-            await page.evaluate('preview.frames(60)');
+            await page.evaluate(`preview.frames(${isStaticBattle(e) ? BATTLE_FRAMES : 60})`);
+            // the GBA's own picture of a battle preview's hardware (the review's reference column)
+            if (isStaticBattle(e)) {
+              const png = await page.evaluate('preview.referencePng()') as string;
+              fs.writeFileSync(path.join(outDir, `${gbaName(e)}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+              gbaShots.add(e.name);
+            }
           }
           // the page chrome's CSS transitions (the loader fading out) run on the wall clock: end them
           await page.evaluate(`document.getAnimations().forEach((a) => { try { a.finish(); } catch { /* infinite */ } })`);
@@ -976,16 +1075,16 @@ async function main(): Promise<void> {
           if (style === 'modern') {
             for (const d of [e.name, `${e.name}_mid`]) fs.rmSync(path.join(outDir, `_field_${d}.png`), { force: true });
           }
-          // (a GBA frame this run wrote after the entry's steps stays: it does not depend on the style)
-          if (!gbaShots.has(e.name)) fs.rmSync(path.join(outDir, `gba_${e.name}.png`), { force: true });
+          // (a GBA picture this run wrote after the entry's steps stays: it does not depend on the style)
+          if (!gbaShots.has(e.name)) fs.rmSync(path.join(outDir, `${gbaName(e)}.png`), { force: true });
           delete stats[key];
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
         if (pageErrors > errorsBefore) errored.push(key);
       }
-      // --compare: the entry's GBA frame (one per battle entry) against the reference run's too (the review's GBA column)
+      // --compare: the entry's GBA picture (one per battle entry) against the reference run's too (the review's GBA column)
       if (refDir && gbaShots.has(e.name)) {
-        const name = `gba_${e.name}`, ref = path.join(refDir, `${name}.png`);
+        const name = gbaName(e), ref = path.join(refDir, `${name}.png`);
         current = name;
         const errorsBefore = pageErrors;
         if (fs.existsSync(ref)) {
@@ -1021,6 +1120,7 @@ async function main(): Promise<void> {
     }
     current = 'sheets';
     await buildSheets(page, outDir);
+    if (review) await buildReview(page, outDir, entries, beforeDir, reviewBefore);
   } finally {
     await browser.close();
     await server.close();
