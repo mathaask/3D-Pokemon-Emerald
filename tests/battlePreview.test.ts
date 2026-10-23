@@ -21,4 +21,11 @@ describe('previewBattleSprites', () => {
     const s = previewBattleSprites([0, 1, 2, 3].map((position) => ({ pic: pic(0), position })), true);
     expect(s.map((x) => [x.screenX, x.screenY])).toEqual([[0, 48], [168, 8], [58, 56], [120, 0]]);
   });
+  it('gives each floating opponent of a double battle its shadow (one sheet, one palette)', () => {
+    const s = previewBattleSprites([0, 1, 2, 3].map((position) => ({ pic: pic(0, position & 1 ? 4 : 0), position })), true);
+    expect(s.slice(4).map((x) => [x.template, x.screenX, x.screenY, x.tileNum, x.palette, x.data[0]])).toEqual([
+      [SYM.gSpriteTemplate_EnemyShadow, 200 - 16, 40 + 29 - 4, 256, 4, 1],
+      [SYM.gSpriteTemplate_EnemyShadow, 152 - 16, 32 + 29 - 4, 256, 4, 3],
+    ]);
+  });
 });
