@@ -146,13 +146,17 @@ export class SpriteField {
     renderer.getClearColor(this.clearColor);
     const prevAlpha = renderer.getClearAlpha();
     const prevAutoClear = renderer.autoClear;
-    renderer.autoClear = false; // (each pass clears once, below)
+    renderer.autoClear = false; // (the result clears once, below)
     renderer.setClearColor(0x000000, 0);
     for (let i = 0; i < this.passes.length; i++) {
       const pass = this.passes[i];
       pass.material.uniforms.tAtlas.value = atlas;
       renderer.setRenderTarget(pass.target);
-      renderer.clear(true, false, false);
+      // Only the result is cleared, before its first pass (2): every pass writes every texel of each sprite rectangle and
+      // reads none outside one (inside(): the intermediate target's stale texels are never read), and the result is 0
+      // around the rectangles (the self-test's reference). A full clear of a 1024×512 half-float target per pass was most
+      // of an update's GPU time (Phase 3 Task 5: ~0.2 ms of it on the dev iGPU).
+      if (i === 1) renderer.clear(true, false, false);
       if (count > 0) renderer.render(pass.scene, this.camera);
     }
     renderer.setRenderTarget(prev);
