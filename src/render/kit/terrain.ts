@@ -222,9 +222,13 @@ vec3 kitGround(int mat, vec3 tint, vec2 p) {
 const FRAG_COLOR = /* glsl */ `
 {
   vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
-  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them.
-  vec2 warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
-            + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
+  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them. (A grid of one cell — the
+  // battle platform tops' — has no borders: every lookup clamps to its one texel, so the warp would change no pixel.)
+  vec2 warp = vec2(0.0);
+  if (uGridSize.x * uGridSize.y > 1.0) {
+    warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
+         + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
+  }
   vec2 g = cell + warp - uGridMin;
   ivec2 ic = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGridSize) - 1);
   int mat = int(texelFetch(tCells, ic, 0).a * 255.0 + 0.5) >> 4;
