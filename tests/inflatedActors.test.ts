@@ -38,6 +38,17 @@ describe('InflatedActors variants (battle)', () => {
     expect(instanceUniformsFailed(failed)).toBe(false);
     expect(instanceUniformsFailed(failed, 'battle')).toBe(true);
   });
+  it('samples the battle variant\'s HD edges through baked xBR decisions (tXbr), main and twin; the overworld\'s per fragment', () => {
+    const bake = new THREE.Texture();
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT, bake);
+    const s = patched(a), depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+    for (const f of [s.fragmentShader, depth.fragmentShader]) expect(f).toContain('t = xbrSampleBaked(tAtlas, tXbr, p, rect, delta);');
+    expect((s.uniforms as Record<string, THREE.IUniform>).tXbr.value).toBe(bake);
+    expect(depth.uniforms.tXbr.value).toBe(bake);
+    const o = patched(make());
+    expect(o.fragmentShader).not.toContain('xbrSampleBaked');
+    expect('tXbr' in o.uniforms).toBe(false);
+  });
   it('keeps a zero-width actor finite (a battler growing from nothing at send-out): the battle shader guards its texel size', () => {
     // (set() only copies finite spec numbers: a NaN could only arise in the shader, dividing by the slot's texel width)
     const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);

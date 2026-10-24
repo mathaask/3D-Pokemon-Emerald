@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
-  battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, battlerAlphaKey, isBattler, BattleActors,
+  battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, battlerAlphaKey, battlerPaletteKey, isBattler, BattleActors,
 } from '../src/render/battle/battleActors';
 import { STAGE, REF_PITCH } from '../src/render/battle/stage';
 import { blankSprite } from '../src/render/previewActors';
@@ -142,6 +142,21 @@ describe('battlerAlphaKey (when the battlers\' field must be recomputed)', () =>
       expect(battlerAlphaKey(other, vram, false)).not.toBe(battlerAlphaKey(b, vram, false));
     }
     expect(battlerAlphaKey(b, vram, true)).not.toBe(battlerAlphaKey(b, vram, false));           // 2D tile mapping
+  });
+});
+
+describe('battlerPaletteKey (when the battlers\' baked xBR decisions must be recomputed)', () => {
+  it('changes with the colours of the battler\'s OBJ palette (a fade, a flash), not with another palette', () => {
+    const pram = new Uint16Array(512);
+    const b = { ...battler(0, 40, 53), palette: 1 };
+    const k = battlerPaletteKey(b, pram);
+    pram[256 + 2 * 16 + 3] = 0x7fff;                      // OBJ palette 2: not its own
+    expect(battlerPaletteKey(b, pram)).toBe(k);
+    pram[256 + 16 + 3] = 0x1234;                          // its own, colour 3
+    expect(battlerPaletteKey(b, pram)).not.toBe(k);
+    const k8 = battlerPaletteKey({ ...b, bpp8: true }, pram);
+    pram[256 + 200] = 0x0421;                             // 8 bpp: all 256 OBJ colours count
+    expect(battlerPaletteKey({ ...b, bpp8: true }, pram)).not.toBe(k8);
   });
 });
 

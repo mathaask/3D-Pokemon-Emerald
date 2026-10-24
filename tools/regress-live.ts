@@ -36,7 +36,8 @@
 // step fails the entry; an entry without one leaves no older _mid dump behind).
 // Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax) px with the field's own inflateMax (the
 // result's: selfTestTol — half-float rounding grows with the field's height). The same call checks the HD sprite-edge
-// shader (XBR_GLSL) against its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
+// shader (XBR_GLSL) against its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL), and its baked path (XbrBake +
+// xbrSampleBaked, the battlers') likewise: xbr.bakedMaxErr ≤ 2/255.
 // --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
 // same build with them off (every sprite a card, the pre-Task-5 path; the inflation field's passes run in both): after
 // the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
@@ -368,7 +369,7 @@ const AB_FEATURES: Record<string, AbFeature> = {
   },
 };
 
-interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; inflateMax: number; xbr: { maxErr: number } }
+interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; inflateMax: number; xbr: { maxErr: number; bakedMaxErr: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 /** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. `maskMismatch`:
  *  the share of the frame, away from the actors, where a mask re-render differs from its shot (the worse style);
@@ -711,10 +712,10 @@ async function selfTestPoint(page: Page, api: string, outDir: string, dump: stri
   fs.writeFileSync(path.join(outDir, `_field_${dump}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
   const tol = selfTestTol(result.inflateMax);
   const within = (v: number) => Number.isFinite(v) && v <= tol;
-  const xbrOk = Number.isFinite(result.xbr?.maxErr) && result.xbr.maxErr <= XBR_TOL;
+  const xbrOk = [result.xbr?.maxErr, result.xbr?.bakedMaxErr].every((v) => Number.isFinite(v) && v <= XBR_TOL);
   const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr) && xbrOk;
   let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} (tol ${round(tol, 4)})`
-    + ` gpu ${round(result.gpuMs, 3)} ms xbr maxErr ${result.xbr?.maxErr}`;
+    + ` gpu ${round(result.gpuMs, 3)} ms xbr maxErr ${result.xbr?.maxErr} baked ${result.xbr?.bakedMaxErr}`;
   if (!(result.gpuMs <= FIELD_GPU_MS)) text += ` (> ${FIELD_GPU_MS} ms target)`;
   return { result, ok, text };
 }

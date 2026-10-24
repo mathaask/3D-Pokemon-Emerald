@@ -113,6 +113,19 @@ export function battlerAlphaKey(s: SpriteSnap, vram: Uint8Array, map2d: boolean)
   return h;
 }
 
+/** OBJ palette RAM starts at colour 256 (palette RAM's second half). */
+const OBJ_PALETTE = 256;
+
+/** A hash of the colours a battler's atlas slot is baked with (hardware palette RAM, as the battle's atlas reads it): its
+ *  OBJ palette (all 256 OBJ colours at 8 bpp). With battlerAlphaKey, what the battlers' baked xBR decisions depend on
+ *  (XbrBake: they compare colours) — a fade or a flash re-bakes them. */
+export function battlerPaletteKey(s: SpriteSnap, pram16: Uint16Array): number {
+  const from = OBJ_PALETTE + (s.bpp8 ? 0 : (s.palette & 15) * 16), count = s.bpp8 ? 256 : 16;
+  let h = fnv(2166136261, s.bpp8 ? 1 : 0);
+  for (let i = 0; i < count; i++) h = fnv(h, pram16[from + i]);
+  return h;
+}
+
 const blankSpec = (): BillboardSpec =>
   ({ footX: 0, footY: 0, footZ: 0, width: 0, height: 0, lift: 0, flat: false, slot: { u0: 0, v0: 0, u1: 0, v1: 0 } });
 
@@ -194,7 +207,11 @@ export function battleDecalSpec(s: SpriteSnap, slot: SlotUv, stage: Stage, out: 
 /** Inputs of the inflated battlers: the battle's inflation field (none: every battler stays a card), the rim colour (the
  *  battle KitUniforms' uSky, kept by reference) and their instance-data path (instanceUniformsFit: a renderer's caller
  *  passes it; default the uniform array). Cards use none of them. */
-export interface BattleActorsOptions { field?: { texture: THREE.Texture }; rim?: { value: THREE.Color }; instanceUniforms?: boolean }
+export interface BattleActorsOptions {
+  field?: { texture: THREE.Texture }; rim?: { value: THREE.Color }; instanceUniforms?: boolean;
+  /** The battlers' baked xBR decisions (XbrBake: BATTLE_VARIANT samples its HD edges through them). */
+  xbr?: { texture: THREE.Texture };
+}
 
 export class BattleActors {
   /** Cards and decals (one instanced mesh), the inflated battlers. */
@@ -231,7 +248,8 @@ export class BattleActors {
   private makeInflated(field: { texture: THREE.Texture }, instanceUniforms: boolean): void {
     const rim = this.opts.rim ?? { value: new THREE.Color(0.75, 0.88, 1.0) };
     const size = new THREE.Vector2(this.atlas.target.width ?? SLOT * SLOT_COLS, this.atlas.target.height ?? SLOT * SLOT_ROWS);
-    const inflated = this.inflated = new InflatedActors(this.atlas.target.texture, field.texture, rim, size, instanceUniforms, BATTLE_VARIANT);
+    const inflated = this.inflated = new InflatedActors(this.atlas.target.texture, field.texture, rim, size, instanceUniforms, BATTLE_VARIANT,
+      this.opts.xbr?.texture ?? null);
     inflated.setSmoothing(this.spriteFilter === 'smooth');
     inflated.setMask(this.masked);
     inflated.mesh.name = 'battleInflated';

@@ -9,7 +9,8 @@ import { SLOT, type SpriteAtlas } from '../spriteAtlas';
 import { SpriteField } from './spriteField';
 import { heights, inflateMax, type InflateParams } from './inflateMath';
 import { timeGpuFrames } from '../gpuTiming';
-import { XBR_GLSL } from './xbr.glsl';
+import { XBR_GLSL, XBR_BAKED_GLSL } from './xbr.glsl';
+import { XbrBake } from './xbrBake';
 import { xbrSample } from '../kit/upscale';
 
 export interface FieldSelfTest {
@@ -135,6 +136,9 @@ export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: Sprite
 export interface XbrSelfTest {
   /** Max |GPU − CPU| (RGBA, 0..1) over the fixture's sample points. */
   maxErr: number;
+  /** The same with the decisions baked (XbrBake + xbrSampleBaked: the battlers'), over the points whose texel lies in
+   *  the fixture's rectangle (the bake covers it; a fragment exactly on its far edge reads transparent). */
+  bakedMaxErr: number;
 }
 
 /** The actors' whole self-test: the field's, and the xBR shader's (`xbr`). */
@@ -195,10 +199,25 @@ void main() {
 }
 `;
 
+const XBR_BAKED_FRAG = /* glsl */ `
+precision highp float;
+precision highp int;
+uniform sampler2D tFix;
+uniform sampler2D tBake;
+uniform vec4 uRect;
+out vec4 fragColor;
+${XBR_GLSL}
+${XBR_BAKED_GLSL}
+void main() {
+  fragColor = xbrSampleBaked(tFix, tBake, gl_FragCoord.xy * ${(XBR_FIX / XBR_POINTS).toFixed(4)}, uRect, ${XBR_DELTA.toFixed(2)});
+}
+`;
+
 /**
  * XBR_GLSL against xbrSample: the fixture as an RGBA8 texture, sampled through the shader at a 64×64 grid of
  * points ((i + 0.5) / 4 texels) into an RGBA8 target with delta 0.1, read back and compared with the CPU
- * reference at the same points (NaN-sticky max). Frees everything it made.
+ * reference at the same points (NaN-sticky max); then the same through the baked path (XbrBake over the fixture's
+ * rectangle, xbrSampleBaked) at the points inside it. Frees everything it made.
  */
 export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
   const src = xbrFixture();
@@ -209,35 +228,50 @@ export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
   const target = new THREE.WebGLRenderTarget(XBR_POINTS, XBR_POINTS, {
     depthBuffer: false, generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
   });
-  const material = new THREE.RawShaderMaterial({
-    glslVersion: THREE.GLSL3, vertexShader: XBR_VERT, fragmentShader: XBR_FRAG,
-    uniforms: { tFix: { value: tex }, uRect: { value: new THREE.Vector4(...XBR_FIX_RECT) } },
-    depthTest: false, depthWrite: false,
-  });
+  const bake = new XbrBake(XBR_FIX, XBR_FIX);
+  // (the fixture's rectangle as one slot of the atlas layout: slot (0, 0), its width and height)
+  const slots = new THREE.InstancedBufferAttribute(new Float32Array([0, 0, XBR_FIX_RECT[2], XBR_FIX_RECT[3]]), 4);
   const quad = new THREE.PlaneGeometry(2, 2);
-  const mesh = new THREE.Mesh(quad, material);
-  mesh.frustumCulled = false;
-  const scene = new THREE.Scene().add(mesh);
+  const materials: THREE.RawShaderMaterial[] = [];
   const prev = renderer.getRenderTarget();
-  try {
+  // the fixture drawn through a fragment shader into the 64×64 target, read back
+  const draw = (fragmentShader: string, uniforms: Record<string, THREE.IUniform>): Uint8Array => {
+    const material = new THREE.RawShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader: XBR_VERT, fragmentShader, uniforms,
+      depthTest: false, depthWrite: false });
+    materials.push(material);
+    const mesh = new THREE.Mesh(quad, material);
+    mesh.frustumCulled = false;
     renderer.setRenderTarget(target);
-    renderer.render(scene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+    renderer.render(new THREE.Scene().add(mesh), new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
     renderer.setRenderTarget(prev);
-    const gpu = readPixels(renderer, target, new Uint8Array(XBR_POINTS * XBR_POINTS * 4));
-    let maxErr = 0;
+    return readPixels(renderer, target, new Uint8Array(XBR_POINTS * XBR_POINTS * 4));
+  };
+  try {
+    const rect = new THREE.Vector4(...XBR_FIX_RECT);
+    const gpu = draw(XBR_FRAG, { tFix: { value: tex }, uRect: { value: rect } });
+    bake.update(renderer, tex, slots, 1);
+    const baked = draw(XBR_BAKED_FRAG, { tFix: { value: tex }, tBake: { value: bake.texture }, uRect: { value: rect } });
+    let maxErr = 0, bakedMaxErr = 0;
+    const k = XBR_FIX / XBR_POINTS;
     for (let j = 0; j < XBR_POINTS; j++) {
       for (let i = 0; i < XBR_POINTS; i++) {
-        const k = XBR_FIX / XBR_POINTS;
-        const want = xbrSample(src, XBR_FIX, XBR_FIX, (i + 0.5) * k, (j + 0.5) * k, XBR_DELTA, XBR_FIX_RECT);
-        for (let c = 0; c < 4; c++) maxErr = Math.max(maxErr, Math.abs(gpu[(j * XBR_POINTS + i) * 4 + c] / 255 - want[c]));
+        const x = (i + 0.5) * k, y = (j + 0.5) * k;
+        const want = xbrSample(src, XBR_FIX, XBR_FIX, x, y, XBR_DELTA, XBR_FIX_RECT);
+        const inside = x >= XBR_FIX_RECT[0] && x < XBR_FIX_RECT[2] && y >= XBR_FIX_RECT[1] && y < XBR_FIX_RECT[3];
+        for (let c = 0; c < 4; c++) {
+          const o = (j * XBR_POINTS + i) * 4 + c;
+          maxErr = Math.max(maxErr, Math.abs(gpu[o] / 255 - want[c]));
+          if (inside) bakedMaxErr = Math.max(bakedMaxErr, Math.abs(baked[o] / 255 - want[c]));
+        }
       }
     }
-    return { maxErr };
+    return { maxErr, bakedMaxErr };
   } finally {
     renderer.setRenderTarget(prev);
     target.dispose();
-    material.dispose();
+    for (const m of materials) m.dispose();
     quad.dispose();
+    bake.dispose(true);
     tex.dispose();
   }
 }

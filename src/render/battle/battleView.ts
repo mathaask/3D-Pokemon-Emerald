@@ -18,11 +18,12 @@ import type { ProgramInfo } from '../actors/inflatedActors';
 import type { SpriteFilter } from '../actors/actorLayer';
 import { SpriteField } from '../actors/spriteField';
 import { BATTLE_INFLATE } from '../actors/inflateMath';
+import { XbrBake } from '../actors/xbrBake';
 import { BattleArena } from './arena';
 import { arenaKind, type ArenaInputs, type ArenaKind } from './arenaKind';
 import { defaultArenaColors, type ArenaColors } from './bgSample';
 import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
-import { BattleActors, battleRoute, battlerAlphaKey } from './battleActors';
+import { BattleActors, battleRoute, battlerAlphaKey, battlerPaletteKey } from './battleActors';
 import { ARENA_PARTS, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
 
@@ -102,14 +103,19 @@ export class BattleView {
   private fieldKey: number[] = [];
   private fieldKeyNext: number[] = [];
   private fieldValid = false;
-  /** Field computations and reuses (updateField; the report's numbers). */
-  readonly fieldStats = { updates: 0, reused: 0 };
+  /** The battlers' baked xBR decisions (their HD edges: XbrBake) and the battlers' palette keys they were baked with. */
+  readonly xbr = new XbrBake();
+  private xbrKey: number[] = [];
+  private xbrKeyNext: number[] = [];
+  /** Field computations and reuses, xBR bakes (updateField; the report's numbers). */
+  readonly fieldStats = { updates: 0, reused: 0, bakes: 0 };
 
   /** `instanceUniforms`: the inflated battlers' instance-data path (instanceUniformsFit, as the overworld's: every caller
    *  passes it). */
   constructor(private readonly spriteAtlas: SpriteAtlas, opts: { instanceUniforms?: boolean } = {}) {
     this.field = new SpriteField(undefined, undefined, BATTLE_INFLATE);
-    this.actors = new BattleActors(spriteAtlas, { field: this.field, rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
+    this.actors = new BattleActors(spriteAtlas,
+      { field: this.field, xbr: this.xbr, rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
     this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.arena.group);
     this.scene.fog = new THREE.Fog(0xcfe8ff, 40, 120);
     this.sun.castShadow = true;
@@ -161,13 +167,15 @@ export class BattleView {
    * draw no inflated battler). The passes run over the battlers' slots only (the sprites Modern inflates; not the HUD's
    * or the move effects'), and only when a battler's slot or alpha changed (battlerAlphaKey: its tiles, size, flips…):
    * otherwise the field already holds exactly what they would compute (idle battlers bob by position, not by tiles).
+   * Their baked xBR decisions (xbr: the HD edges) follow the same slots and are re-baked when the field is, or when a
+   * battler's colours changed (battlerPaletteKey: a fade, a flash).
    */
   updateField(renderer: THREE.WebGLRenderer, state: Pick<BattleViewState, 'sprites' | 'mem'>): void {
     if (!this.fieldLive) return;
-    const atlas = this.spriteAtlas, rects = atlas.slotRects, key = this.fieldKeyNext, bus = state.mem.bus;
+    const atlas = this.spriteAtlas, rects = atlas.slotRects, key = this.fieldKeyNext, colours = this.xbrKeyNext, bus = state.mem.bus;
     // (the atlas's tile mapping: DISPCNT bit 6, as Renderer / the preview bake it)
     const map2d = (bus.io16[0] & 0x40) === 0;
-    key.length = 0;
+    key.length = colours.length = 0;
     let n = 0;
     for (const s of state.sprites) {
       if (n >= FIELD_SLOTS || battleRoute(s, 'modern', true) !== 'inflated') continue;
@@ -176,21 +184,29 @@ export class BattleView {
       const i = info.slot;
       this.fieldRects.setXYZW(n++, rects.getX(i), rects.getY(i), rects.getZ(i), rects.getW(i));
       key.push(rects.getX(i), rects.getY(i), rects.getZ(i), rects.getW(i), battlerAlphaKey(s, bus.vram, map2d));
+      colours.push(battlerPaletteKey(s, bus.pram16));
     }
-    const same = this.fieldValid && key.length === this.fieldKey.length && key.every((v, k) => v === this.fieldKey[k]);
-    if (same) {
-      this.fieldStats.reused++;
-      return;
+    const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, k) => v === b[k]);
+    const fieldSame = this.fieldValid && same(key, this.fieldKey);
+    // (the decisions compare colours: a fade or a flash re-bakes them, the field stays)
+    const xbrSame = fieldSame && same(colours, this.xbrKey);
+    if (!fieldSame) {
+      this.fieldRects.clearUpdateRanges();
+      if (n > 0) this.fieldRects.addUpdateRange(0, n * 4);
+      this.fieldRects.needsUpdate = true;
+      this.field.update(renderer, atlas.target.texture, this.fieldRects, n);
+      this.fieldCount = n;
+      this.fieldKeyNext = this.fieldKey;
+      this.fieldKey = key;
+      this.fieldValid = true;
+      this.fieldStats.updates++;
+    } else this.fieldStats.reused++;
+    if (!xbrSame) {
+      this.xbr.update(renderer, atlas.target.texture, this.fieldRects, n);
+      this.xbrKeyNext = this.xbrKey;
+      this.xbrKey = colours;
+      this.fieldStats.bakes++;
     }
-    this.fieldRects.clearUpdateRanges();
-    if (n > 0) this.fieldRects.addUpdateRange(0, n * 4);
-    this.fieldRects.needsUpdate = true;
-    this.field.update(renderer, atlas.target.texture, this.fieldRects, n);
-    this.fieldCount = n;
-    this.fieldKeyNext = this.fieldKey;
-    this.fieldKey = key;
-    this.fieldValid = true;
-    this.fieldStats.updates++;
   }
 
   /** The slots the battlers' field covers (its last computation): the self-test compares and times exactly these. */
@@ -257,7 +273,8 @@ export class BattleView {
         renderer.setRenderTarget(target);
         const scene = renderer.compileAsync(this.scene, this.camera);
         this.scene.fog = null;
-        ready = Promise.all([scene, renderer.compileAsync(standIns, this.camera, this.scene), this.field.compile(renderer)]);
+        ready = Promise.all([scene, renderer.compileAsync(standIns, this.camera, this.scene), this.field.compile(renderer),
+          this.xbr.compile(renderer)]);
       } finally {
         this.scene.fog = fog;
         for (const s of standIns.children) if ((s as THREE.InstancedMesh).isInstancedMesh) (s as THREE.InstancedMesh).dispose();

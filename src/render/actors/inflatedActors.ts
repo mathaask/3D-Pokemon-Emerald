@@ -19,7 +19,7 @@ import type { BillboardSpec } from '../overworld/billboards';
 import { put, markRange } from '../instanceUpload';
 import { INFLATE, BATTLE_INFLATE, type InflateParams } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
-import { XBR_GLSL } from './xbr.glsl';
+import { XBR_GLSL, XBR_BAKED_GLSL } from './xbr.glsl';
 import { afterChunk, glslFloat, patchChunk } from './glsl';
 
 /** Grid segments per actor (spec §6): one per sprite pixel of a 16×32 character. */
@@ -97,12 +97,15 @@ export interface InflatedVariant {
   params: InflateParams;
   /** The relief fades in over this share of the sprite's height from the feet; null: full relief down to the feet. */
   reliefFade: { from: number; to: number } | null;
+  /** HD edges from baked xBR decisions (XbrBake; the constructor's `xbrBake` texture): the same result, for sprites
+   *  magnified so far that xBR's per-fragment decisions dominate (the battlers, ~5×). Absent: xBR per fragment. */
+  xbrBaked?: boolean;
 }
 
 /** The overworld's characters: 16×32 sprites, the legs at the card's depth (3D grass blades hide them). */
 export const OVERWORLD_VARIANT: InflatedVariant = { tag: '', params: INFLATE, reliefFade: RELIEF_FADE };
 /** The battlers (Phase 3): 64-px Pokémon and trainer pictures on their platforms, relief down to the feet. */
-export const BATTLE_VARIANT: InflatedVariant = { tag: 'battle', params: BATTLE_INFLATE, reliefFade: null };
+export const BATTLE_VARIANT: InflatedVariant = { tag: 'battle', params: BATTLE_INFLATE, reliefFade: null, xbrBaked: true };
 /** How far (world units) the shadow twin is pushed away from the light: the sheet stands steeply to a high
  *  sun, so its own depth varies more across the soft-shadow filter than the global bias covers (grainy
  *  self-shadow acne). The cast shadow does not move (the push follows the light's rays). Baked into the
@@ -200,7 +203,23 @@ vec3 transformed = card + normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld
 // alpha (the atlas's transparent texels are black: a blend with them comes out premultiplied). Shared by the
 // actors and their depth twin, so the cast shadow has the smoothed silhouette too. The nearest fetch and the
 // derivative stay outside the branch (uniform control flow; the Pixel path is Task 5's code).
-const SAMPLE_GLSL = /* glsl */ `
+// A variant with baked xBR decisions (xbrBaked: the battlers') reads them from tXbr (XbrBake): the same result.
+const sampleGlsl = (v: InflatedVariant) => v.xbrBaked ? /* glsl */ `
+uniform float uSmooth;  // 1: HD edges (xBR), 0: nearest texels
+uniform sampler2D tXbr; // the atlas's xBR decisions (XbrBake)
+${XBR_GLSL}
+${XBR_BAKED_GLSL}
+vec4 actorSample(vec2 uv, vec4 rect) {
+  vec4 t = texture(tAtlas, uv);
+  vec2 p = uv * uAtlasSize;
+  float delta = clamp(0.5 * fwidth(p.x + p.y), 0.02, 0.5);
+  if (uSmooth > 0.5) {
+    t = xbrSampleBaked(tAtlas, tXbr, p, rect, delta);
+    t.rgb /= max(t.a, 1e-4);
+  }
+  return t;
+}
+` : /* glsl */ `
 uniform float uSmooth;  // 1: HD edges (xBR), 0: nearest texels
 ${XBR_GLSL}
 vec4 actorSample(vec2 uv, vec4 rect) {
@@ -224,7 +243,7 @@ uniform float uMask;    // 1: flat magenta (the harness's actor mask)
 varying vec2 vAtlasUv;
 varying vec4 vRect;
 ${fieldGlsl(v)}
-${SAMPLE_GLSL}
+${sampleGlsl(v)}
 `;
 
 const FRAG_COLOR = /* glsl */ `
@@ -309,14 +328,14 @@ ${vertPosition(v)}
 `;
 
 // The twin's alpha test: the actors' own sample (smoothed silhouette with uSmooth); otherwise billboards.ts's DEPTH_FRAG.
-const DEPTH_FRAG = /* glsl */ `
+const depthFrag = (v: InflatedVariant) => /* glsl */ `
 #include <common>
 #include <packing>
 uniform sampler2D tAtlas;
 uniform vec2 uAtlasSize;
 varying vec2 vUv;
 varying vec4 vRect;
-${SAMPLE_GLSL}
+${sampleGlsl(v)}
 void main() {
   if (actorSample(vUv, vRect).a < 0.5) discard;
   gl_FragColor = packDepthToRGBA(gl_FragCoord.z);
@@ -329,6 +348,21 @@ export function lampCeiling(parsBegin: string): string {
   if (!parsBegin.includes(POINT_ATTENUATION)) throw new Error('inflatedActors: point-light attenuation not found in lights_pars_begin');
   return parsBegin.replace(POINT_ATTENUATION, POINT_ATTENUATION + LAMP_GLSL);
 }
+
+/** The actors' uniforms (shared by the main material and the depth twin; tXbr: a baked variant's only). */
+interface ActorUniforms {
+  tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
+  uEye: { value: THREE.Vector3 }; uAtlasSize: { value: THREE.Vector2 }; uRimColor: { value: THREE.Color };
+  uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number }; uSmooth: { value: number };
+  uInst: { value: Float32Array }; tXbr?: { value: THREE.Texture };
+}
+
+/** A 1×1 texture of no xBR decisions (a baked variant without its bake: every texel as it is). */
+const noDecisions = () => {
+  const t = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  t.needsUpdate = true;
+  return t;
+};
 
 export class InflatedActors {
   readonly mesh: THREE.Mesh;
@@ -345,12 +379,9 @@ export class InflatedActors {
   private shadowGeometries: THREE.InstancedBufferGeometry[] = [];
   /** The most instances ever set (the uploaded part of the instance buffers). */
   private used = 0;
-  private uniforms: {
-    tAtlas: { value: THREE.Texture }; tField: { value: THREE.Texture }; uRight: { value: THREE.Vector3 };
-    uEye: { value: THREE.Vector3 }; uAtlasSize: { value: THREE.Vector2 }; uRimColor: { value: THREE.Color };
-    uRim: { value: number }; uFloor: { value: THREE.Color }; uMask: { value: number }; uSmooth: { value: number };
-    uInst: { value: Float32Array };
-  };
+  private uniforms: ActorUniforms;
+  /** The no-decisions texture a baked variant made for itself (no bake given), freed with the actors. */
+  private ownDecisions: THREE.Texture | null = null;
 
   /**
    * `atlas`: the sprite atlas the actors sample; `field`: its inflation field (same layout, R = height in
@@ -358,11 +389,13 @@ export class InflatedActors {
    * `instanceUniforms`: read the instance data from the uniform array (default) or from instance attributes. The default
    * suits tests and devices known to fit: a renderer's caller (the overworld; Phase 3's battlers alike) passes
    * instanceUniformsFit(renderer.capabilities.maxVertexUniforms, …): false on a device with too few vertex uniform
-   * vectors. `variant`: the scene's programs, field parameters and relief (the overworld's by default; BATTLE_VARIANT).
+   * vectors. `variant`: the scene's programs, field parameters and relief (the overworld's by default; BATTLE_VARIANT);
+   * `xbrBake`: a variant with baked xBR decisions reads them here (XbrBake.texture; none: no decisions, so every texel
+   * stands as it is — tests).
    */
   constructor(atlas: THREE.Texture, field: THREE.Texture, rimColor: { value: THREE.Color },
     atlasSize = new THREE.Vector2(SLOT * SLOT_COLS, SLOT * SLOT_ROWS), instanceUniforms = true,
-    readonly variant: InflatedVariant = OVERWORLD_VARIANT) {
+    readonly variant: InflatedVariant = OVERWORLD_VARIANT, xbrBake: THREE.Texture | null = null) {
     this.instanceUniforms = instanceUniforms;
     const grid = new THREE.PlaneGeometry(1, 1, ACTOR_GRID.x, ACTOR_GRID.y);
     grid.translate(0, 0.5, 0); // x in [-0.5, 0.5], y in [0, 1]
@@ -380,12 +413,14 @@ export class InflatedActors {
     for (const a of [this.foot, this.size, this.uv]) a?.setUsage(THREE.DynamicDrawUsage);
     this.quad = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
 
-    const u = this.uniforms = {
+    const u: ActorUniforms = this.uniforms = {
       tAtlas: { value: atlas }, tField: { value: field }, uRight: { value: new THREE.Vector3(1, 0, 0) },
       uEye: { value: new THREE.Vector3(0, 0, 1e5) }, uAtlasSize: { value: atlasSize.clone() }, uRimColor: rimColor,
       uRim: { value: RIM }, uFloor: { value: new THREE.Color(0, 0, 0) }, uMask: { value: 0 }, uSmooth: { value: 1 },
       uInst: { value: new Float32Array(MAX_ACTORS * INST_VEC4 * 4) },
     };
+    // (the overworld's variant has no such uniform: its programs stay as they were)
+    if (variant.xbrBaked) u.tXbr = { value: xbrBake ?? (this.ownDecisions = noDecisions()) };
     const material = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
     // the sun may light the sheet from behind: its depth twin draws both faces
     material.shadowSide = THREE.DoubleSide;
@@ -409,8 +444,9 @@ export class InflatedActors {
 
     const depth = new THREE.ShaderMaterial({
       vertexShader: depthVert(instanceUniforms, variant),
-      fragmentShader: DEPTH_FRAG,
-      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst },
+      fragmentShader: depthFrag(variant),
+      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst,
+        ...(u.tXbr ? { tXbr: u.tXbr } : {}) },
       side: THREE.DoubleSide,
     });
     depth.customProgramCacheKey = () => programKey(true, instanceUniforms, variant.tag);
@@ -503,5 +539,6 @@ export class InflatedActors {
     for (const g of [this.geometry, this.quad, ...this.shadowGeometries]) g.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.customDepthMaterial?.dispose();
+    this.ownDecisions?.dispose();
   }
 }
