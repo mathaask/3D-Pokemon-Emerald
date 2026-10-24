@@ -17,7 +17,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint } from '../stage';
-import { arenaGround, arenaGroundMaterial, uniformCells } from './ground';
+import { arenaGround, arenaGroundMaterial, uniformCells, GROUND_RENDER_ORDER } from './ground';
 
 export type PlatformStyle = 'earthGrass' | 'sandMound' | 'stoneSlab' | 'lilyPad' | 'rippleRing' | 'caveRock' | 'seabedRock';
 
@@ -45,7 +45,7 @@ const SKIRT = { clumps: 48, longClumps: 64, longScale: 1.3, scale: 0.3, e0: 1.0,
 const MOUND = { flat: 0.55, edge: 1.35, rings: 10, segments: 64, foot: GROUND_Y - 0.02 };
 const SLAB = { segments: 32, chamfer: 0.06, side: GROUND_Y + 0.1, plinth: 1.1, bottom: GROUND_Y - 0.05, shade: 0.05 };
 const ROCK = { segments: 64, rows: 4, topRings: 5, bump: 0.02, lump: 0.15, flare: 0.15, bottom: GROUND_Y - 0.1 };
-const PAD = { y: WATER_Y + 0.03, size: 1.05, notch: THREE.MathUtils.degToRad(18), rim: 0.02, rings: 6, segments: 96 };
+const PAD = { y: WATER_Y + 0.03, size: 1.05, notch: THREE.MathUtils.degToRad(18), rim: 0.02, under: 0.006, rings: 6, segments: 96 };
 const RIPPLE = { e0: 0.6, e1: 1.25, y: WATER_Y + 0.01, rings: 4, segments: 64 };
 
 /** A point at elliptical radius `s` (× footprint) plus `d` world units outward, angle `a` (0 = +x, towards +z), height y. */
@@ -213,20 +213,22 @@ function rockPlatform(f: Footprint, seed: number, p: ArenaPalette): PlatformMesh
 }
 
 /** One lily pad (non-indexed into the arrays): a disc of radius (rx, rz) at PAD.y around (cx, cz), its notch of PAD.notch
- *  centred on angle `notchAt` (measured from −z towards +x), its rim raised, an edge band down to the water; radial veins
- *  and a lighter heart in the vertex colours (linear `leaf`). */
+ *  centred on angle `notchAt` (measured from −z towards +x), its rim raised, an edge band down to the water, and an
+ *  underside facing down (the shadow pass draws a FrontSide material's back faces: an upward sheet alone cast no shadow;
+ *  the pooled SOIL material keeps its sides); radial veins and a lighter heart in the vertex colours (linear `leaf`). */
 function addPad(out: { pos: number[]; col: number[] }, cx: number, cz: number, rx: number, rz: number, notchAt: number, leaf: RGB,
   rings: number, segments: number): void {
   const { pos, col } = out;
   const half = PAD.notch / 2;
   // vertex at (ring k, step s): angle from −z, φ = notchAt + half … notchAt + 2π − half
-  const vtx = (k: number, s: number, down = false): [V3, RGB] => {
+  // (`down`: the edge band's foot at the water; `under`: the underside, just below the pad)
+  const vtx = (k: number, s: number, down = false, under = false): [V3, RGB] => {
     const e = k / rings, phi = notchAt + half + (s / segments) * (Math.PI * 2 - PAD.notch);
     const x = cx + Math.sin(phi) * rx * e, z = cz - Math.cos(phi) * rz * e;
-    const y = down ? WATER_Y - 0.02 : PAD.y + PAD.rim * THREE.MathUtils.smoothstep(e, 0.8, 1);
+    const y = down ? WATER_Y - 0.02 : under ? PAD.y - PAD.under : PAD.y + PAD.rim * THREE.MathUtils.smoothstep(e, 0.8, 1);
     const vein = Math.pow(Math.abs(Math.cos((phi - notchAt) * 4.5)), 24) * THREE.MathUtils.smoothstep(e, 0.12, 0.35);
     const heart = 1 - THREE.MathUtils.smoothstep(e, 0, 0.45);
-    const k0 = down ? 0.55 : (0.9 + 0.1 * heart) * (1 + 0.22 * vein) * (e > 0.9 ? 0.86 : 1);
+    const k0 = down || under ? 0.55 : (0.9 + 0.1 * heart) * (1 + 0.22 * vein) * (e > 0.9 ? 0.86 : 1);
     return [[x, y, z], scale(leaf, k0)];
   };
   const tri = (a: [V3, RGB], b: [V3, RGB], c: [V3, RGB]) => {
@@ -241,6 +243,12 @@ function addPad(out: { pos: number[]; col: number[] }, cx: number, cz: number, r
     }
     const a = vtx(rings, s), b = vtx(rings, s + 1), c = vtx(rings, s + 1, true), d = vtx(rings, s, true);
     tri(a, b, c); tri(a, c, d);
+    // the underside: the top's windings reversed, facing down
+    tri(vtx(0, s, false, true), vtx(1, s, false, true), vtx(1, s + 1, false, true));
+    for (let k = 1; k < rings; k++) {
+      const ua = vtx(k, s, false, true), ub = vtx(k, s + 1, false, true), uc = vtx(k + 1, s + 1, false, true), ud = vtx(k + 1, s, false, true);
+      tri(ua, uc, ub); tri(ua, ud, uc);
+    }
   }
 }
 
@@ -377,6 +385,8 @@ export const PLATFORM_PART: ArenaPart = {
       ctx.disposables.push(cells.tex);
       const mesh = new THREE.Mesh(top, arenaGround(ctx, cells));
       mesh.name = 'platformTops';
+      // (drawn with the ground, after the battlers: their terrain shading is skipped where a battler covers them)
+      mesh.renderOrder = GROUND_RENDER_ORDER;
       mesh.receiveShadow = true;
       group.add(mesh);
     }
@@ -402,7 +412,7 @@ export const PLATFORM_PART: ArenaPart = {
     const ripple = merged(meshes, 'ripple');
     if (ripple) {
       const foam = mix(ctx.palette.platformTop, [1, 1, 1], 0.65);
-      const mesh = new THREE.Mesh(ripple, kitMaterial(ctx.uniforms, { ...RIPPLE_MATERIAL, color: _c.setRGB(...toLinear(foam)).clone() }).material);
+      const mesh = new THREE.Mesh(ripple, kitMaterial(ctx.uniforms, { ...RIPPLE_MATERIAL, color: _c.setRGB(...toLinear(foam)) }).material);
       mesh.name = 'platformRipples';
       mesh.receiveShadow = true;
       group.add(mesh);

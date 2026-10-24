@@ -105,6 +105,9 @@ export class BattleView {
   /** Whether this frame draws the Modern arena (its look lights the scene), and the look (reused). */
   private modernShown = false;
   private look: ArenaLook = arenaLook('plain', arenaPalette('plain', null), 12);
+  /** The style and quality the sun's shadow was last set for (applyShadows). */
+  private shadowStyle: WorldStyle | null = null;
+  private shadowQuality: Quality | null = null;
   private style: WorldStyle = 'modern';
   private failPart: string | null = null;
   /** The arena kind's inputs as last seen (updated in place), the kind and whether the Modern arena covers it: recomputed
@@ -535,6 +538,7 @@ export class BattleView {
       fog.near = FOG_NEAR;
       fog.far = FOG_FAR;
       this.actors.setExposure(1);
+      this.uniforms.uNight.value = 0;
     }
     this.applyShadows(this.modernShown ? 'modern' : 'retro');
     this.arena.update(this.time, night);
@@ -595,6 +599,10 @@ export class BattleView {
   /** The sun's shadow map and softness: Modern's by quality (OverworldView's shadowSettings), today's under today's
    *  arena (2048, radius 1: the constructor's). A size change frees the map (three makes the new one). */
   private applyShadows(style: WorldStyle): void {
+    // (unchanged since the last frame: nothing to do — shadowSettings returns a new object)
+    if (style === this.shadowStyle && this.quality === this.shadowQuality) return;
+    this.shadowStyle = style;
+    this.shadowQuality = this.quality;
     const { size, radius } = shadowSettings(this.quality, style);
     const shadow = this.sun.shadow;
     shadow.radius = radius;

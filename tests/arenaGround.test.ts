@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groundCells, groundHeight, POND, GROUND_GRID } from '../src/render/battle/parts/ground';
+import { groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, wornRingE } from '../src/render/battle/parts/ground';
 import { arenaPalette } from '../src/render/battle/palette';
 import { STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
 import { GroundMat } from '../src/render/kit/terrain';
@@ -12,7 +12,11 @@ describe('arena ground', () => {
     expect(g.w).toBe(GROUND_GRID);
     expect(matAt(g, STAGE.centre.x + 25, STAGE.centre.z - 20)).toBe(GroundMat.Grass);
     expect(matAt(g, STAGE.player.x, STAGE.player.z)).toBe(p.platformMat);
-    expect(matAt(g, STAGE.player.x + 2.1 * 1.4, STAGE.player.z)).toBe(p.pathMat);
+    // (fix round 1: the worn ring is painted by the ground's shader, analytically — WORN_RING by wornRingE — over the
+    // field's cells; a cell-painted ring broke into lobed patches)
+    const ring = wornRingE(STAGE.player.x + 2.1 * 1.4, STAGE.player.z, STAGE);
+    expect(ring).toBeGreaterThan(WORN_RING.inner); expect(ring).toBeLessThanOrEqual(WORN_RING.outer[0]);
+    expect(matAt(g, STAGE.player.x + 2.1 * 1.4, STAGE.player.z)).toBe(p.groundMat);
   });
   it('keeps the stage flat, rolls outdoor fields, lays indoor floors level', () => {
     for (const [dx, dz] of [[0, 0], [5, -3], [-6, 2]]) expect(groundHeight('grass', STAGE.centre.x + dx, STAGE.centre.z + dz, STAGE)).toBe(GROUND_Y);

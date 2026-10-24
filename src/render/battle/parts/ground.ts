@@ -1,19 +1,21 @@
 // The arena ground: one polar disc around the stage, shaded by the kit's terrain material (the overworld's painterly
-// grass, path, sand, paving, gravel, rock and deck, kit/terrain.ts) over a grid of synthetic cells — the field, a worn
-// ring around the platforms, the platform tops (their top surfaces draw with this very material: parts/platforms.ts) —
-// plus soft cloud shadows drifting over outdoor ground and caustics on the sea floor. Flat around the stage, rolling
-// beyond it outdoors, a basin under the pond kinds' water, a seabed under open water.
+// grass, path, sand, paving, gravel, rock and deck, kit/terrain.ts) over a grid of synthetic cells — the field, the
+// ground under the platforms, the pond's bed (the platform tops draw with this very material: parts/platforms.ts) —
+// plus a worn ring round the platforms (outdoor kinds, painted analytically), soft cloud shadows drifting over outdoor
+// ground and caustics on the sea floor. Flat around the stage, rolling beyond it outdoors, a basin under the pond kinds'
+// water, a seabed under open water.
 
 import * as THREE from 'three';
 import { noise2 } from '../../kit/geom';
 import { kitMaterial, type KitMaterialOptions } from '../../kit/materials';
-import { scale, mix, NIGHT_SOIL, type RGB } from '../../kit/palette';
-import { terrainMaterial, GroundMat } from '../../kit/terrain';
+import { scale, mix, toLinear, type RGB } from '../../kit/palette';
+import { terrainMaterial, terrainFragColor, GroundMat } from '../../kit/terrain';
+import { KIT_NOISE_GLSL } from '../../kit/noise.glsl';
 import { CLOUD_GLSL } from '../clouds.glsl';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, PLATFORM_FOOTPRINT, type Footprint, type Stage } from '../stage';
+import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint, type Stage } from '../stage';
 
 export const GROUND_GRID = 72;   // cells (1 unit each) around stage.centre
 export const POND = { dz: -1, rx: 15, rz: 10 }, CAVE_POND = { dz: -1, rx: 18, rz: 12 };
@@ -24,9 +26,18 @@ const SEABED_Y = -1.2, BASIN_Y = -0.9;
 const BASIN_SHORE = 2;
 /** Flat within FLAT_R of the stage centre; outdoors the field rolls in fully by ROLL_R. */
 const FLAT_R = 9, ROLL_R = 22;
-/** The platform tops' cells (× footprint) and the worn ring around them (outdoor kinds; tuned at review from 1.7: the
- *  terrain's warped cell borders made a wider ring blotchy mud patches; sand's ends at its mound's foot). */
-const TOP_E = 1.1, RING_E = 1.5, SAND_RING_E = 1.4;
+/** The platforms' cells (× footprint). */
+const TOP_E = 1.1;
+/** The worn ring round the platforms (outdoor kinds; elliptical radius × footprint): worn from `inner` (a soft edge
+ *  under the platform's rim) out to a noise-frayed edge between `outer`'s two radii. Painted in the ground's shader
+ *  (analytic: the terrain's warped cell borders broke a cell-painted ring into lobed patches). */
+export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
+/** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
+ *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. */
+const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+/** The battle ground's border warp reaches this far from the stage centre (cells; faded out over its last 4): beyond,
+ *  the field is one material — nothing to bend (WARP_GLSL). */
+const WARP_R = 30;
 /** The kinds whose platforms float on water (a lily pad, ripple rings: no top to paint, the ground lies under water). */
 const FLOATING: ReadonlySet<ArenaKind> = new Set(['water', 'kyogre', 'pond', 'cavePond']);
 /** The pond bed's muddy sand (its cells' tint: Sand). */
@@ -40,14 +51,14 @@ const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep
 const ell = (dx: number, dz: number, f: Footprint) => Math.hypot(dx / f.rx, dz / f.rz);
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): platform footprints × 1.1 → platformMat /
- *  platformTop; outdoor kinds a worn ring (1.1..1.5 × footprint, sand 1.4) → pathMat / path; else groundMat / ground; tints ±6 %
- *  by noise2. Pond kinds: the pond ellipse → Sand (its bed). (The grid is in the terrain shader's cell space, (x, z − y):
- *  the platform tops lie at y ≈ 0 where it is the world's (x, z); the ring and the field lie at GROUND_Y.) */
+ *  platformTop; else groundMat / ground; tints ±6 % by noise2. Pond kinds: the pond ellipse → Sand (its bed). (The worn
+ *  ring is the shader's: wornRingE / WORN_RING. The grid is in the terrain shader's cell space, (x, z − y): the platforms
+ *  lie at y ≈ 0 where it is the world's (x, z), the field at GROUND_Y.) */
 export function groundCells(kind: ArenaKind, p: ArenaPalette, stage: Stage): { data: Uint8Array; w: number; h: number; min: [number, number] } {
   const w = GROUND_GRID, h = GROUND_GRID;
   const min: [number, number] = [Math.floor(stage.centre.x) - w / 2, Math.floor(stage.centre.z) - h / 2];
   const data = new Uint8Array(w * h * 4);
-  const outdoor = ARENA_SETTING[kind] === 'outdoor', tops = !FLOATING.has(kind), ringE = kind === 'sand' ? SAND_RING_E : RING_E;
+  const tops = !FLOATING.has(kind);
   const pond = kind === 'pond' ? POND : kind === 'cavePond' ? CAVE_POND : null;
   const plats: [THREE.Vector3, Footprint][] = [[stage.player, PLATFORM_FOOTPRINT.player], [stage.enemy, PLATFORM_FOOTPRINT.enemy]];
   const bed = mix(POND_BED, p.ground, 0.25);
@@ -56,17 +67,11 @@ export function groundCells(kind: ArenaKind, p: ArenaPalette, stage: Stage): { d
       // the cell's centre in cell space; on ground at GROUND_Y the world's z is that + GROUND_Y
       const x = min[0] + i + 0.5, z = min[1] + j + 0.5, zg = z + GROUND_Y;
       let mat = p.groundMat, tint = p.ground;
-      let top = Infinity, ring = Infinity;
-      for (const [c, f] of plats) {
-        top = Math.min(top, ell(x - c.x, z - c.z, f));
-        ring = Math.min(ring, ell(x - c.x, zg - c.z, f));
-      }
+      let top = Infinity;
+      for (const [c, f] of plats) top = Math.min(top, ell(x - c.x, z - c.z, f));
       if (tops && top <= TOP_E) {
         mat = p.platformMat;
         tint = p.platformTop;
-      } else if (outdoor && ring <= ringE) {
-        mat = p.pathMat;
-        tint = p.path;
       } else if (pond && Math.hypot((x - stage.centre.x) / pond.rx, (zg - stage.centre.z - pond.dz) / pond.rz) <= 1) {
         mat = GroundMat.Sand;
         tint = bed;
@@ -114,13 +119,64 @@ export function groundHeight(kind: ArenaKind, x: number, z: number, stage: Stage
 // Drifting cloud shadows (outdoor) and the sea floor's caustics (underwater), after the terrain's colour: uniform
 // branches (build-time values), so a kind without them pays nothing. The caustics are kit/water.ts's seabed term. At
 // night (uNight, outdoor kinds only) warm ground is moonlit.
+
+/** The stage's two platforms (world x, z, footprint rx, rz) and its centre in the terrain's cell space at GROUND_Y. */
+const stageGlsl = (stage: Stage) => /* glsl */ `
+const vec4 ARENA_PLATFORMS[2] = vec4[2](
+  vec4(${stage.player.x.toFixed(4)}, ${stage.player.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rz.toFixed(4)}),
+  vec4(${stage.enemy.x.toFixed(4)}, ${stage.enemy.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rz.toFixed(4)}));
+const vec2 ARENA_CELL_CENTRE = vec2(${stage.centre.x.toFixed(4)}, ${(stage.centre.z - GROUND_Y).toFixed(4)});
+`;
+
+/** The battle ground's border warp (terrainFragColor's): the terrain's, cheaper — only within WARP_R of the stage (the
+ *  pond's bed, the ground under the platforms; faded out over its last 4 cells), and only the broad warp's two coarse
+ *  octaves (renormalised); none on a one-cell grid (the platform tops'). */
+const WARP_GLSL = /* glsl */ `  // the battle ground's warp (parts/ground.ts WARP_GLSL)
+  vec2 warp = vec2(0.0);
+  float warpK = uGridSize.x * uGridSize.y > 1.0 ? 1.0 - smoothstep(${(WARP_R - 4).toFixed(1)}, ${WARP_R.toFixed(1)}, length(cell - ARENA_CELL_CENTRE)) : 0.0;
+  if (warpK > 0.0) {
+    vec2 w0 = cell * 0.7, w1 = w0 + 17.3;
+    vec2 broad = vec2(0.5 * kitNoise2(w0) + 0.25 * kitNoise2(w0 * 2.03 + 17.1), 0.5 * kitNoise2(w1) + 0.25 * kitNoise2(w1 * 2.03 + 17.1)) / 0.75;
+    warp = ((broad - 0.5) * 1.5 + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24) * warpK;
+  }
+`;
+
+// Cloud cover per vertex (40-unit features: the disc and the tops are dense enough) into one varying: no noise per
+// fragment.
+const GROUND_VERT_HEAD = /* glsl */ `
+uniform float uClouds;
+varying float vArenaCloud;
+${KIT_NOISE_GLSL}
+${CLOUD_GLSL}
+`;
+const GROUND_VERT_WORLD = /* glsl */ `
+vArenaCloud = uClouds > 0.0 ? arenaClouds((kitWorldPos.xz + uTime * vec2(0.6, 0.25)) / 40.0) : 0.0;
+`;
 const GROUND_HEAD = /* glsl */ `
 uniform float uClouds;
 uniform float uCaustics;
+uniform float uRing;
+uniform vec3 uRingTint;
+varying float vArenaCloud;
 `;
+// The worn ring (uRing > 0: the field's material, outdoor kinds): the field's own shading recoloured towards the path's
+// colour (uRingTint: the path's look over the field's colour, linear — its texture kept, no shading of its own) by the
+// elliptical distance from the nearer platform — worn in from a soft inner edge, frayed by noise at the outer one, patchy
+// inside; fainter at night.
 const GROUND_COLOR = /* glsl */ `
+if (uRing > 0.0) {
+  vec2 rp = vKitWorld.xz;
+  float re = min(length((rp - ARENA_PLATFORMS[0].xy) / ARENA_PLATFORMS[0].zw), length((rp - ARENA_PLATFORMS[1].xy) / ARENA_PLATFORMS[1].zw));
+  if (re < ${WORN_RING.outer[1].toFixed(2)}) {
+    float fray = kitNoise2(rp * 1.3);
+    float outer = mix(${WORN_RING.outer[0].toFixed(2)}, ${WORN_RING.outer[1].toFixed(2)}, fray);
+    float worn = smoothstep(${(WORN_RING.inner - 0.04).toFixed(2)}, ${(WORN_RING.inner + 0.08).toFixed(2)}, re) * (1.0 - smoothstep(outer - 0.16, outer, re))
+      * (0.7 + 0.3 * kitNoise2(rp * 2.6 + 11.0)) * uRing * (1.0 - ${GROUND_NIGHT.ringFade.toFixed(2)} * uNight);
+    diffuseColor.rgb *= mix(vec3(1.0), uRingTint, worn);
+  }
+}
 if (uClouds > 0.0) {
-  diffuseColor.rgb *= 1.0 - uClouds * 0.18 * arenaClouds((vKitWorld.xz + uTime * vec2(0.6, 0.25)) / 40.0);
+  diffuseColor.rgb *= 1.0 - uClouds * 0.18 * vArenaCloud;
 }
 if (uCaustics > 0.0) {
   vec2 cp = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y) * 1.7;
@@ -130,24 +186,53 @@ if (uCaustics > 0.0) {
   diffuseColor.rgb *= mix(1.0, 0.92 + 0.3 * caus, uCaustics);
 }
 if (uNight > 0.0) {
-  // moonlit earth (the kit's NIGHT_SOIL): warm ground — worn paths, sand, gravel; not grass — turns a light neutral after
-  // sunset (under the night's blue light it reflected next to nothing: near-black patches)
+  // moonlit earth (as the kit's NIGHT_SOIL, gentler): warm ground — the worn ring, sand, gravel; not grass — turns part
+  // of the way to a light neutral after sunset (under the night's blue light it reflected next to nothing: near-black
+  // patches; all the way, a flat slate band)
   vec3 gc = diffuseColor.rgb;
   float warm = smoothstep(0.0, 0.08, gc.r - gc.b) * (1.0 - smoothstep(0.0, 0.08, gc.g - gc.r));
-  diffuseColor.rgb = mix(gc, vec3(dot(gc, vec3(0.2126, 0.7152, 0.0722)) * ${NIGHT_SOIL.lift.toFixed(2)}), uNight * ${NIGHT_SOIL.mix.toFixed(2)} * warm);
+  diffuseColor.rgb = mix(gc, vec3(dot(gc, vec3(0.2126, 0.7152, 0.0722)) * ${GROUND_NIGHT.lift.toFixed(2)}), uNight * ${GROUND_NIGHT.mix.toFixed(2)} * warm);
 }
 `;
 
-/** terrainMaterial + cloud shadows (uClouds) and seabed caustics (uCaustics), both build-time values; hookKey 'arenaGround'. */
-export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size: THREE.Vector2, clouds: number, caustics: number): KitMaterialOptions {
+/** The worn ring a build paints (WORN_RING): its strength (0: none) and its tint over the field (linear, per channel). */
+export interface WornRing { strength: number; tint: RGB }
+const NO_RING: WornRing = { strength: 0, tint: [1, 1, 1] };
+
+/** The worn ring of an outdoor kind: the path's colour as the terrain shades its material (a Path: warm earth at its own
+ *  lightness, as kitGround) over the field's, linear, each channel at most 4×. */
+export function wornRing(p: ArenaPalette): WornRing {
+  const ground = toLinear(p.ground);
+  let path = toLinear(p.path);
+  if (p.pathMat === GroundMat.Path) {
+    const l = 0.2126 * path[0] + 0.7152 * path[1] + 0.0722 * path[2];
+    path = mix(path, [l / 0.806, (0.78 * l) / 0.806, (0.5 * l) / 0.806], 0.75);
+  }
+  return { strength: 1, tint: [0, 1, 2].map((i) => Math.min(4, path[i] / Math.max(ground[i], 0.02))) as RGB };
+}
+
+/** terrainMaterial + cloud shadows (uClouds, per vertex) and seabed caustics (uCaustics), both build-time values; the
+ *  worn ring (`ring`: none by default); the battle ground's cheaper border warp (WARP_GLSL); hookKey 'arenaGround'. */
+export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size: THREE.Vector2, clouds: number, caustics: number,
+  ring: WornRing = NO_RING, stage: Stage = STAGE): KitMaterialOptions {
   const t = terrainMaterial(tex, min, size);
   return {
     ...t,
-    uniforms: { ...t.uniforms, uClouds: { value: clouds }, uCaustics: { value: caustics } },
-    fragHead: (t.fragHead ?? '') + CLOUD_GLSL + GROUND_HEAD,
-    fragColor: (t.fragColor ?? '') + GROUND_COLOR,
+    uniforms: { ...t.uniforms, uClouds: { value: clouds }, uCaustics: { value: caustics }, uRing: { value: ring.strength },
+      uRingTint: { value: new THREE.Color(...ring.tint) } },
+    fragHead: (t.fragHead ?? '') + stageGlsl(stage) + GROUND_HEAD,
+    fragColor: terrainFragColor(WARP_GLSL) + GROUND_COLOR,
+    vertHead: GROUND_VERT_HEAD,
+    vertWorld: GROUND_VERT_WORLD,
     hookKey: 'arenaGround',
   };
+}
+
+/** The elliptical radius (× footprint) of world (x, z) from the nearer platform: what the ground's shader measures the worn
+ *  ring by (WORN_RING). */
+export function wornRingE(x: number, z: number, stage: Stage): number {
+  return Math.min(ell(x - stage.player.x, z - stage.player.z, PLATFORM_FOOTPRINT.player),
+    ell(x - stage.enemy.x, z - stage.enemy.z, PLATFORM_FOOTPRINT.enemy));
 }
 
 /** The disc's geometry: DISC_RINGS rings of DISC_SEGMENTS vertices around (cx, cz) plus the centre, at groundHeight;
@@ -193,11 +278,11 @@ const PN = { position: 3, normal: 3 };
  *  order changes no pixel: nothing it overlaps lies at its depth. */
 export const GROUND_RENDER_ORDER = 3;
 
-/** The arena ground's material for a build: its cells (default the context's ground) and look from the context. (The
- *  platform tops draw with it too, over cells of their own: platforms.ts.) */
+/** The arena ground's material for a build: its cells (default the context's ground), its worn ring (default none) and
+ *  the look from the context. (The platform tops draw with it too, over cells of their own: platforms.ts.) */
 export function arenaGround(ctx: { uniforms: Parameters<typeof kitMaterial>[0]; ground: { tex: THREE.Texture; min: THREE.Vector2; size: THREE.Vector2 };
-  look: { clouds: number; caustics: number } }, cells = ctx.ground): THREE.Material {
-  return kitMaterial(ctx.uniforms, arenaGroundMaterial(cells.tex, cells.min, cells.size, ctx.look.clouds, ctx.look.caustics)).material;
+  look: { clouds: number; caustics: number }; stage: Stage }, cells = ctx.ground, ring: WornRing = NO_RING): THREE.Material {
+  return kitMaterial(ctx.uniforms, arenaGroundMaterial(cells.tex, cells.min, cells.size, ctx.look.clouds, ctx.look.caustics, ring, ctx.stage)).material;
 }
 
 /** One cell of material `mat` in sRGB `tint` everywhere (the terrain shader clamps its lookups to the grid): a texture
@@ -219,7 +304,9 @@ export const GROUND_PART: ArenaPart = {
     return [{ material: arenaGroundMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(), 0, 0), mesh: 'mesh', attrs: PN, castShadow: false }];
   },
   build(ctx) {
-    const mesh = new THREE.Mesh(groundDisc(ctx.kind, ctx.stage), arenaGround(ctx));
+    // (the worn ring round the platforms: outdoor kinds, in their path's look)
+    const ring = ARENA_SETTING[ctx.kind] === 'outdoor' ? wornRing(ctx.palette) : NO_RING;
+    const mesh = new THREE.Mesh(groundDisc(ctx.kind, ctx.stage), arenaGround(ctx, ctx.ground, ring));
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.renderOrder = GROUND_RENDER_ORDER;

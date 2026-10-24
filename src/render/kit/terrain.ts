@@ -219,17 +219,27 @@ vec3 kitGround(int mat, vec3 tint, vec2 p) {
 }
 `;
 
-const FRAG_COLOR = /* glsl */ `
-{
-  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
-  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them. (A grid of one cell — the
+/** The terrain's border warp (GLSL: sets `vec2 warp` from `cell`, grid space): the overworld's. */
+export const TERRAIN_WARP = /* glsl */ `  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them. (A grid of one cell — the
   // battle platform tops' — has no borders: every lookup clamps to its one texel, so the warp would change no pixel.)
   vec2 warp = vec2(0.0);
   if (uGridSize.x * uGridSize.y > 1.0) {
     warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
          + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
   }
-  vec2 g = cell + warp - uGridMin;
+`;
+
+/** The terrain's colour hook with a border warp of the caller's (the battle ground's is cheaper: arenaGroundMaterial). */
+export function terrainFragColor(warp: string): string {
+  return FRAG_COLOR_HEAD + warp + FRAG_COLOR_REST;
+}
+
+const FRAG_COLOR_HEAD = /* glsl */ `
+{
+  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
+`;
+
+const FRAG_COLOR_REST = /* glsl */ `  vec2 g = cell + warp - uGridMin;
   ivec2 ic = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGridSize) - 1);
   int mat = int(texelFetch(tCells, ic, 0).a * 255.0 + 0.5) >> 4;
   // Tint blends only in a narrow band at cell borders: soft edges that still hold their shape.
@@ -257,6 +267,8 @@ const FRAG_COLOR = /* glsl */ `
   diffuseColor.rgb *= ground;
 }
 `;
+
+const FRAG_COLOR = terrainFragColor(TERRAIN_WARP);
 
 /** The terrain's material (`tex`: its cells' looks, over the grid from `gridMin`, `gridSize` cells): its only definition
  *  (the program catalogue, kit/catalogue.ts, precompiles it). */

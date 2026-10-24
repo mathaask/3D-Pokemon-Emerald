@@ -17,7 +17,7 @@ export interface ArenaPalette {
 
 const TRUNK: RGB = [0.42, 0.3, 0.2], ROCK: RGB = [0.58, 0.56, 0.52], WATER: RGB = [0.32, 0.42, 0.84];
 /** The seabed's sand (kit/water.ts SEABED_MATERIAL's colour); a warm desert sand the sand field is pulled to. */
-const SEABED: RGB = [0.74, 0.66, 0.47], WARM_SAND: RGB = [0.88, 0.76, 0.52];
+const SEABED: RGB = [0.74, 0.66, 0.47], WARM_SAND: RGB = [0.88, 0.76, 0.52], CREAM: RGB = [0.97, 0.91, 0.74];
 /** Under the grass kinds' platform rim: a warm soil brown the rim colour is pulled to. */
 const SOIL: RGB = [0.5, 0.36, 0.22];
 /** The ground scale of the grass kinds: long grass is the darker field. */
@@ -56,10 +56,13 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
     }
     case 'sand': {
       const blades = mix(c.platform, [0.5, 0.55, 0.3], 0.5);
-      // (the field: the platform's yellow warmed half way to desert sand — as it is, lit by the sky it read lime)
+      // (the field: the platform's yellow warmed 0.7 of the way to desert sand — as it is, lit by the sky it read
+      // olive-mustard; the mound and the worn ring the rim's pale yellow warmed to the GBA's pale cream: a light mound on a
+      // warm field)
+      const cream = soften(mix(c.rim, CREAM, 0.6));
       p = {
-        groundMat: GroundMat.Sand, ground: soften(mix(c.platform, WARM_SAND, 0.5)), pathMat: GroundMat.Sand, path: soften(c.rim),
-        platformMat: GroundMat.Sand, platformTop: soften(c.rim), platformSide: scale(soften(c.platform), 0.8), skirt: blades,
+        groundMat: GroundMat.Sand, ground: soften(mix(c.platform, WARM_SAND, 0.7)), pathMat: GroundMat.Sand, path: cream,
+        platformMat: GroundMat.Sand, platformTop: cream, platformSide: scale(soften(c.platform), 0.8), skirt: blades,
         leaf: [0.35, 0.62, 0.3], trunk: TRUNK, blade: blades, rock: mix(c.platform, [0.6, 0.58, 0.55], 0.6), water: WATER,
         wall: copy(c.backdrop), accent: copy(c.top),
       };

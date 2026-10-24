@@ -288,6 +288,11 @@ export interface KitMaterialOptions {
   fragEmissive?: string;
   /** GLSL after <begin_vertex>: may change `transformed` (object space). */
   vertTransform?: string;
+  /** GLSL declarations appended to the vertex prelude (a varying for the fragment hooks, helpers). */
+  vertHead?: string;
+  /** GLSL at the end of the vertex position, after kitWorldPos / vKitWorld: may write varyings (it moves nothing, so
+   *  unlike vertTransform it needs no shadow-depth twin). */
+  vertWorld?: string;
   /** Optional label in the program cache key (the hook source is hashed into it anyway). */
   hookKey?: string;
 }
@@ -451,7 +456,7 @@ export function hashString(s: string): string {
 }
 
 type Slots = Record<string, { value: unknown }>;
-type Hooks = Pick<KitMaterialOptions, 'fragHead' | 'fragColor' | 'fragNormal' | 'fragEmissive' | 'vertTransform'>;
+type Hooks = Pick<KitMaterialOptions, 'fragHead' | 'fragColor' | 'fragNormal' | 'fragEmissive' | 'vertTransform' | 'vertHead' | 'vertWorld'>;
 
 function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, local: Local, slots: Slots,
   o: Hooks, full: boolean): void {
@@ -461,9 +466,9 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
     uFocusExtraBox: u.uFocusExtraBox, uFocusExtraFoot: u.uFocusExtraFoot,
     uCamBack: u.uCamBack, ...local, ...slots,
   });
-  s.vertexShader = VERT_PRELUDE + s.vertexShader
+  s.vertexShader = VERT_PRELUDE + (o.vertHead ?? '') + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
-    .replace('#include <project_vertex>', PROJECT_VERTEX)
+    .replace('#include <project_vertex>', PROJECT_VERTEX + (o.vertWorld ?? ''))
     .replace('#include <worldpos_vertex>', WORLDPOS_VERTEX);
   if (!full) return;
   s.fragmentShader = FRAG_PRELUDE + (o.fragHead ?? '') + '\n' + s.fragmentShader
@@ -533,7 +538,9 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
   else if (o.pattern === 'planks') defines.KIT_PATTERN_PLANKS = '';
   else if (o.pattern === 'stone') defines.KIT_PATTERN_STONE = '';
   // three's program cache key omits onBeforeCompile output, so the hook source must be part of it.
-  const hooks = [o.fragHead, o.fragColor, o.fragNormal, o.fragEmissive, o.vertTransform].map((h) => h ?? '').join('|');
+  // (the vertex prelude and world hooks join the key only when present: every other material's key stays as it was)
+  const hooks = [o.fragHead, o.fragColor, o.fragNormal, o.fragEmissive, o.vertTransform].map((h) => h ?? '').join('|')
+    + (o.vertHead || o.vertWorld ? `|${o.vertHead ?? ''}|${o.vertWorld ?? ''}` : '');
   const key = 'kit:' + Object.keys(defines).sort().join(',') + ':' + (o.hookKey ?? '') + ':' + hashString(hooks);
 
   let pools = POOLS.get(u);
@@ -559,7 +566,8 @@ export function kitMaterial(u: KitUniforms, o: KitMaterialOptions = {}): KitMate
   const slots: Slots = {};
   for (const k of Object.keys(o.uniforms ?? {})) slots[k] = { value: null };
   // (the hooks only: the options' textures are this build's, the material outlives it)
-  const h: Hooks = { fragHead: o.fragHead, fragColor: o.fragColor, fragNormal: o.fragNormal, fragEmissive: o.fragEmissive, vertTransform: o.vertTransform };
+  const h: Hooks = { fragHead: o.fragHead, fragColor: o.fragColor, fragNormal: o.fragNormal, fragEmissive: o.fragEmissive, vertTransform: o.vertTransform,
+    vertHead: o.vertHead, vertWorld: o.vertWorld };
   material.onBeforeCompile = (s) => patchKit(s, u, local, slots, h, true);
   material.customProgramCacheKey = () => key;
   let depth: THREE.MeshDepthMaterial | null = null;

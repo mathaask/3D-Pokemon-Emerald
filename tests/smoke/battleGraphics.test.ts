@@ -4,7 +4,7 @@ import path from 'node:path';
 import { RomReader } from '../../src/game/rom/reader';
 import { loadRom } from './helpers/staticMap';
 import { ARENA_KINDS, arenaKind, type ArenaKind } from '../../src/render/battle/arenaKind';
-import { decodeBg3, sampleArenaColors, BG_W, BG_H, type ArenaColors } from '../../src/render/battle/bgSample';
+import { decodeBg3, sampleArenaColors, defaultArenaColors, BG_W, BG_H, type ArenaColors } from '../../src/render/battle/bgSample';
 import { readBattleBackground, installBattleBackground, readMonPic, battlerScreenPos, readEnemyShadow } from '../../src/game/rom/battleGraphics';
 import { Gba } from '../../src/gba/gba';
 import { GameState } from '../../src/game/state';
@@ -43,6 +43,19 @@ describe('battle graphics from the ROM', () => {
         `platform ${hex(c!.platform)} detail ${hex(c!.platformDetail)} rim ${hex(c!.rim)}`);
     }
     fs.writeFileSync(path.join(root, 'out/battle-colors.txt'), lines.join('\n') + '\n');
+  });
+  it('keeps the hand-picked default colours near what every background samples (backdrop, top, platform, rim)', () => {
+    // (the arena shows the defaults until the background is sampled: they must not jump; hand-picked approximations,
+    // never the ROM's values — Task 2's drift guard compares only these four picked colours)
+    const off: string[] = [];
+    for (const kind of ARENA_KINDS) {
+      const d = defaultArenaColors(kind), c = colors.get(kind)!;
+      for (const k of ['backdrop', 'top', 'platform', 'rim'] as const) {
+        const diff = Math.max(...d[k].map((v, i) => Math.abs(v - c[k][i])));
+        if (diff > 0.08) off.push(`${kind} ${k}: default ${hex(d[k])} vs sample ${hex(c[k])} (${diff.toFixed(3)})`);
+      }
+    }
+    expect(off).toEqual([]);
   });
   it('samples the colours each kind is known for', () => {
     const green = (c: number[]) => c[1] > c[0] && c[1] > c[2];

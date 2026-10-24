@@ -24,6 +24,13 @@ const _day: DayLight = { sunColor: new THREE.Color(), sunI: 0, sky: new THREE.Co
 /** 1 / the daytime sky colour of the overworld's keyframes (9:00–16:00: (0.75, 0.88, 1.0)). */
 const DAY_SKY_INV = new THREE.Color(1 / 0.75, 1 / 0.88, 1);
 const _c = new THREE.Color();
+/** A palette's colours the look reads, linear (computed once per palette: no allocation per frame). */
+const LINEAR = new WeakMap<ArenaPalette, { wall: THREE.Color; ground: THREE.Color }>();
+function linearOf(p: ArenaPalette): { wall: THREE.Color; ground: THREE.Color } {
+  let l = LINEAR.get(p);
+  if (!l) LINEAR.set(p, (l = { wall: new THREE.Color(...toLinear(p.wall)), ground: new THREE.Color(...toLinear(p.ground)) }));
+  return l;
+}
 
 /** A new look (arenaLook's `out`). */
 function blankLook(): ArenaLook {
@@ -41,7 +48,7 @@ function blankLook(): ArenaLook {
  *  ground bounces the light it gets). (toLinear: kit/palette.ts, sRGB RGB → linear RGB.)
  *  Into `out` (default a new one): no allocation per frame. */
 export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, out: ArenaLook = blankLook()): ArenaLook {
-  const o = out;
+  const o = out, lin = linearOf(palette);
   o.night = 0;
   o.clouds = 0;
   o.caustics = 0;
@@ -58,7 +65,7 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.fogNear = 30;
       o.fogFar = 80;
       if (ARENA_SETTING[kind] === 'sky') {
-        o.fog.lerp(_c.setRGB(...toLinear(palette.wall)), 0.5);
+        o.fog.lerp(lin.wall, 0.5);
         o.fogNear = 25;
         o.fogFar = 90;
       }
@@ -80,7 +87,7 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
         o.fog.setRGB(0.18, 0.07, 0.04);
       } else {
         o.sunColor.setRGB(1.0, 0.85, 0.7);
-        o.fog.setRGB(...toLinear(palette.wall)).multiplyScalar(0.12);
+        o.fog.copy(lin.wall).multiplyScalar(0.12);
       }
       o.sunI = 0.9;
       o.sky.setRGB(0.55, 0.5, 0.6);
@@ -93,12 +100,12 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.sunI = INDOOR.sunI;
       o.sky.copy(INDOOR.sky);
       o.hemiI = INDOOR.hemiI;
-      o.fog.setRGB(...toLinear(palette.wall)).multiplyScalar(0.6);
+      o.fog.copy(lin.wall).multiplyScalar(0.6);
       o.fogNear = 22;
       o.fogFar = 60;
       break;
   }
-  o.hemiGround.setRGB(...toLinear(palette.ground)).multiplyScalar(0.6);
+  o.hemiGround.copy(lin.ground).multiplyScalar(0.6);
   // (outdoors the ground bounces the hour's sky: as given by day — the day sky is DAY_SKY —, dim and blue at night, warm
   // at sunset; a constant green bounce tinted the battlers' undersides green under the moon)
   if (o.clouds > 0) o.hemiGround.multiply(_c.copy(o.sky).multiply(DAY_SKY_INV));
