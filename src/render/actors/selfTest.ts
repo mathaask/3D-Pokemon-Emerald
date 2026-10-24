@@ -110,20 +110,25 @@ function fixtureMaxErr(renderer: THREE.WebGLRenderer, like: SpriteField): number
   }
 }
 
+/** The atlas slots a field covers: slot rectangles in the atlas's layout (slot x, slot y, width, height) and how many. */
+export interface FieldSlots { rects: THREE.InstancedBufferAttribute; count: number }
+
 /**
  * Checks the field as the last frame left it against the CPU reference of the atlas as the last frame
- * left it (call between frames, after the field was updated), then the fixture, then times updates.
+ * left it (call between frames, after the field was updated), then the fixture, then times updates — over `slots`, the
+ * slots the field covers (default every used slot of the atlas: the overworld's; the battlers' field covers theirs).
  */
-export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): Promise<FieldSelfTest> {
+export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField,
+  slots: FieldSlots = { rects: atlas.slotRects, count: atlas.slotCount }): Promise<FieldSelfTest> {
   const { width: W, height: H } = atlas.target;
   if (field.target.width !== W || field.target.height !== H) throw new Error('self-test: the field and the atlas differ in size');
-  const count = atlas.slotCount;
+  const { rects, count } = slots;
   const rgba = readPixels(renderer, atlas.target, new Uint8Array(W * H * 4));
-  const maxErr = compareSlots(rgba, readField(renderer, field), W, H, atlas.slotRects, count, field.params);
+  const maxErr = compareSlots(rgba, readField(renderer, field), W, H, rects, count, field.params);
   const fixture = fixtureMaxErr(renderer, field);
   // (re-running the update over the unchanged atlas leaves the same field)
   const t = await timeGpuFrames(renderer.getContext() as WebGL2RenderingContext, TIMED_UPDATES,
-    () => field.update(renderer, atlas.target.texture, atlas.slotRects, count));
+    () => field.update(renderer, atlas.target.texture, rects, count));
   return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs, inflateMax: inflateMax(field.params) };
 }
 
@@ -237,9 +242,10 @@ export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
   }
 }
 
-/** Both self-tests: the field's (as fieldSelfTest) and the xBR shader's. */
-export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): Promise<ActorSelfTest> {
-  const f = await fieldSelfTest(renderer, atlas, field);
+/** Both self-tests: the field's (as fieldSelfTest, over `slots`) and the xBR shader's. */
+export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField,
+  slots?: FieldSlots): Promise<ActorSelfTest> {
+  const f = await fieldSelfTest(renderer, atlas, field, slots);
   return { ...f, xbr: xbrSelfTest(renderer) };
 }
 

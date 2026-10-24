@@ -22,11 +22,14 @@ import { BattleArena } from './arena';
 import { arenaKind, type ArenaInputs, type ArenaKind } from './arenaKind';
 import { defaultArenaColors, type ArenaColors } from './bgSample';
 import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
-import { BattleActors } from './battleActors';
+import { BattleActors, battleRoute, battlerAlphaKey } from './battleActors';
 import { ARENA_PARTS, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
 
 export { isBattleHudSprite } from './battleActors';
+
+/** Battler slots the battlers' field covers at most (a double battle has four battlers; trainer pictures join them). */
+const FIELD_SLOTS = 16;
 
 /** What the battle view reads of the game state (GameState's fields; the static preview fills exactly these). */
 export type BattleViewState = Pick<GameState, 'mem' | 'sprites' | 'battleEnvironment' | 'battleType' | 'trainerClass'
@@ -92,6 +95,15 @@ export class BattleView {
    *  pictures) — its own instance (+8 MB), so neither scene's field is ever the other's (D4). Recomputed by updateField
    *  after each atlas update; read by the self-test. */
   readonly field: SpriteField;
+  /** The battler slots the field covers (slot x, slot y, width, height: the atlas's layout) and how many; the battlers'
+   *  slots and alpha keys it was last computed from (two arrays, swapped); whether it holds that computation. */
+  private fieldRects = new THREE.InstancedBufferAttribute(new Float32Array(FIELD_SLOTS * 4), 4).setUsage(THREE.DynamicDrawUsage);
+  private fieldCount = 0;
+  private fieldKey: number[] = [];
+  private fieldKeyNext: number[] = [];
+  private fieldValid = false;
+  /** Field computations and reuses (updateField; the report's numbers). */
+  readonly fieldStats = { updates: 0, reused: 0 };
 
   /** `instanceUniforms`: the inflated battlers' instance-data path (instanceUniformsFit, as the overworld's: every caller
    *  passes it). */
@@ -143,14 +155,52 @@ export class BattleView {
   }
 
   /**
-   * Recomputes the battlers' inflation field from the sprite atlas as its last update baked it — the owner calls it right
-   * after every atlas update of a battle frame (sprites animate and change slot every frame: a field one bake behind
-   * would displace the wrong pixels) — in a Modern battle with inflation on only (Retro and the cards-only baseline draw no
-   * inflated battler).
+   * Brings the battlers' inflation field up to the sprite atlas as its last update baked it — the owner calls it right
+   * after every atlas update of a battle frame, with that frame's state (sprites change slot and animate: a field one bake
+   * behind would displace the wrong pixels) — in a Modern battle with inflation on only (Retro and the cards-only baseline
+   * draw no inflated battler). The passes run over the battlers' slots only (the sprites Modern inflates; not the HUD's
+   * or the move effects'), and only when a battler's slot or alpha changed (battlerAlphaKey: its tiles, size, flips…):
+   * otherwise the field already holds exactly what they would compute (idle battlers bob by position, not by tiles).
    */
-  updateField(renderer: THREE.WebGLRenderer): void {
+  updateField(renderer: THREE.WebGLRenderer, state: Pick<BattleViewState, 'sprites' | 'mem'>): void {
     if (!this.fieldLive) return;
-    this.field.update(renderer, this.spriteAtlas.target.texture, this.spriteAtlas.slotRects, this.spriteAtlas.slotCount);
+    const atlas = this.spriteAtlas, rects = atlas.slotRects, key = this.fieldKeyNext, bus = state.mem.bus;
+    // (the atlas's tile mapping: DISPCNT bit 6, as Renderer / the preview bake it)
+    const map2d = (bus.io16[0] & 0x40) === 0;
+    key.length = 0;
+    let n = 0;
+    for (const s of state.sprites) {
+      if (n >= FIELD_SLOTS || battleRoute(s, 'modern', true) !== 'inflated') continue;
+      const info = atlas.slots.get(s.index);
+      if (!info) continue;
+      const i = info.slot;
+      this.fieldRects.setXYZW(n++, rects.getX(i), rects.getY(i), rects.getZ(i), rects.getW(i));
+      key.push(rects.getX(i), rects.getY(i), rects.getZ(i), rects.getW(i), battlerAlphaKey(s, bus.vram, map2d));
+    }
+    const same = this.fieldValid && key.length === this.fieldKey.length && key.every((v, k) => v === this.fieldKey[k]);
+    if (same) {
+      this.fieldStats.reused++;
+      return;
+    }
+    this.fieldRects.clearUpdateRanges();
+    if (n > 0) this.fieldRects.addUpdateRange(0, n * 4);
+    this.fieldRects.needsUpdate = true;
+    this.field.update(renderer, atlas.target.texture, this.fieldRects, n);
+    this.fieldCount = n;
+    this.fieldKeyNext = this.fieldKey;
+    this.fieldKey = key;
+    this.fieldValid = true;
+    this.fieldStats.updates++;
+  }
+
+  /** The slots the battlers' field covers (its last computation): the self-test compares and times exactly these. */
+  get fieldSlots(): { rects: THREE.InstancedBufferAttribute; count: number } {
+    return { rects: this.fieldRects, count: this.fieldCount };
+  }
+
+  /** The battlers' field must be recomputed at the next updateField (a lost and restored WebGL context emptied it). */
+  invalidateField(): void {
+    this.fieldValid = false;
   }
 
   /** The preview's &arenaFail=<name>: the arena part of that name throws (with no such part, one of that name covering
@@ -252,7 +302,7 @@ export class BattleView {
     const t0 = performance.now();
     this.scene.add(catalogue.root);
     const restore = this.actors.showAll();
-    try {
+    const draw = () => {
       if (this.precompileFrame) this.precompileFrame();
       else {
         const target = new THREE.WebGLRenderTarget(1, 1);
@@ -265,8 +315,13 @@ export class BattleView {
           target.dispose();
         }
       }
-      // (the frame used every actor program: a uniform-array one that did not link shows in three's diagnostics)
-      this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[]);
+    };
+    try {
+      draw();
+      // (the frame used every actor program: a uniform-array one that did not link shows in three's diagnostics). A
+      // device that needs the attribute fallback gets its programs (main, shadow-depth) compiled by one more frame here,
+      // not by the first battle's
+      if (this.actors.checkInstanceUniforms((renderer.info.programs ?? []) as unknown as ProgramInfo[])) draw();
     } catch (e) {
       console.warn('[battle] precompile frame failed (programs compile on first use instead)', e);
     } finally {

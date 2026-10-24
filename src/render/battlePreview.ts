@@ -264,7 +264,7 @@ export class BattlePreviewApp {
    *  shader vs its CPU reference on a fixture. */
   selfTest(): Promise<ActorSelfTest> {
     this.checkFieldLive();
-    return actorSelfTest(this.webgl, this.spriteAtlas, this.battle.field);
+    return actorSelfTest(this.webgl, this.spriteAtlas, this.battle.field, this.battle.fieldSlots);
   }
 
   /** The used slots of the battle field as a grey PNG data URL (as emu.fieldDump). */
@@ -341,7 +341,7 @@ export class BattlePreviewApp {
     this.last = now;
     this.tex.update();
     this.spriteAtlas.update(r, this.state.sprites, false);
-    this.battle.updateField(r);
+    this.battle.updateField(r, this.state);
     this.hud.length = 0;
     this.battle.update(this.state, dt, this.input, this.hud);
     this.input.yaw = this.input.pitch = this.input.zoom = 0;

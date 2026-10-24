@@ -120,7 +120,10 @@ export class Renderer {
     this.fadeScene.add(this.fade);
     window.addEventListener('resize', () => this.resize());
     // a restored context has lost every render target's pixels: the atlas redraws only on change
-    canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.overworld.atlas.invalidate();
+      this.battle.invalidateField();
+    });
     this.resize();
     // every overworld program (the world's catalogue, the actors') and every battle program (the battle catalogue: the
     // arenas of both styles) compiles from boot on, in parallel: a map's first visit and a battle's entry compile nothing.
@@ -243,7 +246,7 @@ export class Renderer {
       const dispcnt = this.gba.bus.io16[0];
       this.spriteAtlas.update(this.webgl, st.sprites, (dispcnt & 0x40) === 0);
       // the battlers' inflation field of this same atlas (Modern; its own instance: the overworld's stays the overworld's)
-      this.battle.updateField(this.webgl);
+      this.battle.updateField(this.webgl, st);
       this.hud.updateOverlay();
     } else {
       this.gbaTex.paletteSource = null;
@@ -374,7 +377,9 @@ export class Renderer {
   /** Actor self-test (harness --selftest): the presented view's field as the last frame left it vs the CPU reference of
    *  its atlas, and the xBR shader vs its CPU reference on a fixture. */
   actorSelfTest(): Promise<ActorSelfTest> {
-    return actorSelfTest(this.webgl, this.spriteAtlas, this.liveField());
+    const field = this.liveField();
+    // (the battlers' field covers their slots only)
+    return actorSelfTest(this.webgl, this.spriteAtlas, field, field === this.battle.field ? this.battle.fieldSlots : undefined);
   }
 
   /** The used slots of the presented view's inflation field as a grey PNG data URL (harness --selftest:

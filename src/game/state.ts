@@ -222,8 +222,9 @@ export class GameState {
    * covered.)
    */
   battlerCopies: number[] = [];
-  /** The sprites with a live monbg task at the previous sync. */
+  /** The sprites with a live monbg task at the previous sync and at this one (two arrays, swapped each sync). */
   private monBgBefore: number[] = [];
+  private monBgNow: number[] = [];
 
   /** Subsprite tables read so far, by table address (ROM tables only: they never change). */
   private subspriteCache = new Map<number, SubspritePiece[] | null>();
@@ -251,7 +252,8 @@ export class GameState {
    *  previous sync. */
   private readMonBg(): void {
     const m = this.mem;
-    const now: number[] = [];
+    const now = this.monBgNow;
+    now.length = 0;
     for (let k = 0; k < 2; k++) {
       const id = m.u8(SYM.sMonAnimTaskIdArray + k);
       if (id >= TASK_COUNT) continue; // TASK_NONE
@@ -262,6 +264,7 @@ export class GameState {
     const copies = this.battlerCopies;
     copies.length = 0;
     for (const s of now) if (this.monBgBefore.includes(s)) copies.push(s);
+    this.monBgNow = this.monBgBefore;
     this.monBgBefore = now;
   }
 

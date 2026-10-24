@@ -255,8 +255,51 @@ describe('InflatedActors', () => {
   });
 });
 
+/** Evaluates a GLSL expression of the cards' vertex shader in JS (vec components, mix: the subset those lines use). Only
+ *  arithmetic on the given names and mix() is accepted (the expression is our own shader's, checked before it runs). */
+function glslEval(expr: string, env: Record<string, unknown>): number {
+  const names = new Set([...Object.keys(env), 'mix']);
+  const ids = expr.match(/[A-Za-z_][A-Za-z_0-9]*/g) ?? [];
+  if (!/^[A-Za-z_0-9.+\-*/(), ]+$/.test(expr) || ids.some((id) => !names.has(id) && !/^[xyzw]$/.test(id))) {
+    throw new Error(`not a plain arithmetic GLSL expression: ${expr}`);
+  }
+  const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+  return new Function(...Object.keys(env), 'mix', `return ${expr};`)(...Object.values(env), mix) as number;
+}
+/** The arguments of a GLSL call `name(a, b, …)` in `src` (top-level commas). */
+function glslArgs(src: string, call: string): string[] {
+  const at = src.indexOf(call + '(');
+  if (at < 0) throw new Error(`no ${call}( in ${src}`);
+  const args: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of src.slice(at + call.length + 1)) {
+    if (ch === '(') depth++;
+    if (ch === ')' && depth-- === 0) break;
+    if (ch === ',' && depth === 0) { args.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  args.push(cur.trim());
+  return args;
+}
+
 describe('Billboards', () => {
   const card = (x: number, tint?: [number, number, number, number]) => ({ ...spec(x), tint });
+  it('lays a flat decal as the GBA draws it: its far edge (up the screen, −Z) samples the sprite\'s top row (v0)', () => {
+    const b = new Billboards({ target: { texture: new THREE.Texture() } });
+    for (const vs of [b.material.vertexShader, (b.mesh.customDepthMaterial as THREE.ShaderMaterial).vertexShader]) {
+      const flat = /if \(aSize\.w > 0\.5\) \{([^]*?)\} else \{/.exec(vs)![1];
+      // (the uv line of the flat branch, else the one both branches share)
+      const uvLine = /vUv = vec2\(.*\);/.exec(flat)?.[0] ?? /vUv = vec2\(.*\);/.exec(vs)![0];
+      const zExpr = glslArgs(flat, 'vec3')[2], vExpr = glslArgs(uvLine, 'vec2')[1];
+      const aUv = { x: 0, y: 0.75, z: 1, w: 0.25 }, aSize = { x: 1, y: 2, z: 0, w: 1 }; // v0 (top) 0.75, v1 (bottom) 0.25
+      const corner = (ly: number) => ({ z: glslEval(zExpr, { local: { x: 0, y: ly }, aSize, aUv }), v: glslEval(vExpr, { local: { x: 0, y: ly }, aSize, aUv }) });
+      const [a, c] = [corner(0), corner(1)];
+      const far = a.z < c.z ? a : c, near = a.z < c.z ? c : a;
+      expect(far.v).toBeCloseTo(aUv.y, 6);   // the sprite's top row
+      expect(near.v).toBeCloseTo(aUv.w, 6);  // its bottom row nearest the camera
+      expect(near.z - far.z).toBeCloseTo(aSize.y, 6);
+    }
+  });
   it('re-uploads only the instance attributes that changed', () => {
     const b = new Billboards({ target: { texture: new THREE.Texture() } });
     const g = b.mesh.geometry as THREE.InstancedBufferGeometry;

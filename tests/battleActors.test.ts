@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, isBattler, BattleActors } from '../src/render/battle/battleActors';
+import {
+  battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, battlerAlphaKey, isBattler, BattleActors,
+} from '../src/render/battle/battleActors';
 import { STAGE, REF_PITCH } from '../src/render/battle/stage';
 import { blankSprite } from '../src/render/previewActors';
 import { SYM } from '../src/game/symbols';
 import { GameState, type SpriteSnap } from '../src/game/state';
 import { Bus } from '../src/gba/bus';
+import { previewBattleSprites } from '../src/render/battlePreview';
 
 const slot = { u0: 0, v0: 0.125, u1: 0.0625, v1: 0 };
 const battler = (index: number, screenX: number, screenY: number) => blankSprite({ index, template: SYM.gMultiuseSpriteTemplate,
@@ -40,6 +43,25 @@ describe('battleDecalSpec (the enemy shadow on the platform)', () => {
     expect(d.footZ).toBeCloseTo(bottom.z, 6);
     expect(d.footZ - d.height).toBeCloseTo(top.z, 6);
     expect(d.height).toBeGreaterThan(0);
+  });
+  it('keeps the sprite\'s uv as it is: the flat card puts its top row (v0) on the far edge (Billboards)', () => {
+    expect(battleDecalSpec(shadow, slot, STAGE).slot).toEqual(slot);
+  });
+  it('lays both enemy shadows of a double battle flat, each under its own floating opponent', () => {
+    const s = previewBattleSprites([0, 1, 2, 3].map((position) => ({ pic: { tiles: new Uint8Array(2048), palette: new Uint16Array(16),
+      yOffset: 0, elevation: position & 1 ? 4 : 0 }, position })), true);
+    const atlas = { slots: new Map(s.map((x) => [x.index, slot])), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    a.update(s, 'modern', new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), []);
+    expect(a.counts()).toEqual({ cards: 0, inflated: 4, decals: 2 });
+    const [d1, d3] = s.slice(4).map((x) => battleDecalSpec(x, slot, STAGE));
+    // under opponents 1 (right, screen x 200) and 3 (left, 152), on the platform top
+    for (const [d, shadowSprite] of [[d1, s[4]], [d3, s[5]]] as const) {
+      expect(d.footY).toBe(0);
+      expect(d.footX).toBeCloseTo(STAGE.groundHit(shadowSprite.screenX + 16, shadowSprite.screenY + 4).x, 6);
+    }
+    expect(d1.footX).toBeGreaterThan(d3.footX);
+    expect(d1.footZ).not.toBeCloseTo(d3.footZ, 3);
   });
 });
 
@@ -100,6 +122,26 @@ describe('battler copies on BG layers (a move\'s monbg)', () => {
     const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
     a.update([battler(0, 40, 53), b], 'modern', new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), [], [4]);
     expect(a.counts()).toEqual({ cards: 0, inflated: 1, decals: 0 });
+  });
+});
+
+describe('battlerAlphaKey (when the battlers\' field must be recomputed)', () => {
+  it('changes with the tiles the atlas bakes a battler from, its size, tile number and flips, never with its palette', () => {
+    const vram = new Uint8Array(0x18000);
+    const b = { ...battler(0, 40, 53), tileNum: 64 };
+    const k = battlerAlphaKey(b, vram, false);
+    expect(battlerAlphaKey({ ...b, palette: 3, screenX: 90, y2: 6 }, vram, false)).toBe(k);   // colour, position: the same
+    vram[0x10000 + 64 * 32 + 5] = 0x10;                                                          // a pixel of its first tile
+    const k2 = battlerAlphaKey(b, vram, false);
+    expect(k2).not.toBe(k);
+    vram[0x10000 + 200 * 32] = 0x11;                                                             // another sprite's tile
+    expect(battlerAlphaKey(b, vram, false)).toBe(k2);
+    vram[0x10000 + (64 + 63) * 32 + 31] = 0x01;                                                  // its last tile (64 tiles, 4bpp)
+    expect(battlerAlphaKey(b, vram, false)).not.toBe(k2);
+    for (const other of [{ ...b, tileNum: 0 }, { ...b, hflip: true }, { ...b, width: 32 }, { ...b, bpp8: true }]) {
+      expect(battlerAlphaKey(other, vram, false)).not.toBe(battlerAlphaKey(b, vram, false));
+    }
+    expect(battlerAlphaKey(b, vram, true)).not.toBe(battlerAlphaKey(b, vram, false));           // 2D tile mapping
   });
 });
 
