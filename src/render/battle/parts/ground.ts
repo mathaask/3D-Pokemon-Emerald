@@ -15,7 +15,7 @@ import { CLOUD_GLSL } from '../clouds.glsl';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint, type Stage } from '../stage';
+import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, type Stage } from '../stage';
 
 export const GROUND_GRID = 72;   // cells (1 unit each) around stage.centre
 export const POND = { dz: -1, rx: 15, rz: 10 }, CAVE_POND = { dz: -1, rx: 18, rz: 12 };
@@ -26,20 +26,27 @@ const SEABED_Y = -1.2, BASIN_Y = -0.9;
 const BASIN_SHORE = 2;
 /** Flat within FLAT_R of the stage centre; outdoors the field rolls in fully by ROLL_R. */
 const FLAT_R = 9, ROLL_R = 22;
-/** The platforms' cells (× footprint). */
-const TOP_E = 1.1;
 /** The worn ring round the platforms (outdoor kinds; elliptical radius × footprint): worn from `inner` (a soft edge
  *  under the platform's rim) out to a noise-frayed edge between `outer`'s two radii. Painted in the ground's shader
  *  (analytic: the terrain's warped cell borders broke a cell-painted ring into lobed patches). */
 export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
 /** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
- *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. */
-const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+ *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. The platform
+ *  bodies follow it (groundNightScale), so a slab's top and sides stay one stone. */
+export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+
+/** GROUND_NIGHT as a colour factor (linear, into `out`): a surface coloured `c` × k turns as the ground's shader turns
+ *  warm earth at night — by the same warmth test, towards the same neutral (as nightSoilScale does NIGHT_SOIL). */
+export function groundNightScale(c: RGB, night: number, out: RGB = [1, 1, 1]): RGB {
+  const smooth = (x: number) => THREE.MathUtils.smoothstep(x, 0, 0.08);
+  const warm = smooth(c[0] - c[2]) * (1 - smooth(c[1] - c[0]));
+  const l = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix * warm;
+  for (let i = 0; i < 3; i++) out[i] = c[i] > 0 ? (c[i] + (l - c[i]) * t) / c[i] : 1;
+  return out;
+}
 /** The battle ground's border warp reaches this far from the stage centre (cells; faded out over its last 4): beyond,
  *  the field is one material — nothing to bend (WARP_GLSL). */
 const WARP_R = 30;
-/** The kinds whose platforms float on water (a lily pad, ripple rings: no top to paint, the ground lies under water). */
-const FLOATING: ReadonlySet<ArenaKind> = new Set(['water', 'kyogre', 'pond', 'cavePond']);
 /** The pond bed's muddy sand (its cells' tint: Sand). */
 const POND_BED: RGB = [0.6, 0.56, 0.42];
 
@@ -47,32 +54,24 @@ const POND_BED: RGB = [0.6, 0.56, 0.42];
 const DISC_R = 64, DISC_SEGMENTS = 96, DISC_RINGS = 48, DISC_POW = 1.35;
 
 const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
-/** Elliptical radius of (dx, dz) in units of a footprint. */
-const ell = (dx: number, dz: number, f: Footprint) => Math.hypot(dx / f.rx, dz / f.rz);
 
-/** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): platform footprints × 1.1 → platformMat /
- *  platformTop; else groundMat / ground; tints ±6 % by noise2. Pond kinds: the pond ellipse → Sand (its bed). (The worn
- *  ring is the shader's: wornRingE / WORN_RING. The grid is in the terrain shader's cell space, (x, z − y): the platforms
- *  lie at y ≈ 0 where it is the world's (x, z), the field at GROUND_Y.) */
+/** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
+ *  noise2; pond kinds: the pond ellipse → Sand (its bed). The field runs on under the platforms (their tops paint
+ *  themselves: platforms.ts, uniformCells — platform cells here reached out past the slabs' plinths and, shifted 0.28
+ *  towards −z in cell space, past the sand mounds' far side, where the worn ring's tint turned them near white); the worn
+ *  ring is the shader's (WORN_RING). (The grid is in the terrain shader's cell space, (x, z − y): the field at GROUND_Y.) */
 export function groundCells(kind: ArenaKind, p: ArenaPalette, stage: Stage): { data: Uint8Array; w: number; h: number; min: [number, number] } {
   const w = GROUND_GRID, h = GROUND_GRID;
   const min: [number, number] = [Math.floor(stage.centre.x) - w / 2, Math.floor(stage.centre.z) - h / 2];
   const data = new Uint8Array(w * h * 4);
-  const tops = !FLOATING.has(kind);
   const pond = kind === 'pond' ? POND : kind === 'cavePond' ? CAVE_POND : null;
-  const plats: [THREE.Vector3, Footprint][] = [[stage.player, PLATFORM_FOOTPRINT.player], [stage.enemy, PLATFORM_FOOTPRINT.enemy]];
   const bed = mix(POND_BED, p.ground, 0.25);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       // the cell's centre in cell space; on ground at GROUND_Y the world's z is that + GROUND_Y
       const x = min[0] + i + 0.5, z = min[1] + j + 0.5, zg = z + GROUND_Y;
       let mat = p.groundMat, tint = p.ground;
-      let top = Infinity;
-      for (const [c, f] of plats) top = Math.min(top, ell(x - c.x, z - c.z, f));
-      if (tops && top <= TOP_E) {
-        mat = p.platformMat;
-        tint = p.platformTop;
-      } else if (pond && Math.hypot((x - stage.centre.x) / pond.rx, (zg - stage.centre.z - pond.dz) / pond.rz) <= 1) {
+      if (pond && Math.hypot((x - stage.centre.x) / pond.rx, (zg - stage.centre.z - pond.dz) / pond.rz) <= 1) {
         mat = GroundMat.Sand;
         tint = bed;
       }
@@ -168,10 +167,10 @@ if (uRing > 0.0) {
   vec2 rp = vKitWorld.xz;
   float re = min(length((rp - ARENA_PLATFORMS[0].xy) / ARENA_PLATFORMS[0].zw), length((rp - ARENA_PLATFORMS[1].xy) / ARENA_PLATFORMS[1].zw));
   if (re < ${WORN_RING.outer[1].toFixed(2)}) {
-    float fray = kitNoise2(rp * 1.3);
+    float fray = kitNoise2(rp * 1.3), wear = kitNoise2(rp * 2.6 + 11.0);
     float outer = mix(${WORN_RING.outer[0].toFixed(2)}, ${WORN_RING.outer[1].toFixed(2)}, fray);
     float worn = smoothstep(${(WORN_RING.inner - 0.04).toFixed(2)}, ${(WORN_RING.inner + 0.08).toFixed(2)}, re) * (1.0 - smoothstep(outer - 0.16, outer, re))
-      * (0.7 + 0.3 * kitNoise2(rp * 2.6 + 11.0)) * uRing * (1.0 - ${GROUND_NIGHT.ringFade.toFixed(2)} * uNight);
+      * (0.7 + 0.3 * wear) * uRing * (1.0 - ${GROUND_NIGHT.ringFade.toFixed(2)} * uNight);
     diffuseColor.rgb *= mix(vec3(1.0), uRingTint, worn);
   }
 }
@@ -226,13 +225,6 @@ export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size
     vertWorld: GROUND_VERT_WORLD,
     hookKey: 'arenaGround',
   };
-}
-
-/** The elliptical radius (× footprint) of world (x, z) from the nearer platform: what the ground's shader measures the worn
- *  ring by (WORN_RING). */
-export function wornRingE(x: number, z: number, stage: Stage): number {
-  return Math.min(ell(x - stage.player.x, z - stage.player.z, PLATFORM_FOOTPRINT.player),
-    ell(x - stage.enemy.x, z - stage.enemy.z, PLATFORM_FOOTPRINT.enemy));
 }
 
 /** The disc's geometry: DISC_RINGS rings of DISC_SEGMENTS vertices around (cx, cz) plus the centre, at groundHeight;
