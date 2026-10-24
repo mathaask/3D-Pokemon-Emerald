@@ -1,6 +1,6 @@
 // The arena ground: one polar disc around the stage, shaded by the kit's terrain material (the overworld's painterly
-// grass, path, sand, paving, gravel, rock and deck, kit/terrain.ts) over a grid of synthetic cells — the field, the
-// ground under the platforms, the pond's bed (the platform tops draw with this very material: parts/platforms.ts) —
+// grass, path, sand, paving, gravel, rock and deck, kit/terrain.ts) over a grid of synthetic cells — the field and the
+// pond's bed (the platform tops draw with this very material over cells of their own: parts/platforms.ts) —
 // plus a worn ring round the platforms (outdoor kinds, painted analytically), soft cloud shadows drifting over outdoor
 // ground and caustics on the sea floor. Flat around the stage, rolling beyond it outdoors, a basin under the pond kinds'
 // water, a seabed under open water.
@@ -31,19 +31,10 @@ const FLAT_R = 9, ROLL_R = 22;
  *  (analytic: the terrain's warped cell borders broke a cell-painted ring into lobed patches). */
 export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
 /** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
- *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. The platform
- *  bodies follow it (groundNightScale), so a slab's top and sides stay one stone. */
-export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+ *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. (The platform
+ *  bodies keep NIGHT_SOIL: with these, their earth went near-black.) */
+const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
 
-/** GROUND_NIGHT as a colour factor (linear, into `out`): a surface coloured `c` × k turns as the ground's shader turns
- *  warm earth at night — by the same warmth test, towards the same neutral (as nightSoilScale does NIGHT_SOIL). */
-export function groundNightScale(c: RGB, night: number, out: RGB = [1, 1, 1]): RGB {
-  const smooth = (x: number) => THREE.MathUtils.smoothstep(x, 0, 0.08);
-  const warm = smooth(c[0] - c[2]) * (1 - smooth(c[1] - c[0]));
-  const l = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix * warm;
-  for (let i = 0; i < 3; i++) out[i] = c[i] > 0 ? (c[i] + (l - c[i]) * t) / c[i] : 1;
-  return out;
-}
 /** The battle ground's border warp reaches this far from the stage centre (cells; faded out over its last 4): beyond,
  *  the field is one material — nothing to bend (WARP_GLSL). */
 const WARP_R = 30;
@@ -128,7 +119,7 @@ const vec2 ARENA_CELL_CENTRE = vec2(${stage.centre.x.toFixed(4)}, ${(stage.centr
 `;
 
 /** The battle ground's border warp (terrainFragColor's): the terrain's, cheaper — only within WARP_R of the stage (the
- *  pond's bed, the ground under the platforms; faded out over its last 4 cells), and only the broad warp's two coarse
+ *  pond's bed; faded out over its last 4 cells), and only the broad warp's two coarse
  *  octaves (renormalised); none on a one-cell grid (the platform tops'). */
 const WARP_GLSL = /* glsl */ `  // the battle ground's warp (parts/ground.ts WARP_GLSL)
   vec2 warp = vec2(0.0);

@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { noise2, rng, QuadWriter, type V3 } from '../../kit/geom';
 import { applyKitMaterial, kitMaterial, type KitMaterialOptions } from '../../kit/materials';
-import { mix, scale, toLinear, type RGB } from '../../kit/palette';
+import { mix, nightSoilScale, scale, toLinear, type RGB } from '../../kit/palette';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { BLADES, GRASS_MATERIAL, clump } from '../../kit/grass';
@@ -17,7 +17,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint } from '../stage';
-import { arenaGround, arenaGroundMaterial, uniformCells, groundNightScale, GROUND_RENDER_ORDER } from './ground';
+import { arenaGround, arenaGroundMaterial, uniformCells, GROUND_RENDER_ORDER } from './ground';
 
 export type PlatformStyle = 'earthGrass' | 'sandMound' | 'stoneSlab' | 'lilyPad' | 'rippleRing' | 'caveRock' | 'seabedRock';
 
@@ -119,7 +119,7 @@ function earthGrass(f: Footprint, seed: number, p: ArenaPalette, kind: ArenaKind
   const top = polarTop(f, E.rings, E.segments, (k) => k / E.rings, (_x, _z, e) => E.dome * (1 - e * e));
   const soil = toLinear(p.platformSide);
   // the profile: a quarter round from the top's edge out and down by `rim`, then the soil band to the bottom; all soil
-  // (soil × k: moonlit exactly by its material colour, groundNightScale) — the grass skirt covers the shoulder
+  // (soil × k: moonlit exactly by its material colour, nightSoilScale) — the grass skirt covers the shoulder
   const RIM_ROWS = 4, BAND_ROWS = 4;
   const rows = RIM_ROWS + BAND_ROWS - 1;
   const body = band(rows, E.segments, (k, a) => {
@@ -398,13 +398,12 @@ export const PLATFORM_PART: ArenaPart = {
       mesh.name = 'platformBodies';
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      // soil and stone (their colours: the side's × k) moonlit at night as the ground's warm earth (groundNightScale: the
-      // tops and the worn ring beside them turn alike), through the material's colour from uNight — no program of their
-      // own; lily pads stay leaf green
+      // soil and stone (their colours: the side's × k) moonlit at night as the kit's berry soil (NIGHT_SOIL, through the
+      // material's colour from uNight: no program of their own; never near-black); lily pads stay leaf green
       if (style !== 'lilyPad') {
         const side = toLinear(ctx.palette.platformSide), night = ctx.uniforms.uNight, k: RGB = [1, 1, 1], material = km.material;
         mesh.onBeforeRender = () => {
-          groundNightScale(side, night.value, k);
+          nightSoilScale(side, night.value, k);
           material.color.setRGB(k[0], k[1], k[2]);
         };
       }
