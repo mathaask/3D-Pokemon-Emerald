@@ -9,6 +9,8 @@ import { readBattleBackground, installBattleBackground, readMonPic, battlerScree
 import { Gba } from '../../src/gba/gba';
 import { GameState } from '../../src/game/state';
 import { encodePng, upscale } from '../../tools/lib/png';
+import { arenaPalette } from '../../src/render/battle/palette';
+import { GroundMat } from '../../src/render/kit/terrain';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const hex = (c: number[]) => c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
@@ -49,6 +51,30 @@ describe('battle graphics from the ROM', () => {
     for (const k of ['water', 'pond', 'kyogre'] as const) expect(blue(colors.get(k)!.platform), k).toBe(true);
     expect(green(colors.get('pond')!.rim)).toBe(true);                                        // lily pads
     expect(colors.get('magma')!.platform[0]).toBeGreaterThan(colors.get('magma')!.platform[2] + 0.4); // orange
+  });
+  it('derives an in-gamut arena palette from every background, in the colours each kind is known for', () => {
+    const lines: string[] = [];
+    for (const kind of ARENA_KINDS) {
+      const p = arenaPalette(kind, colors.get(kind)!);
+      for (const [name, v] of Object.entries(p)) {
+        if (!Array.isArray(v)) continue;
+        for (const x of v) { expect(x, `${kind} ${name}`).toBeGreaterThanOrEqual(0); expect(x, `${kind} ${name}`).toBeLessThanOrEqual(1); }
+      }
+      lines.push(`${kind.padEnd(10)} ground ${hex(p.ground)} path ${hex(p.path)} top ${hex(p.platformTop)} side ${hex(p.platformSide)} ` +
+        `skirt ${hex(p.skirt)} leaf ${hex(p.leaf)} blade ${hex(p.blade)} water ${hex(p.water)} wall ${hex(p.wall)}`);
+    }
+    fs.writeFileSync(path.join(root, 'out/battle-palettes.txt'), lines.join('\n') + '\n');
+    const green = (c: number[]) => c[1] > c[0] && c[1] > c[2];
+    for (const k of ['grass', 'longGrass', 'plain'] as const) {
+      const p = arenaPalette(k, colors.get(k)!);
+      expect(p.groundMat).toBe(GroundMat.Grass);
+      expect(green(p.ground) && green(p.platformTop), k).toBe(true);
+    }
+    expect(green(arenaPalette('pond', colors.get('pond')!).platformTop)).toBe(true);                      // lily pads
+    const magma = arenaPalette('magma', colors.get('magma')!).platformTop;
+    expect(magma[0]).toBeGreaterThan(magma[2] + 0.4);                                                   // Magma orange
+    const water = arenaPalette('water', colors.get('water')!).water;
+    expect(water[2]).toBeGreaterThan(water[0] + 0.2);                                                   // blue water
   });
   it('places battlers where the game does', () => {
     expect(battlerScreenPos(readMonPic(rom, 280, 'back'), 0, false)).toEqual({ x: 40, y: 53 });   // Torchic (battle1.state)

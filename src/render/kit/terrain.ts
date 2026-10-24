@@ -235,16 +235,22 @@ const FRAG_COLOR = /* glsl */ `
   // Banks (45° S slopes, vertical E faces: |n.y| <= 0.71) are all soil; tops (n.y = 1) none.
   vec3 nW = inverseTransformDirection(vNormal, viewMatrix);
   float steep = 1.0 - smoothstep(0.75, 0.95, abs(nW.y));
-  // A bank's soil is that of the cell owning it, the higher side: bank normals point at the lower
-  // cell, so step half a cell against them (unwarped, so it holds steady along the bank).
-  vec2 own = cell - nW.xz / max(length(nW.xz), 1e-4) * 0.5;
-  vec4 od = texelFetch(tCells, clamp(ivec2(floor(own - uGridMin)), ivec2(0), ivec2(uGridSize) - 1), 0);
-  int omat = int(od.a * 255.0 + 0.5) >> 4;
-  vec3 otint = kitSrgbToLinear(od.rgb);
-  // Earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
-  vec3 earth = (omat == 3 || omat == 6 || omat == 7) ? otint * 0.68 : mix(otint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
-  vec3 soil = earth * (0.85 + 0.3 * kitFbm2(vec2(vKitWorld.x + vKitWorld.z, vKitWorld.y) * 3.0));
-  diffuseColor.rgb *= mix(col, soil, steep);
+  // (the soil only where there is a bank: elsewhere steep is 0 and mix(col, soil, 0.0) is col — the same pixels, without
+  // the soil's cell fetch and fbm on every flat fragment)
+  vec3 ground = col;
+  if (steep > 0.0) {
+    // A bank's soil is that of the cell owning it, the higher side: bank normals point at the lower
+    // cell, so step half a cell against them (unwarped, so it holds steady along the bank).
+    vec2 own = cell - nW.xz / max(length(nW.xz), 1e-4) * 0.5;
+    vec4 od = texelFetch(tCells, clamp(ivec2(floor(own - uGridMin)), ivec2(0), ivec2(uGridSize) - 1), 0);
+    int omat = int(od.a * 255.0 + 0.5) >> 4;
+    vec3 otint = kitSrgbToLinear(od.rgb);
+    // Earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
+    vec3 earth = (omat == 3 || omat == 6 || omat == 7) ? otint * 0.68 : mix(otint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
+    vec3 soil = earth * (0.85 + 0.3 * kitFbm2(vec2(vKitWorld.x + vKitWorld.z, vKitWorld.y) * 3.0));
+    ground = mix(col, soil, steep);
+  }
+  diffuseColor.rgb *= ground;
 }
 `;
 

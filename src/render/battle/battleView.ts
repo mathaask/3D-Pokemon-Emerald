@@ -1,9 +1,11 @@
 // 3D battle scene. Battle sprites are placed by "un-projecting" their GBA screen positions through the battle stage's
 // reference projection (stage.ts) onto depth planes (player side, enemy side, or interpolated for move effects:
 // battleActors.ts); in Modern the battlers are inflated on the battle's own inflation field (field: BATTLE_INFLATE, D4).
-// The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the Modern style, else
-// today's arena (arena.ts: the Retro look and the fallback), generated and themed from the game's own terrain background
-// colours. Every program the scene draws compiles at boot (precompile: the battle catalogue, the actors, the field).
+// The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the Modern style — built
+// in the colours sampled off the GBA's battle background (ArenaColorLock) and lit by the kind's look (look.ts: outdoor
+// arenas by the overworld's time of day) — else today's arena (arena.ts: the Retro look and the fallback), generated and
+// themed from the game's own terrain background colours, under today's light. Every program the scene draws compiles at
+// boot (precompile: the battle catalogue, the actors, the field).
 
 import * as THREE from 'three';
 import type { GameState, SpriteSnap } from '../../game/state';
@@ -11,6 +13,7 @@ import { SYM } from '../../game/symbols';
 import type { SpriteAtlas } from '../spriteAtlas';
 import { Sky } from '../overworld/sky';
 import type { WorldStyle } from '../overworld/world';
+import { shadowSettings } from '../overworld/overworldView';
 import type { Quality } from '../post';
 import { bgr555ToRgba } from '../gbaTextures';
 import { createKitUniforms, type KitUniforms } from '../kit/materials';
@@ -19,13 +22,16 @@ import type { SpriteFilter } from '../actors/actorLayer';
 import { SpriteField } from '../actors/spriteField';
 import { BATTLE_INFLATE } from '../actors/inflateMath';
 import { XbrBake } from '../actors/xbrBake';
+import type { RGB } from '../kit/palette';
 import { BattleArena } from './arena';
-import { arenaKind, type ArenaInputs, type ArenaKind } from './arenaKind';
-import { defaultArenaColors, type ArenaColors } from './bgSample';
+import { arenaKind, ARENA_SETTING, type ArenaInputs, type ArenaKind } from './arenaKind';
+import { decodeBg3, sampleArenaColors, BG_W, BG_H, type ArenaColors } from './bgSample';
 import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
 import { BattleActors, battleRoute, battlerAlphaKey, battlerPaletteKey } from './battleActors';
-import { ARENA_PARTS, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
+import { ARENA_PARTS, ArenaColorLock, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
+import { arenaLook, type ArenaLook } from './look';
+import { arenaPalette } from './palette';
 
 export { isBattleHudSprite } from './battleActors';
 
@@ -42,6 +48,24 @@ interface PrecompileState { catalogue: BattleCatalogue | null; compiled: Promise
 
 /** The terrain background's colours today's arena takes (sampleTerrain) and their key. */
 interface SampledColors { sky: THREE.Color; platform: THREE.Color; rim: THREE.Color; key: string }
+
+/** Today's hemisphere colours and fog range (the constructor's): today's arena's light, restored after a Modern frame. */
+const HEMI_SKY = new THREE.Color(0xcfe8ff), HEMI_GROUND = new THREE.Color(0x55603a);
+const FOG_NEAR = 40, FOG_FAR = 120;
+/** How often the background is sampled (s): BG3 is loaded a little after the battle starts. */
+const SAMPLE_EVERY = 0.5;
+/** The arena settings under an open sky (the sky dome draws clouds and stars). */
+const OPEN_SKY: ReadonlySet<string> = new Set(['outdoor', 'water', 'sky']);
+
+/** Luminance (Rec. 709, linear) of the light today's battle gives its cards (the Retro charLight) for its hemisphere and
+ *  sun strengths: by day, at night, in a room (and a cave: today's lights them alike). */
+const todayLight = (hemiI: number, sunI: number) =>
+  (0.2126 * (hemiI + sunI * 0.75) + 0.7152 * (hemiI + sunI * 0.72) + 0.0722 * (hemiI + sunI * 0.68)) / Math.PI;
+const TODAY_LIGHT = { day: todayLight(1.15, 2.4), night: todayLight(0.7, 0.6), room: todayLight(1.6, 1.6) };
+/** The sky dome's render order: today's (first), and after the Modern arena's opaque parts (its ground: 3). */
+const SKY_RENDER_ORDER = -10, SKY_AFTER_ARENA = 10;
+/** The Modern battlers' exposure range (BattleView.applyLook). */
+const EXPOSURE = { min: 0.5, max: 3 };
 
 export class BattleView {
   readonly scene = new THREE.Scene();
@@ -68,17 +92,25 @@ export class BattleView {
   private intro = 0;
   private focus = 0;
   private focusSide = 1;
-  /** The battle's own kit uniforms: the Modern arena's materials pool here; uSky follows today's battle sky colour
-   *  (copied each frame) until Task 6 drives it from the arena's look (Task 5's battler rim reads it). */
+  /** The battle's own kit uniforms: the Modern arena's materials pool here; uSky (the battlers' rim, the arena water's
+   *  sky) and uNight follow the Modern arena's look, today's battle sky colour under today's arena; uTime the view's
+   *  clock. */
   readonly uniforms: KitUniforms = createKitUniforms();
   private modern: ModernArena;
+  /** The Modern arena's colours (defaults until the background is sampled, then that sample for the battle). */
+  private lock = new ArenaColorLock();
+  /** When the background was last sampled for the Modern arena (the view's clock), and the decode's buffer. */
+  private lastModernSample = -Infinity;
+  private bg3 = new Uint16Array(BG_W * BG_H);
+  /** Whether this frame draws the Modern arena (its look lights the scene), and the look (reused). */
+  private modernShown = false;
+  private look: ArenaLook = arenaLook('plain', arenaPalette('plain', null), 12);
   private style: WorldStyle = 'modern';
   private failPart: string | null = null;
-  /** The arena kind's inputs as last seen (updated in place), the kind, its default colours and whether the Modern arena
-   *  covers it: recomputed only when an input changes (no allocation per frame). */
+  /** The arena kind's inputs as last seen (updated in place), the kind and whether the Modern arena covers it: recomputed
+   *  only when an input changes (no allocation per frame). */
   private kindInputs: ArenaInputs = { environment: -1, battleType: -1, trainerClass: -1, mapBattleScene: -1, mapType: -1 };
   private kind: ArenaKind = 'plain';
-  private kindColors: ArenaColors = defaultArenaColors('plain');
   private covered = false;
   /** Arena build quality (the renderer's). */
   quality: Quality = 'medium';
@@ -382,8 +414,8 @@ export class BattleView {
     this.sampled = { sky, platform, rim, key: [sky, platform, rim].map((c) => c.getHexString()).join(':') };
   }
 
-  /** The arena kind (as the GBA picks its background), its default colours and whether the Modern arena covers it,
-   *  recomputed only when one of the kind's inputs changed. */
+  /** The arena kind (as the GBA picks its background) and whether the Modern arena covers it, recomputed only when one of
+   *  the kind's inputs changed (a new kind samples its background at once: the colour lock starts over). */
   private updateKind(state: BattleViewState): void {
     const i = this.kindInputs;
     if (i.environment === state.battleEnvironment && i.battleType === state.battleType && i.trainerClass === state.trainerClass
@@ -394,14 +426,27 @@ export class BattleView {
     i.mapBattleScene = state.mapBattleScene;
     i.mapType = state.mapType;
     this.kind = arenaKind(i);
-    this.kindColors = defaultArenaColors(this.kind);
     this.covered = this.modern.covers(this.kind);
+    this.lastModernSample = -Infinity;
+  }
+
+  /** The Modern arena's colours (ArenaColorLock): until the lock holds a sample of this kind's background, every
+   *  SAMPLE_EVERY s the GBA's BG3 as it shows it (decodeBg3 with the unfaded BG palette: hardware palette RAM is mid-fade
+   *  during the intro) sampled by sampleArenaColors (null while it is empty or not loaded yet); then nothing more. */
+  private modernColors(state: BattleViewState): ArenaColors {
+    if (this.lock.locked(this.kind) || this.time - this.lastModernSample < SAMPLE_EVERY) return this.lock.observe(this.kind, null);
+    this.lastModernSample = this.time;
+    const bus = state.mem.bus;
+    const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
+    const img = decodeBg3(bus.vram, bus.ewram16.subarray(palOff, palOff + 256), bus.io16[0x0e >>> 1], this.bg3);
+    return this.lock.observe(this.kind, sampleArenaColors(img));
   }
 
   /**
-   * The arena of this frame: the Modern arena when the style is Modern, it covers the arena kind and its build succeeded;
-   * else today's arena, built lazily — only while shown — with exactly today's calls at today's frames (setEnvironment on
-   * an environment change, setColors when a background sample changes the colours). An environment change restarts the
+   * The arena of this frame: the Modern arena when the style is Modern, it covers the arena kind and its build succeeded
+   * (in the lock's colours: the kind's defaults until its background is sampled, at most two builds a battle); else
+   * today's arena, built lazily — only while shown — with exactly today's calls at today's frames (setEnvironment on an
+   * environment change, setColors when a background sample changes the colours). An environment change restarts the
    * intro sweep in both styles.
    */
   private updateArena(state: BattleViewState): void {
@@ -411,7 +456,8 @@ export class BattleView {
       this.sampled = null;
     }
     this.updateKind(state);
-    const modern = this.style === 'modern' && this.covered && this.modern.build(this.kind, this.kindColors, this.quality);
+    const modern = this.style === 'modern' && this.covered && this.modern.build(this.kind, this.modernColors(state), this.quality);
+    this.modernShown = modern;
     this.modern.group.visible = modern;
     this.arena.group.visible = !modern;
     if (!modern && this.legacyEnv !== this.env) {
@@ -463,31 +509,118 @@ export class BattleView {
     this.camera.updateProjectionMatrix();
     this.cameraRight.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-    // Light: time of day, like the overworld (battles indoors are evenly lit).
+    // Light: time of day, like the overworld (battles indoors are evenly lit). The sun's direction is the battle's own
+    // (both arenas); its colour and strength, the hemisphere and the fog are the Modern arena's look, else today's.
     const indoor = state.battleEnvironment === 8 || state.battleEnvironment === 7;
     const hour = state.hours + state.minutes / 60;
     const dayPhase = ((hour - 6) / 12) * Math.PI;
     const night = !indoor && (hour < 5.5 || hour > 19.5);
     this.sun.position.copy(mid).add(new THREE.Vector3(Math.cos(dayPhase) * 6 - 4, 14, 10));
     this.sun.target.position.copy(mid);
-    this.sun.intensity = indoor ? 1.6 : night ? 0.6 : 2.4;
-    this.sun.color.set(night ? 0x9fb3ff : 0xfff3e0);
-    this.hemi.intensity = indoor ? 1.6 : night ? 0.7 : 1.15;
-    const k = 1 / Math.PI;
-    this.charLight.setRGB(
-      (this.hemi.intensity + this.sun.intensity * 0.75) * k,
-      (this.hemi.intensity + this.sun.intensity * 0.72) * k,
-      (this.hemi.intensity + this.sun.intensity * 0.68) * k,
-    );
-    this.arena.update(this.time, night);
+    this.uniforms.uTime.value = this.time;
     const fog = this.scene.fog as THREE.Fog;
-    fog.color.copy(this.arena.horizon);
-    this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor, this.time);
+    if (this.modernShown) this.applyLook(hour);
+    else {
+      this.sun.intensity = indoor ? 1.6 : night ? 0.6 : 2.4;
+      this.sun.color.set(night ? 0x9fb3ff : 0xfff3e0);
+      this.hemi.intensity = indoor ? 1.6 : night ? 0.7 : 1.15;
+      this.hemi.color.copy(HEMI_SKY);
+      this.hemi.groundColor.copy(HEMI_GROUND);
+      const k = 1 / Math.PI;
+      this.charLight.setRGB(
+        (this.hemi.intensity + this.sun.intensity * 0.75) * k,
+        (this.hemi.intensity + this.sun.intensity * 0.72) * k,
+        (this.hemi.intensity + this.sun.intensity * 0.68) * k,
+      );
+      fog.near = FOG_NEAR;
+      fog.far = FOG_FAR;
+      this.actors.setExposure(1);
+    }
+    this.applyShadows(this.modernShown ? 'modern' : 'retro');
+    this.arena.update(this.time, night);
+    if (!this.modernShown) {
+      fog.color.copy(this.arena.horizon);
+      this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor, this.time);
+      this.uniforms.uSky.value.copy(this.arena.skyColor);
+    }
     this.sky.mesh.position.copy(this.camera.position);
-    this.uniforms.uSky.value.copy(this.arena.skyColor);
+    // (Modern: today's sky dome draws after the opaque arena — at the far plane, depth-tested, its hidden pixels cost
+    // nothing; the battle camera never frames the horizon, D1. Today's arena: first, as today)
+    this.sky.mesh.renderOrder = this.modernShown ? SKY_AFTER_ARENA : SKY_RENDER_ORDER;
 
     this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites,
       state.battlerCopies);
+  }
+
+  /**
+   * The Modern arena's look at `hour` (look.ts, from the palette it was built with) on the scene's lights and fog, the sky
+   * dome, the kit's uSky (the battlers' rim, the arena water's sky: the sky × the hemisphere's strength × 0.6, as the
+   * overworld's) and uNight; the cards' and the battlers' light (charLight) by the overworld's formula, and the battle
+   * actors' exposure (today's battle brightness: BattleActors.setExposure).
+   */
+  private applyLook(hour: number): void {
+    const palette = this.modern.palette;
+    if (!palette) return;
+    const L = arenaLook(this.kind, palette, hour, this.look);
+    this.sun.color.copy(L.sunColor);
+    this.sun.intensity = L.sunI;
+    this.hemi.color.copy(L.sky);
+    this.hemi.groundColor.copy(L.hemiGround);
+    this.hemi.intensity = L.hemiI;
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.copy(L.fog);
+    fog.near = L.fogNear;
+    fog.far = L.fogFar;
+    this.uniforms.uSky.value.copy(L.sky).multiplyScalar(L.hemiI * 0.6);
+    this.uniforms.uNight.value = L.night;
+    // (characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / π — OverworldView's)
+    const k = 1 / Math.PI;
+    this.charLight.setRGB(
+      (L.sky.r * L.hemiI + L.sunColor.r * L.sunI * 0.75) * k,
+      (L.sky.g * L.hemiI + L.sunColor.g * L.sunI * 0.75) * k,
+      (L.sky.b * L.hemiI + L.sunColor.b * L.sunI * 0.75) * k,
+    );
+    const setting = ARENA_SETTING[this.kind];
+    // The battlers keep today's battle brightness — as the GBA draws its sprites at full brightness whatever the
+    // background — while the arena takes the hour's light (or a cave's, the sea floor's): their exposure is today's
+    // light for the kind (by day easing to today's night along the overworld's night ramp, so no jump at today's 19:30
+    // switch; rooms and caves today's evenly lit rooms') over this light. Their hue and shading stay the look's.
+    const today = setting === 'indoor' || setting === 'cave' ? TODAY_LIGHT.room
+      : TODAY_LIGHT.day + (TODAY_LIGHT.night - TODAY_LIGHT.day) * L.night;
+    const lum = 0.2126 * this.charLight.r + 0.7152 * this.charLight.g + 0.0722 * this.charLight.b;
+    this.actors.setExposure(THREE.MathUtils.clamp(today / Math.max(lum, 1e-4), EXPOSURE.min, EXPOSURE.max));
+    this.sky.setColors(L.sky, L.fog, !OPEN_SKY.has(setting), this.time);
+  }
+
+  /** The sun's shadow map and softness: Modern's by quality (OverworldView's shadowSettings), today's under today's
+   *  arena (2048, radius 1: the constructor's). A size change frees the map (three makes the new one). */
+  private applyShadows(style: WorldStyle): void {
+    const { size, radius } = shadowSettings(this.quality, style);
+    const shadow = this.sun.shadow;
+    shadow.radius = radius;
+    if (shadow.mapSize.x === size) return;
+    shadow.mapSize.set(size, size);
+    shadow.map?.dispose();
+    shadow.map = null;
+  }
+
+  /**
+   * Rebuilds the Modern arena `runs` times, each with a fresh colour key (the lock's colours nudged; after one untimed
+   * rebuild, so warm), and returns each build's ms (ModernArena.lastBuildMs); then builds it back in the lock's colours.
+   * The preview's measureArenaBuild (the arena build gate: ≤ 60 ms warm, median).
+   */
+  measureArenaBuild(runs = 5): number[] {
+    const colors = this.lock.observe(this.kind, null);
+    const nudged = (i: number): ArenaColors => ({
+      ...colors, platform: colors.platform.map((v, j) => (j === 0 ? (v > 0.5 ? v - 0.002 * i : v + 0.002 * i) : v)) as RGB,
+    });
+    const ms: number[] = [];
+    for (let i = 0; i <= runs; i++) {
+      this.modern.build(this.kind, nudged(i + 1), this.quality);
+      if (i > 0) ms.push(this.modern.lastBuildMs);
+    }
+    this.modern.build(this.kind, colors, this.quality);
+    return ms;
   }
 
   resize(aspect: number): void {

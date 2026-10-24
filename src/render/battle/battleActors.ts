@@ -232,6 +232,9 @@ export class BattleActors {
   private actors: BillboardSpec[] = [];
   /** Decals among `cards` (last update). */
   private decals = 0;
+  /** The battle actors' exposure (setExposure) and the cards' light it makes. */
+  private exposure = 1;
+  private cardLight = new THREE.Color();
 
   constructor(private readonly atlas: ActorAtlas, private readonly opts: BattleActorsOptions = {}) {
     this.billboards = new Billboards(atlas);
@@ -258,8 +261,20 @@ export class BattleActors {
     // pushed away, SHADOW_PUSH; the arena's props stand far off) — 0 px on every battle entry without it (Task 5 fix round
     // 1), and three skips the shadow-map lookups (a uniform: the same program) on these large, magnified fragments
     inflated.mesh.receiveShadow = false;
+    (inflated.mesh.material as THREE.MeshStandardMaterial).color.setScalar(this.exposure);
     this.group.add(inflated.mesh);
     skipOverridePasses(inflated.mesh);
+  }
+
+  /**
+   * The battle actors' exposure (default 1): the inflated battlers' colour (a uniform: their lit colour, rim included, ×
+   * k; their light floor stays the scene's charLight's) and the cards' light (× k). The Modern battle keeps its battlers
+   * as bright as today's while its arena takes the hour's, a cave's or the sea floor's light (BattleView); 1 elsewhere.
+   */
+  setExposure(k: number): void {
+    if (k === this.exposure) return;
+    this.exposure = k;
+    if (this.inflated) (this.inflated.mesh.material as THREE.MeshStandardMaterial).color.setScalar(k);
   }
 
   /** This frame's sprites, in sprite order (no allocation once warm); HUD sprites appended to `hud`. `eye`: the camera's
@@ -286,7 +301,7 @@ export class BattleActors {
       } else cards.push(battleCardSpec(s, slot, STAGE, spec));
     }
     this.decals = decals;
-    this.billboards.set(cards, cameraRight, charLight);
+    this.billboards.set(cards, cameraRight, this.exposure === 1 ? charLight : this.cardLight.copy(charLight).multiplyScalar(this.exposure));
     if (this.inflated) {
       // Retro (or inflation off): none, hidden
       this.inflated.set(actors, cameraRight, eye);

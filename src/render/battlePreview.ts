@@ -278,6 +278,15 @@ export class BattlePreviewApp {
     return timeGpuFrames(this.webgl.getContext() as WebGL2RenderingContext, n, () => this.frame(1 / 60));
   }
 
+  /** The Modern arena's warm build time (the arena build gate: median ≤ 60 ms): `runs` rebuilds, each with a fresh colour
+   *  key, after one untimed rebuild (BattleView.measureArenaBuild); the arena is built back afterwards. ms per run and
+   *  their median. */
+  measureArenaBuild(runs = 5): { ms: number[]; median: number } {
+    const ms = this.battle.measureArenaBuild(runs).map((v) => Math.round(v * 100) / 100);
+    const sorted = [...ms].sort((a, b) => a - b);
+    return { ms, median: sorted[Math.floor(sorted.length / 2)] };
+  }
+
   /** Render statistics of the last frame (all passes), the shader programs and the preview's setup time. */
   stats(): { calls: number; triangles: number; programs: number; buildMs: number } {
     const info = this.webgl.info;
