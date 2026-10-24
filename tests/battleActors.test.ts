@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, isBattler, BattleActors } from '../src/render/battle/battleActors';
 import { STAGE, REF_PITCH } from '../src/render/battle/stage';
@@ -143,6 +143,22 @@ describe('BattleActors', () => {
     const finite = (s: ReturnType<typeof battleCardSpec>) => [s.footX, s.footY, s.footZ, s.width, s.height, s.lift].every(Number.isFinite);
     expect(finite(battleCardSpec({ ...battler(0, 40, 53), scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
     expect(finite(battleDecalSpec({ ...shadow, scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);
+  });
+  it('falls back to instance attributes when the battle variant\'s uniform-array programs did not link (only then, once)', () => {
+    const atlas = { slots: new Map([[0, slot]]), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failed = (key: string) => [{ cacheKey: `x,${key}`, diagnostics: { runnable: false } }];
+    const meshes = () => a.group.children.filter((o) => o.name === 'battleInflated') as THREE.Mesh[];
+    expect(a.checkInstanceUniforms(failed('actor:inflated:1:uniforms'))).toBe(false);   // the overworld's: not ours
+    expect(a.checkInstanceUniforms(failed('actor:inflated-battle-depth:1:uniforms'))).toBe(true);
+    expect(meshes()).toHaveLength(1);
+    expect((meshes()[0].material as THREE.Material).customProgramCacheKey()).toBe('actor:inflated-battle:1:attributes');
+    expect(a.checkInstanceUniforms(failed('actor:inflated-battle:1:uniforms'))).toBe(false); // already on attributes
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    a.update([battler(0, 40, 53)], 'modern', new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 3, 11), new THREE.Color(1, 1, 1), []);
+    expect(a.counts().inflated).toBe(1);
   });
   it('without an inflation field (or with inflation off) a Modern battle draws cards only', () => {
     const atlas = { slots: new Map([0, 1, 2].map((i) => [i, slot])), target: { texture: new THREE.Texture() } };
