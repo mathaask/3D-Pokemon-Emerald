@@ -236,6 +236,10 @@ export class BattleActors {
     inflated.setMask(this.masked);
     inflated.mesh.name = 'battleInflated';
     inflated.mesh.visible = false;
+    // They cast their silhouette but receive no shadow: nothing in a battle shadows a battler (their own relief's is
+    // pushed away, SHADOW_PUSH; the arena's props stand far off) — 0 px on every battle entry without it (Task 5 fix round
+    // 1), and three skips the shadow-map lookups (a uniform: the same program) on these large, magnified fragments
+    inflated.mesh.receiveShadow = false;
     this.group.add(inflated.mesh);
     skipOverridePasses(inflated.mesh);
   }
