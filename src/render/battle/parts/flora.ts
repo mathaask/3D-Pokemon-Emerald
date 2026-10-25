@@ -6,7 +6,7 @@
 // materials, instanced in the arena palette's colours.
 
 import * as THREE from 'three';
-import { noise2, rng } from '../../kit/geom';
+import { hashCell, noise2, rng } from '../../kit/geom';
 import { applyKitMaterial, kitMaterial } from '../../kit/materials';
 import { mix, toLinear, type RGB } from '../../kit/palette';
 import { TREE_STYLES, TREE_VARIANTS, treeCrownDetail, treeGeometry, treeMaterial, type TreeStyle } from '../../kit/trees';
@@ -206,6 +206,11 @@ const PNC = { position: 3, normal: 3, color: 3 }, PNC4 = { position: 3, normal: 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0), _c = new THREE.Color();
 
+/** Trees this near the stage centre cast shadows: the sun's shadow camera (BattleView: ±14 units around the stage, seen
+ *  along the sun) covers the ground to ≈ 19 units behind it; a tree further out casts no shadow the battle shows (0 px
+ *  against every tree casting, grass / long grass / plain / pond / doubles, yaw ±0.9, dusk and night). */
+export const TREE_CAST_R = 26;
+
 /** The flora's seed (one arena per kind: always the same). */
 const FLORA_SEED = 1;
 
@@ -214,7 +219,9 @@ export const FLORA_PART: ArenaPart = {
   kinds: ['grass', 'longGrass', 'plain', 'sand', 'pond'],
   catalogue(): readonly CatalogueEntry[] {
     return [
-      ...TREE_STYLES.map((style): CatalogueEntry => ({ material: treeMaterial(style, new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow: true })),
+      // (the near trees cast, the far ones not: TREE_CAST_R; the palms stand within it, r ≤ 26 on sand: they all cast)
+      ...TREE_STYLES.flatMap((style): CatalogueEntry[] => (style === 'palm' ? [true] : [true, false]).map((castShadow) =>
+        ({ material: treeMaterial(style, new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow }))),
       { material: GRASS_MATERIAL, mesh: 'instancedColors', attrs: PNC, castShadow: false },
       { material: flowerMaterial(new THREE.Color(), new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow: false },
     ];
@@ -235,14 +242,16 @@ export const FLORA_PART: ArenaPart = {
     // trees, one draw per (style, variant), one material per style, nearest first
     const trees = byCameraDistance(treePlacements(kind, stage, FLORA_SEED), camera);
     const leaf = toLinear(palette.leaf), trunk = toLinear(palette.trunk);
+    // (only the trees near enough for their shadows to reach the ground the shadow map covers cast: the rest would only
+    // add their shadow-pass draws)
+    const casts = (t: ArenaTree) => Math.hypot(t.x - stage.centre.x, t.z - stage.centre.z) <= TREE_CAST_R;
     const byShape = new Map<string, ArenaTree[]>();
     for (const t of trees) {
-      const id = `${t.style}:${t.variant}`;
+      const id = `${t.style}:${t.variant}:${casts(t) ? 1 : 0}`;
       const list = byShape.get(id);
       if (list) list.push(t); else byShape.set(id, [t]);
     }
     const mats = new Map<TreeStyle, ReturnType<typeof kitMaterial>>();
-    const jitter = rng(0x7ee5);
     for (const list of byShape.values()) {
       const { style, variant } = list[0];
       let km = mats.get(style);
@@ -250,6 +259,8 @@ export const FLORA_PART: ArenaPart = {
       const mesh = new THREE.InstancedMesh(treeGeometry(style, variant, treeCrownDetail(style, ctx.quality)), km.material, list.length);
       applyKitMaterial(mesh, km);
       list.forEach((t, i) => {
+        // (each tree's own jitter, from where it stands: however the trees are grouped)
+        const jitter = rng(hashCell(Math.round(t.x * 64), Math.round(t.z * 64), 0x7ee5));
         _q.setFromAxisAngle(_up, t.yaw);
         const k = t.scale, palm = style === 'palm', ky = palm ? PALM.squat : 1, kxz = palm ? PALM.wide : 1;
         _m.compose(_p.set(t.x, ground(t.x, t.z) - SINK.tree * k, t.z), _q,
@@ -259,8 +270,9 @@ export const FLORA_PART: ArenaPart = {
         const w = (jitter() - 0.5) * 0.08;
         mesh.setColorAt(i, _c.setRGB(leaf[0] * t.shade * (1 + w), leaf[1] * t.shade, leaf[2] * t.shade * (1 - w)));
       });
-      mesh.name = `trees:${style}:${variant}`;
-      mesh.castShadow = true;
+      const cast = casts(list[0]);
+      mesh.name = `trees:${style}:${variant}${cast ? '' : ':far'}`;
+      mesh.castShadow = cast;
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
       group.add(mesh);

@@ -7,7 +7,7 @@ import { battleCamera, sightCap, stageKeepOut } from '../src/render/battle/parts
 import { duneGeometry, duneMounds } from '../src/render/battle/parts/dunes';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
 import { boulderGeometry, rockPlacements } from '../src/render/battle/parts/rocks';
-import { arenaClear, CLUMP_TOP, flowerPlacements, grassPlacements, treePlacements } from '../src/render/battle/parts/flora';
+import { arenaClear, CLUMP_TOP, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R } from '../src/render/battle/parts/flora';
 import { groundHeight, CLOUD_SHADOW } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
@@ -97,7 +97,7 @@ describe('arena scenery', () => {
     expect(treePlacements('mountain', STAGE, 1)).toEqual([]);
   });
 
-  it('builds the outdoor kinds with their scenery: trees and rocks cast, grass and hills do not', () => {
+  it('builds the outdoor kinds with their scenery: near trees and rocks cast, far trees, grass and hills do not', () => {
     const u = createKitUniforms();
     for (const kind of ['grass', 'sand'] as const) {
       const arena = new ModernArena(u);
@@ -105,7 +105,17 @@ describe('arena scenery', () => {
       const part = (name: string) => arena.group.children.find((c) => c.name === name)!;
       const meshes = (o: THREE.Object3D) => { const l: THREE.Mesh[] = []; o.traverse((m) => { if ((m as THREE.Mesh).isMesh) l.push(m as THREE.Mesh); }); return l; };
       const flora = meshes(part('flora'));
-      expect(flora.filter((m) => m.name.startsWith('trees:')).every((m) => m.castShadow)).toBe(true);
+      const trees = flora.filter((m) => m.name.startsWith('trees:'));
+      // (the near trees cast — every instance of a casting mesh within TREE_CAST_R of the stage centre — the far ones not)
+      expect(trees.some((m) => m.castShadow)).toBe(true);
+      for (const m of trees as THREE.InstancedMesh[]) {
+        const at = new THREE.Matrix4(), p = new THREE.Vector3();
+        for (let i = 0; i < m.count; i++) {
+          m.getMatrixAt(i, at);
+          p.setFromMatrixPosition(at);
+          expect(Math.hypot(p.x - STAGE.centre.x, p.z - STAGE.centre.z) <= TREE_CAST_R, m.name).toBe(m.castShadow);
+        }
+      }
       expect(flora.filter((m) => m.name.startsWith('grass:')).every((m) => !m.castShadow)).toBe(true);
       expect(meshes(part('horizon')).every((m) => !m.castShadow && !m.receiveShadow)).toBe(true);
       expect(meshes(part('rocks')).every((m) => m.castShadow && m.receiveShadow)).toBe(true);
