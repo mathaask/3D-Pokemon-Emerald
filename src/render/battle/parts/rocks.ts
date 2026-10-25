@@ -48,7 +48,7 @@ export function boulderGeometry(seed: number, size: number, color: RGB, moss?: R
   for (let f = 0; f < p.count; f += 3) {
     // one shade per face: lighter up the boulder and on faces turned up, a little jitter
     const y = (p.getY(f) + p.getY(f + 1) + p.getY(f + 2)) / 3 / top, ny = nor.getY(f);
-    const shade = (0.7 + 0.32 * y + 0.12 * Math.max(0, ny)) * (0.93 + 0.14 * r());
+    const shade = (0.78 + 0.3 * y + 0.12 * Math.max(0, ny)) * (0.93 + 0.14 * r());
     const c = green && ny > 0.45 ? mix(base, green, THREE.MathUtils.smoothstep(ny, 0.45, 0.8) * 0.85) : base;
     for (let j = 0; j < 3; j++) col.set([c[0] * shade, c[1] * shade, c[2] * shade], (f + j) * 3);
   }
@@ -80,8 +80,8 @@ const ROCKS: Partial<Record<ArenaKind, RockRule>> = {
 };
 /** A rock of this width or more is tall (scatter.ts's tall rule). */
 const TALL_SIZE = 1.1;
-/** Rocks keep this far from the trees. */
-const ROCK_TREE_GAP = 2.5;
+/** Rocks keep this far from the trees, and this far to the side (x) of the ground behind each battler. */
+const ROCK_TREE_GAP = 2.5, BEHIND_HALF = 3.5;
 
 export interface ArenaRock { x: number; z: number; size: number; seeds: number[] }
 
@@ -95,7 +95,10 @@ export function rockPlacements(kind: ArenaKind, stage: Stage, seed: number): Are
   const ko = stageKeepOut(stage), clear = arenaClear(stage);
   // (off the trees' feet: a palm grows out of no boulder)
   const trees = treePlacements(kind, stage, seed);
-  const free = (x: number, z: number) => trees.every((t) => Math.hypot(t.x - x, t.z - z) >= ROCK_TREE_GAP);
+  // (and out from behind the battlers: the ground the camera frames over a battler's head stays clear for its silhouette)
+  const behind = (p: { x: number; z: number }, x: number, z: number) => z < p.z && Math.abs(x - p.x) < BEHIND_HALF;
+  const free = (x: number, z: number) => trees.every((t) => Math.hypot(t.x - x, t.z - z) >= ROCK_TREE_GAP)
+    && !behind(stage.player, x, z) && !behind(stage.enemy, x, z);
   const big = sizes.filter((s) => s >= TALL_SIZE), small = sizes.filter((s) => s < TALL_SIZE);
   const at = (n: number, salt: number, accept: (x: number, z: number) => boolean) =>
     scatter(seed * 4099 + salt, { centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: n, minGap: 3, accept });
@@ -119,7 +122,8 @@ export const ROCKS_PART: ArenaPart = {
     const rocks = rockPlacements(ctx.kind, ctx.stage, 1);
     if (!rocks.length) return null;
     const rule = ROCKS[ctx.kind]!;
-    const moss = rule.moss ? ctx.palette.leaf : undefined;
+    // (moss a light leaf green: between the leaves' and the blades')
+    const moss = rule.moss ? mix(ctx.palette.leaf, ctx.palette.blade, 0.5) : undefined;
     const dunes = ctx.kind === 'sand' ? duneMounds(1, ctx.stage) : null;
     const parts = rocks.map((k) => {
       const ground = groundHeight(ctx.kind, k.x, k.z, ctx.stage);
