@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { hashCell, noise2, rng } from '../../kit/geom';
-import { applyKitMaterial, kitMaterial } from '../../kit/materials';
+import { applyKitMaterial, kitMaterial, type KitMaterialOptions } from '../../kit/materials';
 import { mix, toLinear, type RGB } from '../../kit/palette';
 import { TREE_STYLES, TREE_VARIANTS, treeCrownDetail, treeGeometry, treeMaterial, type TreeStyle } from '../../kit/trees';
 import { BLADES, GRASS_MATERIAL, LONG_SCALE, clump } from '../../kit/grass';
@@ -206,6 +206,14 @@ const PNC = { position: 3, normal: 3, color: 3 }, PNC4 = { position: 3, normal: 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0), _c = new THREE.Color();
 
+/** A tree style's material in the arenas: the kit's (treeMaterial: `trunk` linear) without the occlusion fade. The battle
+ *  never aims it (its uniforms' uFadeRadius stays 0: no pixel changes), but a shader that can discard loses the GPU's
+ *  early depth test — every hidden fragment of the treeline's overlapping crowns was shaded (≈ 0.4 ms at the intro's
+ *  framing). */
+export function arenaTreeMaterial(style: TreeStyle, trunk: THREE.Color): KitMaterialOptions {
+  return { ...treeMaterial(style, trunk), fade: false };
+}
+
 /** Trees this near the stage centre cast shadows: the sun's shadow camera (BattleView: ±14 units around the stage, seen
  *  along the sun) covers the ground to ≈ 19 units behind it; a tree further out casts no shadow the battle shows (0 px
  *  against every tree casting, grass / long grass / plain / pond / doubles, yaw ±0.9, dusk and night). */
@@ -221,7 +229,7 @@ export const FLORA_PART: ArenaPart = {
     return [
       // (the near trees cast, the far ones not: TREE_CAST_R; the palms stand within it, r ≤ 26 on sand: they all cast)
       ...TREE_STYLES.flatMap((style): CatalogueEntry[] => (style === 'palm' ? [true] : [true, false]).map((castShadow) =>
-        ({ material: treeMaterial(style, new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow }))),
+        ({ material: arenaTreeMaterial(style, new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow }))),
       { material: GRASS_MATERIAL, mesh: 'instancedColors', attrs: PNC, castShadow: false },
       { material: flowerMaterial(new THREE.Color(), new THREE.Color()), mesh: 'instancedColors', attrs: PNC4, castShadow: false },
     ];
@@ -255,7 +263,7 @@ export const FLORA_PART: ArenaPart = {
     for (const list of byShape.values()) {
       const { style, variant } = list[0];
       let km = mats.get(style);
-      if (!km) mats.set(style, (km = kitMaterial(ctx.uniforms, treeMaterial(style, new THREE.Color(...trunk)))));
+      if (!km) mats.set(style, (km = kitMaterial(ctx.uniforms, arenaTreeMaterial(style, new THREE.Color(...trunk)))));
       const mesh = new THREE.InstancedMesh(treeGeometry(style, variant, treeCrownDetail(style, ctx.quality)), km.material, list.length);
       applyKitMaterial(mesh, km);
       list.forEach((t, i) => {
