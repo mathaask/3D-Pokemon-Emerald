@@ -3,9 +3,9 @@
 // battleActors.ts); in Modern the battlers are inflated on the battle's own inflation field (field: BATTLE_INFLATE, D4).
 // The arena around them is the Modern arena (modernArena.ts) where it covers the arena kind in the Modern style — built
 // in the colours sampled off the GBA's battle background (ArenaColorLock) and lit by the kind's look (look.ts: outdoor
-// arenas by the overworld's time of day) — else today's arena (arena.ts: the Retro look and the fallback), generated and
-// themed from the game's own terrain background colours, under today's light. Every program the scene draws compiles at
-// boot (precompile: the battle catalogue, the actors, the field).
+// arenas by the overworld's time of day) under the Modern sky (sky.ts) — else today's arena (arena.ts: the Retro look and
+// the fallback), generated and themed from the game's own terrain background colours, under today's light and sky. Every
+// program the scene draws compiles at boot (precompile: the battle catalogue, both skies, the actors, the field).
 
 import * as THREE from 'three';
 import type { GameState, SpriteSnap } from '../../game/state';
@@ -32,6 +32,7 @@ import { ARENA_PARTS, ArenaColorLock, ModernArena, withFailingPart, type ArenaPa
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
 import { arenaLook, type ArenaLook } from './look';
 import { arenaPalette } from './palette';
+import { BattleSky } from './sky';
 
 export { isBattleHudSprite } from './battleActors';
 
@@ -54,18 +55,15 @@ const HEMI_SKY = new THREE.Color(0xcfe8ff), HEMI_GROUND = new THREE.Color(0x5560
 const FOG_NEAR = 40, FOG_FAR = 120;
 /** How often the background is sampled (s): BG3 is loaded a little after the battle starts. */
 const SAMPLE_EVERY = 0.5;
-/** The arena settings under an open sky (the sky dome draws clouds and stars). */
-const OPEN_SKY: ReadonlySet<string> = new Set(['outdoor', 'water', 'sky']);
 
 /** Luminance (Rec. 709, linear) of the light today's battle gives its cards (the Retro charLight) for its hemisphere and
  *  sun strengths: by day, at night, in a room (and a cave: today's lights them alike). */
 const todayLight = (hemiI: number, sunI: number) =>
   (0.2126 * (hemiI + sunI * 0.75) + 0.7152 * (hemiI + sunI * 0.72) + 0.0722 * (hemiI + sunI * 0.68)) / Math.PI;
 const TODAY_LIGHT = { day: todayLight(1.15, 2.4), night: todayLight(0.7, 0.6), room: todayLight(1.6, 1.6) };
-/** The sky dome's render order: today's (first), and after the Modern arena's opaque parts (its ground: 3). */
-const SKY_RENDER_ORDER = -10, SKY_AFTER_ARENA = 10;
 /** The Modern battlers' exposure range (BattleView.applyLook). */
 const EXPOSURE = { min: 0.5, max: 3 };
+const _sunDir = new THREE.Vector3();
 
 export class BattleView {
   readonly scene = new THREE.Scene();
@@ -73,7 +71,9 @@ export class BattleView {
   private actors: BattleActors;
   private sun = new THREE.DirectionalLight(0xffffff, 2.4);
   private hemi = new THREE.HemisphereLight(0xcfe8ff, 0x55603a, 1.1);
+  /** Today's sky (the Retro battle's and today's arena's), and the Modern sky (BattleSky: the Modern arena's). */
   private sky = new Sky();
+  private battleSky = new BattleSky();
   /** Today's arena: the Retro look and the Modern fallback, built (setEnvironment, setColors) only while shown. */
   private arena = new BattleArena();
   private time = 0;
@@ -151,7 +151,8 @@ export class BattleView {
     this.field = new SpriteField(undefined, undefined, BATTLE_INFLATE);
     this.actors = new BattleActors(spriteAtlas,
       { field: this.field, xbr: this.xbr, rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
-    this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.arena.group);
+    this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.battleSky.mesh, this.arena.group);
+    this.battleSky.mesh.visible = false;
     this.scene.fog = new THREE.Fog(0xcfe8ff, 40, 120);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -277,8 +278,9 @@ export class BattleView {
 
   /**
    * Starts compiling every program the battle scene draws, once, whatever the style: the battle catalogue (every arena
-   * part's program variants, today's arena for every environment: catalogue.ts) in the battle scene, with every actor
-   * shown (the inflated battlers too, and every shadow-depth twin through its stand-in), and the battlers' field passes —
+   * part's program variants, today's arena for every environment: catalogue.ts) in the battle scene, with both skies and
+   * every actor shown (the inflated battlers too, and every shadow-depth twin through its stand-in), and the battlers'
+   * field passes —
    * compileAsync issues them all at once (parallel where the browser has KHR_parallel_shader_compile) into a 1×1
    * target, as PostFX draws the scene, off the main thread; finishPrecompile then draws the frame that compiles the rest
    * (shadow-depth, PostFX's passes), blocking. Live play starts it at boot (Renderer's constructor), the battle preview
@@ -298,7 +300,7 @@ export class BattleView {
       const prev = renderer.getRenderTarget();
       let ready: Promise<unknown>;
       this.scene.add(catalogue.root);
-      const restore = this.actors.showAll();
+      const restore = this.actors.showAll(), skies = this.showSkies();
       // the shadow twins too (else the first battle frame's shadow pass compiles them: the cards' alpha-tested one). The
       // shadow pass draws them with this scene's lights but no scene (no fog), into a target: compiled so
       const standIns = new THREE.Group();
@@ -314,6 +316,7 @@ export class BattleView {
         this.scene.fog = fog;
         for (const s of standIns.children) if ((s as THREE.InstancedMesh).isInstancedMesh) (s as THREE.InstancedMesh).dispose();
         restore();
+        skies();
         catalogue.root.removeFromParent();
         renderer.setRenderTarget(prev);
         target.dispose();
@@ -353,7 +356,7 @@ export class BattleView {
     pre.done = true;
     const t0 = performance.now();
     this.scene.add(catalogue.root);
-    const restore = this.actors.showAll();
+    const restore = this.actors.showAll(), skies = this.showSkies();
     const draw = () => {
       if (this.precompileFrame) this.precompileFrame();
       else {
@@ -378,10 +381,22 @@ export class BattleView {
       console.warn('[battle] precompile frame failed (programs compile on first use instead)', e);
     } finally {
       restore();
+      skies();
       catalogue.dispose();
       this.precompileStats.frameMs = performance.now() - t0;
       this.precompileStats.frameAt = t0;
     }
+  }
+
+  /** Shows both skies (today's and the Modern BattleSky: scene members, not in the battle catalogue — the precompile
+   *  compiles them with the scene) and returns what puts their visibility back. */
+  private showSkies(): () => void {
+    const was = [this.sky.mesh.visible, this.battleSky.mesh.visible];
+    this.sky.mesh.visible = this.battleSky.mesh.visible = true;
+    return () => {
+      this.sky.mesh.visible = was[0];
+      this.battleSky.mesh.visible = was[1];
+    };
   }
 
   /** Samples the GBA terrain background (BG3) every 0.5 s: today's arena's sky, platform and rim colours. */
@@ -547,10 +562,12 @@ export class BattleView {
       this.sky.setColors(this.arena.skyColor, this.arena.horizon, indoor, this.time);
       this.uniforms.uSky.value.copy(this.arena.skyColor);
     }
+    // (the Modern arena's sky is BattleSky — after the opaque arena at the far plane, depth-tested: its hidden pixels cost
+    // nothing, and the battle camera never frames the horizon, D1; today's arena keeps today's sky, drawn first as today)
+    this.sky.mesh.visible = !this.modernShown;
+    this.battleSky.mesh.visible = this.modernShown;
     this.sky.mesh.position.copy(this.camera.position);
-    // (Modern: today's sky dome draws after the opaque arena — at the far plane, depth-tested, its hidden pixels cost
-    // nothing; the battle camera never frames the horizon, D1. Today's arena: first, as today)
-    this.sky.mesh.renderOrder = this.modernShown ? SKY_AFTER_ARENA : SKY_RENDER_ORDER;
+    this.battleSky.mesh.position.copy(this.camera.position);
 
     this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites,
       state.battlerCopies);
@@ -593,7 +610,8 @@ export class BattleView {
       : TODAY_LIGHT.day + (TODAY_LIGHT.night - TODAY_LIGHT.day) * L.night;
     const lum = 0.2126 * this.charLight.r + 0.7152 * this.charLight.g + 0.0722 * this.charLight.b;
     this.actors.setExposure(THREE.MathUtils.clamp(today / Math.max(lum, 1e-4), EXPOSURE.min, EXPOSURE.max));
-    this.sky.setColors(L.sky, L.fog, !OPEN_SKY.has(setting), this.time);
+    this.battleSky.setLook(L, setting, this.time);
+    this.battleSky.setSun(_sunDir.subVectors(this.sun.position, this.sun.target.position));
   }
 
   /** The sun's shadow map and softness: Modern's by quality (OverworldView's shadowSettings), today's under today's

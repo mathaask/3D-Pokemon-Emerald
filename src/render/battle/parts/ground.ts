@@ -33,7 +33,10 @@ export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
 /** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
  *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. (The platform
  *  bodies keep NIGHT_SOIL: with these, their earth went near-black.) */
-const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
+
+/** A cloud's shadow darkens the ground at most this much (soft: arenaClouds' smooth cover, per vertex). */
+export const CLOUD_SHADOW = 0.15;
 
 /** The battle ground's border warp reaches this far from the stage centre (cells; faded out over its last 4): beyond,
  *  the field is one material — nothing to bend (WARP_GLSL). */
@@ -166,7 +169,7 @@ if (uRing > 0.0) {
   }
 }
 if (uClouds > 0.0) {
-  diffuseColor.rgb *= 1.0 - uClouds * 0.18 * vArenaCloud;
+  diffuseColor.rgb *= 1.0 - uClouds * ${CLOUD_SHADOW.toFixed(2)} * vArenaCloud;
 }
 if (uCaustics > 0.0) {
   vec2 cp = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y) * 1.7;

@@ -21,6 +21,7 @@ import { luma, lush, mix, soften, toLinear, type RGB } from './palette';
 import { hashCell, noise3, rng } from './geom';
 import { applyKitMaterial, kitMaterial, type KitMaterial, type KitMaterialOptions } from './materials';
 import { isSecretBaseSpot, type Family, type KitContext, type SemanticContext } from './semantics';
+import type { Quality } from '../post';
 
 export type TreeStyle = 'round' | 'bushy' | 'pine' | 'palm';
 export interface TreePlacement {
@@ -150,7 +151,8 @@ const LEVEL_REACH = 2;
 
 // ---------------------------------------------------------------- geometry
 
-const VARIANTS = 3;
+/** Shapes per round and bushy style (palms and pines have one). */
+export const TREE_VARIANTS = 3;
 /** Map chunk (cells) per instanced mesh: the unit of view and shadow culling. */
 const CHUNK = 8;
 /** Size of a 1-wide tree drawn with the round tree's geometry. */
@@ -324,10 +326,11 @@ const STYLE_INDEX: Readonly<Record<TreeStyle, number>> = { round: 0, bushy: 1, p
 export const treeSeed = (style: TreeStyle, variant: number) => 1000 + variant * 77 + STYLE_INDEX[style] * 7919;
 /** The variant a map chunk draws its trees of a style with (palms and pines have one shape). */
 export const chunkVariant = (style: TreeStyle, chunk: number) =>
-  style === 'round' || style === 'bushy' ? hashCell(chunk % 4096, Math.floor(chunk / 4096), STYLE_INDEX[style]) % VARIANTS : 0;
+  style === 'round' || style === 'bushy' ? hashCell(chunk % 4096, Math.floor(chunk / 4096), STYLE_INDEX[style]) % TREE_VARIANTS : 0;
 
-/** Merged crown + trunk of a style variant (cached for the session, never disposed). */
-function treeGeo(style: TreeStyle, variant: number, detail: number): THREE.BufferGeometry {
+/** Merged crown + trunk of a style variant (cached for the session, never disposed: userData.shared): the overworld's
+ *  trees and the battle arenas' (battle/parts/flora.ts). */
+export function treeGeometry(style: TreeStyle, variant: number, detail: number): THREE.BufferGeometry {
   const id = `${style}:${variant}:${detail}`;
   let g = geoCache.get(id);
   if (!g) {
@@ -392,6 +395,10 @@ function shadowsNearView(mesh: THREE.InstancedMesh): void {
     if (saved >= 0) { mesh.count = saved; saved = -1; }
   };
 }
+
+/** A style's crown detail (icosphere subdivisions) at a quality: finer crowns at high quality for the big round trees
+ *  only (bushy forests hold thousands). */
+export const treeCrownDetail = (style: TreeStyle, quality: Quality) => (quality === 'high' && style === 'round' ? 2 : 1);
 
 const WIND: Record<TreeStyle, [number, number]> = {
   round: [0.05, 2.6], bushy: [0.045, 1.9], pine: [0.04, 2.4], palm: [0.07, 2.4],
@@ -628,8 +635,6 @@ export const treeFamily: Family<TreePlacement[]> = {
 
   build(trees: TreePlacement[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!trees.length) return null;
-    // Finer crowns at high quality for the big round trees only (bushy forests hold thousands).
-    const detailOf = (style: TreeStyle) => (kit.quality === 'high' && style === 'round' ? 2 : 1);
     /** Map chunk of a tree (numeric key: x and z chunk, 4096 apart). */
     const chunkOf = (t: TreePlacement) => (Math.floor(t.z / CHUNK) + 2048) * 4096 + Math.floor(t.x / CHUNK) + 2048;
     // A small tree among round ones (a lone round-tree column) is drawn as a small round tree:
@@ -672,7 +677,7 @@ export const treeFamily: Family<TreePlacement[]> = {
       }
       // (palms and pines are rare: one shape each, varied by rotation and scale)
       const variant = chunkVariant(style, chunk);
-      const mesh = new THREE.InstancedMesh(treeGeo(style, variant, detailOf(style)), km.material, list.length);
+      const mesh = new THREE.InstancedMesh(treeGeometry(style, variant, treeCrownDetail(style, kit.quality)), km.material, list.length);
       applyKitMaterial(mesh, km);
       list.forEach(({ t, k: size }, i) => {
         const r = rng(t.seed);

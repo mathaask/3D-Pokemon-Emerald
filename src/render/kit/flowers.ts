@@ -202,11 +202,12 @@ const CHUNK = 16;
 
 /**
  * One flower (origin at the stem's root): three leaves, a stem, five cupped petals and a centre,
- * the head tipped towards the camera's side (+z). RGBA vertex colours flag the parts: alpha 1 =
+ * the head tipped towards the camera's side (+z); cached for the session (userData.shared): the overworld's flowers and
+ * the battle arenas' (battle/parts/flora.ts). RGBA vertex colours flag the parts: alpha 1 =
  * petal (the instance colour), 0.6 = centre, 0.1..0.3 = leaf and stem shade (read by PART_FRAG).
  */
 let flowerGeo: THREE.BufferGeometry | null = null;
-function flower(): THREE.BufferGeometry {
+export function flowerGeometry(): THREE.BufferGeometry {
   if (flowerGeo) return flowerGeo;
   const H = 0.3;
   const parts: THREE.BufferGeometry[] = [];
@@ -310,7 +311,7 @@ export const flowerFamily: Family<FlowerCell[]> = {
 
   build(cells: FlowerCell[], _ctx: SemanticContext, kit: KitContext): THREE.Object3D | null {
     if (!cells.length) return null;
-    const geo = flower();
+    const geo = flowerGeometry();
     // Buckets: centre + leaf colours (one material each; a map has one or two flower tiles) × chunk.
     const buckets = new Map<string, FlowerCell[]>();
     const key3 = (c: RGB) => c.map((v) => Math.round(v * 255)).join(',');
