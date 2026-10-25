@@ -45,9 +45,11 @@ const TREES: Partial<Record<ArenaKind, TreeRule>> = {
 const SALT: Record<string, number> = { grass: 0x9a55, longGrass: 0x10a9, plain: 0x91a1, sand: 0x5a4d, pond: 0x90d };
 const salt = (kind: ArenaKind) => SALT[kind] ?? 0x7ee;
 
-/** grass: 80 (60 % round, 40 % bushy), r 11–32, gap 2.4, scale 1.8–2.4; longGrass: 100 (60 % bushy), r 10–30, gap 2.2;
- *  plain: 50 round, r 13–34, gap 3; sand: 8 palms, r 12–26, |x − centre.x| ≥ 9; pond: 60 round/bushy beyond its shore
- *  (r ≥ 17); all on the tall rule. */
+/** grass: 80 (60 % round, 40 % bushy), r 11–32, gap 2.4; longGrass: 100 (60 % bushy), r 10–30, gap 2.2; plain: 50 round,
+ *  r 13–34, gap 3, in groves; sand: 8 palms, r 12–26, |x − centre.x| ≥ 9, off the dunes; pond: 60 round/bushy beyond its
+ *  shore (r ≥ 17); all on the tall rule. Scale 1.25–1.7 (plain 1.3–1.8; palms 0.95–1.2) — tuned at review from 1.8–2.4:
+ *  the camera's frame top passes ≈ 1–2 units over the ground at the treeline's distance, under the larger trees' crowns
+ *  (only their dark undersides and trunks showed). */
 export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
   const rule = TREES[kind];
   if (!rule) return [];
