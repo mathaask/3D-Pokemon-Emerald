@@ -75,7 +75,8 @@ function lathe(s: Soup, at: V3, prof: readonly (readonly [number, number])[], co
     const l = Math.hypot(y1 - y0, r1 - r0);
     if (l < 1e-9 || (r0 < 1e-6 && r1 < 1e-6)) continue;
     const nr = (y1 - y0) / l, ny = -(r1 - r0) / l;
-    const ca = perPoint ? cols[k] : cols[k], cb = perPoint ? cols[k + 1] : cols[k];
+    // (the step's colour at its start; at its end the next point's in a gradient, else the same)
+    const ca = cols[k], cb = perPoint ? cols[k + 1] : ca;
     for (let q = 0; q < sides; q++) {
       const a0 = phase + (q / sides) * Math.PI * 2, a1 = phase + ((q + 1) / sides) * Math.PI * 2, am = (a0 + a1) / 2;
       const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);

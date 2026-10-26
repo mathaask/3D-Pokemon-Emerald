@@ -71,11 +71,10 @@ export function brokenEdgeGeometry(seed: number, stage: Stage, color: RGB): THRE
     for (let j = 0; j < m; j++) {
       const b0 = a0 + ((a1 - a0) * j) / m, b1 = a0 + ((a1 - a0) * (j + 1)) / m;
       const i0 = rIn(b0), i1 = rIn(b1), o0 = rOut(b0), o1 = rOut(b1);
-      const m0 = LEVEL, m1 = LEVEL;
       const ct = scale(top, shade * (0.96 + 0.08 * noise2(b0 * 40, 0.3, 0xed5)));
-      // top: two rows (the sag bends it)
-      s.quad(P(b0, i0, yAt(0)), P(b1, i1, yAt(0)), P(b1, m1, yAt(0.5)), P(b0, m0, yAt(0.5)), [0, 1, 0], ct);
-      s.quad(P(b0, m0, yAt(0.5)), P(b1, m1, yAt(0.5)), P(b1, o1, yAt(1)), P(b0, o0, yAt(1)), [0, 1, 0], scale(ct, 0.96));
+      // top: two rows (the sag bends it), meeting where its level part ends (LEVEL, the same all round)
+      s.quad(P(b0, i0, yAt(0)), P(b1, i1, yAt(0)), P(b1, LEVEL, yAt(0.5)), P(b0, LEVEL, yAt(0.5)), [0, 1, 0], ct);
+      s.quad(P(b0, LEVEL, yAt(0.5)), P(b1, LEVEL, yAt(0.5)), P(b1, o1, yAt(1)), P(b0, o0, yAt(1)), [0, 1, 0], scale(ct, 0.96));
       // the crack step at its inner boundary (facing the stage), down to just under the floor
       const inward: V3 = [-Math.cos((b0 + b1) / 2), 0, -Math.sin((b0 + b1) / 2)];
       s.quad(P(b0, i0, yAt(0)), P(b1, i1, yAt(0)), P(b1, i1, GROUND_Y - 0.02), P(b0, i0, GROUND_Y - 0.02), inward, crack);
@@ -91,9 +90,9 @@ export function brokenEdgeGeometry(seed: number, stage: Stage, color: RGB): THRE
     // the slab's ends (seen through the cracks): its section, from the crack to the outline and down its thickness
     for (const [b, f] of [[a0, -1], [a1, 1]] as const) {
       const side: V3 = [-Math.sin(b) * f, 0, Math.cos(b) * f];
-      const i0 = rIn(b), o0 = rOut(b), m0 = LEVEL;
-      s.quad(P(b, i0, GROUND_Y - 0.02), P(b, i0, yAt(0)), P(b, m0, yAt(0.5)), P(b, m0, GROUND_Y - 0.02), side, crack);
-      s.quad(P(b, m0, GROUND_Y - 0.02), P(b, m0, yAt(0.5)), P(b, o0, yAt(1)), P(b, o0 - 0.12, GROUND_Y - E.thick - sag), side, scale(face, 0.85));
+      const i0 = rIn(b), o0 = rOut(b);
+      s.quad(P(b, i0, GROUND_Y - 0.02), P(b, i0, yAt(0)), P(b, LEVEL, yAt(0.5)), P(b, LEVEL, GROUND_Y - 0.02), side, crack);
+      s.quad(P(b, LEVEL, GROUND_Y - 0.02), P(b, LEVEL, yAt(0.5)), P(b, o0, yAt(1)), P(b, o0 - 0.12, GROUND_Y - E.thick - sag), side, scale(face, 0.85));
     }
   }
   return s.geometry();

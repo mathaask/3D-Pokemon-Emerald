@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { rockWallGeometry, stalagmiteGeometry, lavaGeometry } from '../src/render/battle/parts/rock';
 import { stageKeepOut } from '../src/render/battle/parts/scatter';
-import { STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
+import { PLATFORM_FOOTPRINT, STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
+import { stadiumLava } from '../src/render/battle/parts/stadium';
 import {
   BEHIND_REACH, BOULDER_TOP, LAVA_MATERIAL, ROCK_PART, ROCK_RULES, SMALL_FRONT, TALL_SIZE, TIP_SHOWN, WALL_SEED, boulderPlacements,
   clusterSpires, lavaPools, poolRadius, stalagmitePlacements, wallRadius, type LavaPool,
@@ -53,6 +54,25 @@ describe('rock arenas', () => {
       for (const e of ko.ellipses) expect(((p.getX(i) - e.x) / e.rx) ** 2 + ((p.getZ(i) - e.z) / e.rz) ** 2).toBeGreaterThanOrEqual(1);
     }
     expect(l).toBeInstanceOf(THREE.BufferGeometry);
+    // (no pool overlaps either platform's footprint — Groudon's and Magma's, several seeds: its whole outline, every
+    // half degree, and its bank's foot (≈ 0.8 out) outside both footprints, and neither platform's centre inside it)
+    const fps = [[STAGE.player, PLATFORM_FOOTPRINT.player], [STAGE.enemy, PLATFORM_FOOTPRINT.enemy]] as const;
+    const inFootprint = (x: number, z: number) => fps.some(([c, f]) => ((x - c.x) / f.rx) ** 2 + ((z - c.z) / f.rz) ** 2 < 1);
+    for (const seed of [SCENERY_SEED, 2, 3, 4, 5]) {
+      for (const pool of [...lavaPools(STAGE, seed), ...stadiumLava(STAGE, seed)]) {
+        for (let q = 0; q < 720; q++) {
+          const a = (q / 720) * Math.PI * 2, d = poolRadius(pool, a);
+          for (const out of [0, 0.8]) {
+            const x = pool.x + Math.cos(a) * (d + out), z = pool.z + Math.sin(a) * (d + out);
+            expect(inFootprint(x, z), `seed ${seed} pool (${pool.x.toFixed(1)}, ${pool.z.toFixed(1)}) +${out} at ${q / 2}°`).toBe(false);
+          }
+        }
+        for (const [c] of fps) {
+          const a = Math.atan2(c.z - pool.z, c.x - pool.x);
+          expect(Math.hypot(c.x - pool.x, c.z - pool.z), `seed ${seed}: a platform inside a pool`).toBeGreaterThan(poolRadius(pool, a));
+        }
+      }
+    }
   });
 });
 

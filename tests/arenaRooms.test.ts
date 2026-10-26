@@ -233,6 +233,20 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     expect(ring).toBeGreaterThan(0);
     const n = g.getAttribute('normal');
     for (let i = 0; i < n.count; i++) expect(n.getY(i)).toBeCloseTo(1, 6);
+    // (its triangles, not only its vertices: every index in range (a triangle soup has none: its vertices in threes);
+    // two per painted quad — the platforms' rings, 64 segments each, the ball circle's 48 and its button's 24, the centre
+    // line's four pieces and the boundary's three; each a real triangle, wound to face up)
+    const index = g.getIndex(), corner = (t: number, k: number) => (index ? index.getX(t * 3 + k) : t * 3 + k);
+    if (index) for (let i = 0; i < index.count; i++) expect(index.getX(i)).toBeLessThan(p.count);
+    else expect(p.count % 3).toBe(0);
+    const tris = (index ? index.count : p.count) / 3;
+    expect(tris).toBe(2 * (2 * 64 + 48 + 24 + 4 + 3));
+    for (let t = 0; t < tris; t++) {
+      const [a, b, c] = [0, 1, 2].map((k) => corner(t, k));
+      const ux = p.getX(b) - p.getX(a), uz = p.getZ(b) - p.getZ(a), vx = p.getX(c) - p.getX(a), vz = p.getZ(c) - p.getZ(a);
+      // (the face's normal's y: (b − a) × (c − a), twice its area; up when positive)
+      expect(uz * vx - ux * vz, `triangle ${t}`).toBeGreaterThan(1e-6);
+    }
   });
 
   it('stands pillars on their plinth and banners from their tip to their rod; the seat tiers rise behind the barrier, inside the Frontier', () => {
@@ -636,10 +650,9 @@ describe('stadium rooms: the part, walls, props, colours', () => {
   it('floors the stadiums with the hall tiles and paints each in its GBA colours (the fog is its walls\')', () => {
     for (const kind of KINDS) expect(FLOOR_STYLE[kind], kind).toBe('tiles');
     const p = (k: StadiumKind) => arenaPalette(k, defaultArenaColors(k));
-    const hue = (c: [number, number, number]) => c;
     // Magma's volcanic rock dark and warm; Aqua's metal blue; Sidney's dark; Phoebe's deep purple; Glacia's pale ice;
     // Drake's warm stone; the Champion's pale marble
-    const magma = p('magma').wall, aqua = p('aqua').wall, sidney = p('sidney').wall, phoebe = hue(p('phoebe').wall);
+    const magma = p('magma').wall, aqua = p('aqua').wall, sidney = p('sidney').wall, phoebe = p('phoebe').wall;
     const glacia = p('glacia').wall, drake = p('drake').wall, champion = p('champion').wall;
     expect(luma(magma)).toBeLessThan(0.3); expect(magma[0]).toBeGreaterThan(magma[2]);
     expect(aqua[2]).toBeGreaterThan(aqua[0] + 0.15);
