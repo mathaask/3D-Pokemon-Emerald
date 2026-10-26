@@ -3,7 +3,8 @@
 // try/catch: one that throws empties the arena and the battle draws today's arena instead (spec §11), warned once per
 // kind. From Task 6 the ground and the platforms cover every kind; from Task 7 the outdoor kinds get their scenery; from
 // Task 8 the water kinds their water (the sea, the ponds, Kyogre's) and the sea floor its kelp; from Task 9 the mountain
-// and the caves their cliff bands, stalagmites and boulders, Groudon's cave its lava.
+// and the caves their cliff bands, stalagmites and boulders, Groudon's cave its lava; from Task 10 the indoor halls (the
+// building, the gyms, the Frontier) their rooms on hall floors.
 
 import * as THREE from 'three';
 import type { KitMaterialOptions, KitUniforms } from '../kit/materials';
@@ -22,6 +23,7 @@ import { DUNES_PART } from './parts/dunes';
 import { ROCKS_PART } from './parts/rocks';
 import { WATER_PART } from './parts/water';
 import { ROCK_PART } from './parts/rock';
+import { HALL_PART } from './parts/rooms';
 
 /** A build's context (the kit's KitContext: disposeKit frees what it lists): the kind, its colours and their palette, the
  *  ground's cells (groundCells as a texture over the grid from `min`, `size` cells; freed with the build) and the look at
@@ -50,9 +52,10 @@ export interface ArenaPart {
 
 /** The arena parts, built in this order: the foundation (Task 6); the outdoor scenery (Task 7: the horizon's hills, the
  *  flora, the dunes, the rocks); the water and the sea floor (Task 8); the rock arenas' cliff bands, stalagmites,
- *  boulders and lava (Task 9); Tasks 10–11 append the rest. */
+ *  boulders and lava (Task 9); the indoor halls' rooms (Task 10: the building, the gyms, the Frontier); Task 11 appends
+ *  the rest. */
 export const ARENA_PARTS: ArenaPart[] = [GROUND_PART, PLATFORM_PART, HORIZON_PART, FLORA_PART, DUNES_PART, ROCKS_PART, WATER_PART,
-  ROCK_PART];
+  ROCK_PART, HALL_PART];
 
 /** The colours a battle's arena is built with: the kind's defaults until the first valid sample, then that sample for the
  *  rest of the battle (a new kind starts over). At most two builds per battle; later samples never rebuild. Each change

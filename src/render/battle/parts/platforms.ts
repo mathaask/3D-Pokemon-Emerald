@@ -2,8 +2,9 @@
 // earth disc with a grass skirt (grass, long grass, plain), a sand mound, a stone slab on a plinth (mountain, every
 // room, the Sky Pillar), rough cave rock (caves, the sea floor), a lily pad (pond), ripple rings on open water. Their
 // tops lie at y ≈ 0, where the battlers' feet, the flat enemy shadow and the stage's maths put the platform top; the
-// tops draw with the arena ground's material (its cells paint them: parts/ground.ts), the bodies with the kit's soil
-// (smooth) or cliff (faceted) material in vertex colours.
+// tops draw with the arena ground's material (its cells paint them: parts/ground.ts) — in the indoor halls with the hall
+// floor's polished stage tops (parts/floor.ts) —, the bodies with the kit's soil (smooth) or cliff (faceted) material in
+// vertex colours.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -18,6 +19,7 @@ import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint } from '../stage';
 import { arenaGround, arenaGroundMaterial, uniformCells, TOPS_RENDER_ORDER } from './ground';
+import { FLOOR_STYLE, hallFloorMaterial } from './floor';
 
 export type PlatformStyle = 'earthGrass' | 'sandMound' | 'stoneSlab' | 'lilyPad' | 'rippleRing' | 'caveRock' | 'seabedRock';
 
@@ -369,8 +371,9 @@ export const PLATFORM_PART: ArenaPart = {
       { material: CLIFF_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: true },
       { material: GRASS_MATERIAL, mesh: 'instancedColors', attrs: PNC, castShadow: false },
       { material: RIPPLE_MATERIAL, mesh: 'mesh', attrs: PN, castShadow: false },
-      // (the tops: the ground's program)
+      // (the tops: the ground's program; in a hall, the hall floor's)
       { material: arenaGroundMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(), 0, 0), mesh: 'mesh', attrs: PN, castShadow: false },
+      { material: hallFloorMaterial('stage', [1, 1, 1]), mesh: 'mesh', attrs: PN, castShadow: false },
     ];
   },
   build(ctx) {
@@ -381,10 +384,15 @@ export const PLATFORM_PART: ArenaPart = {
     const top = merged(meshes, 'top');
     if (top) {
       // (the tops' own cells, all platform: the field's would show at their rims, where the terrain's warped lookup
-      // reaches past the footprint's cells)
-      const cells = uniformCells(ctx.palette.platformMat, ctx.palette.platformTop);
-      ctx.disposables.push(cells.tex);
-      const mesh = new THREE.Mesh(top, arenaGround(ctx, cells));
+      // reaches past the footprint's cells; in a hall, polished stage tops of the hall floor's program: floor.ts)
+      let material: THREE.Material;
+      if (FLOOR_STYLE[ctx.kind]) material = kitMaterial(ctx.uniforms, hallFloorMaterial('stage', ctx.palette.platformTop)).material;
+      else {
+        const cells = uniformCells(ctx.palette.platformMat, ctx.palette.platformTop);
+        ctx.disposables.push(cells.tex);
+        material = arenaGround(ctx, cells);
+      }
+      const mesh = new THREE.Mesh(top, material);
       mesh.name = 'platformTops';
       // (after the battlers — their terrain shading is skipped where a battler covers them — and before the ground, which
       // runs on under them)

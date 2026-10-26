@@ -142,7 +142,8 @@ describe('the worn ring (the ground shader)', () => {
       const m = (a.group.getObjectByName('ground') as THREE.Mesh).material as THREE.Material;
       const s = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
       m.onBeforeCompile(s as unknown as THREE.WebGLProgramParametersWithUniforms, undefined as unknown as THREE.WebGLRenderer);
-      const v = (s.uniforms as Record<string, { value: number }>).uRing.value;
+      // (a hall's floor — floor.ts, the gym's — has no worn ring at all: no uRing)
+      const v = (s.uniforms as Record<string, { value: number } | undefined>).uRing?.value ?? 0;
       a.dispose();
       return v;
     };

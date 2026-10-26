@@ -3,7 +3,8 @@
 // pond's bed (the platform tops draw with this very material over cells of their own: parts/platforms.ts) —
 // plus a worn ring round the platforms (outdoor kinds, painted analytically), soft cloud shadows drifting over outdoor
 // ground and caustics on the sea floor. Flat around the stage, rolling beyond it outdoors, a basin under the pond kinds'
-// water, a seabed under open water.
+// water, a seabed under open water. The indoor halls (floor.ts FLOOR_STYLE) draw the disc with the hall floor instead:
+// wooden boards or polished tiles (the gyms' courts painted in), no terrain shading.
 
 import * as THREE from 'three';
 import { noise2 } from '../../kit/geom';
@@ -16,6 +17,7 @@ import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, type Stage } from '../stage';
+import { FLOOR_COURT, FLOOR_STYLE, courtColor, hallFloorMaterial } from './floor';
 
 export const GROUND_GRID = 72;   // cells (1 unit each) around stage.centre
 export const POND = { dz: -1, rx: 15, rz: 10 }, CAVE_POND = { dz: -1, rx: 18, rz: 12 };
@@ -315,12 +317,21 @@ export const GROUND_PART: ArenaPart = {
   name: 'ground',
   kinds: 'all',
   catalogue(ph): readonly CatalogueEntry[] {
-    return [{ material: arenaGroundMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(), 0, 0), mesh: 'mesh', attrs: PN, castShadow: false }];
+    return [
+      { material: arenaGroundMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(), 0, 0), mesh: 'mesh', attrs: PN, castShadow: false },
+      // (the halls' floors: floor.ts)
+      { material: hallFloorMaterial('tiles', [1, 1, 1]), mesh: 'mesh', attrs: PN, castShadow: false },
+    ];
   },
   build(ctx) {
-    // (the worn ring round the platforms: outdoor kinds, in their path's look)
+    // (the worn ring round the platforms: outdoor kinds, in their path's look; a hall's floor: its boards or tiles)
     const ring = ARENA_SETTING[ctx.kind] === 'outdoor' ? wornRing(ctx.palette) : NO_RING;
-    const mesh = new THREE.Mesh(groundDisc(ctx.kind, ctx.stage), arenaGround(ctx, ctx.ground, ring));
+    const floor = FLOOR_STYLE[ctx.kind];
+    const shade = FLOOR_COURT[ctx.kind];
+    const court = shade ? { stage: ctx.stage, color: courtColor(ctx.palette, shade) } : null;
+    const material = floor ? kitMaterial(ctx.uniforms, hallFloorMaterial(floor, ctx.palette.ground, court)).material
+      : arenaGround(ctx, ctx.ground, ring);
+    const mesh = new THREE.Mesh(groundDisc(ctx.kind, ctx.stage), material);
     mesh.receiveShadow = true;
     mesh.castShadow = false;
     mesh.renderOrder = GROUND_RENDER_ORDER;
