@@ -143,6 +143,19 @@ describe('battlerAlphaKey (when the battlers\' field must be recomputed)', () =>
     }
     expect(battlerAlphaKey(b, vram, true)).not.toBe(battlerAlphaKey(b, vram, false));           // 2D tile mapping
   });
+  it("hashes the full colour indices, not only the silhouette: the baked xBR decisions compare colours (re-baked with it)", () => {
+    const vram = new Uint8Array(0x18000);
+    const b = { ...battler(0, 40, 53), tileNum: 64 };
+    vram[0x10000 + 64 * 32 + 5] = 0x10;                                                          // a pixel at colour index 1
+    const k = battlerAlphaKey(b, vram, false);
+    vram[0x10000 + 64 * 32 + 5] = 0x20;                                                          // the same pixel, index 2: as opaque
+    expect(battlerAlphaKey(b, vram, false)).not.toBe(k);
+    // (and the same tiles hash alike in a subsprite piece: its offset into the tiles)
+    const pieces = [{ x: 0, y: 0, width: 32, height: 32, tileOffset: 0 }, { x: 32, y: 0, width: 32, height: 32, tileOffset: 16 }];
+    const kp = battlerAlphaKey({ ...b, pieces }, vram, false);
+    vram[0x10000 + (64 + 16) * 32 + 2] = 0x03;                                                  // the second piece's first tile
+    expect(battlerAlphaKey({ ...b, pieces }, vram, false)).not.toBe(kp);
+  });
 });
 
 describe('battlerPaletteKey (when the battlers\' baked xBR decisions must be recomputed)', () => {

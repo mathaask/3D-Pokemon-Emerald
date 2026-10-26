@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER,
+  groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
   GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS,
 } from '../src/render/battle/parts/ground';
 import type { ArenaContext } from '../src/render/battle/modernArena';
@@ -57,27 +57,8 @@ describe('arena ground', () => {
   });
 });
 
-describe('the ground\'s draw order', () => {
-  it('draws the platform tops after the battlers and before the ground, whatever their material ids (Task 7b)', () => {
-    // (three sorts opaque objects by renderOrder, then material id: at one renderOrder the ground — built first, the lower
-    // pooled id — drew first and was shaded under both tops)
-    const u = createKitUniforms();
-    for (const kind of ['grass', 'sand', 'mountain', 'cave', 'gym', 'underwater'] as ArenaKind[]) {
-      const a = new ModernArena(u);
-      expect(a.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
-      const ground = a.group.getObjectByName('ground') as THREE.Mesh, tops = a.group.getObjectByName('platformTops') as THREE.Mesh;
-      expect(ground.renderOrder, kind).toBe(GROUND_RENDER_ORDER);
-      expect(tops.renderOrder, kind).toBe(TOPS_RENDER_ORDER);
-      const id = (m: THREE.Mesh) => (m.material as THREE.Material & { id: number }).id;
-      const painter = (x: THREE.Mesh, y: THREE.Mesh) => x.renderOrder - y.renderOrder || id(x) - id(y);
-      expect([ground, tops].sort(painter).map((m) => m.name), kind).toEqual(['platformTops', 'ground']);
-      a.dispose();
-    }
-    // after the battlers (renderOrder 2: their pixels skip the tops' terrain shading), before the ground
-    expect(TOPS_RENDER_ORDER).toBeGreaterThan(2);
-    expect(TOPS_RENDER_ORDER).toBeLessThan(GROUND_RENDER_ORDER);
-  });
-});
+// (the ground's draw order — the platform tops after the battlers and before the ground, whatever their material ids,
+// Task 7b — is held with the battle's whole order, three's group order included: tests/battleRenderOrder.test.ts)
 
 describe('groundNightScale (GROUND_COLOR\'s moonlit earth as a colour factor)', () => {
   const warmOf = (c: RGB) => THREE.MathUtils.smoothstep(c[0] - c[2], 0, 0.08) * (1 - THREE.MathUtils.smoothstep(c[1] - c[0], 0, 0.08));

@@ -82,34 +82,44 @@ const OBJ_VRAM = 0x10000, TILE_BYTES = 32, VRAM_SIZE = 0x18000;
 const fnv = (h: number, v: number) => Math.imul(h ^ v, 16777619) >>> 0;
 
 /**
- * A hash of everything the inflation field of a battler's atlas slot depends on: what the sprite atlas bakes it from but
- * its palette (the field reads only alpha: colour index 0) — size, tile number, 4/8 bpp, flips, 1D/2D tile mapping
- * (`map2d`), its subsprite pieces, and the bytes of every OBJ tile the bake reads (spriteAtlas.ts's addressing). The
- * battle field is recomputed only when a battler's key or slot changes (BattleView.updateField): a battler animates by
- * new tiles (or another tile number), not by its position.
+ * A hash of everything a battler's atlas slot is baked from but its palette — size, tile number, 4/8 bpp, flips, 1D/2D
+ * tile mapping (`map2d`), its subsprite pieces, and every byte of every OBJ tile the bake reads (spriteAtlas.ts's
+ * addressing): its full colour indices, not only which are transparent. The inflation field reads only alpha (colour index
+ * 0), but the battlers' baked xBR decisions (XbrBake) compare colours, and BattleView.updateField re-bakes them only with
+ * the field (or on a palette change: battlerPaletteKey) — a frame that keeps a battler's silhouette but changes its
+ * colour indices (a blink, a new expression) must change this key. The field and the decisions are recomputed only when
+ * a battler's key or slot changes: a battler animates by new tiles (or another tile number), not by its position. No
+ * allocation (called per battler per frame).
  */
 export function battlerAlphaKey(s: SpriteSnap, vram: Uint8Array, map2d: boolean): number {
   let h = 2166136261;
-  for (const v of [s.width, s.height, s.tileNum, s.bpp8 ? 1 : 0, s.hflip ? 1 : 0, s.vflip ? 1 : 0, map2d ? 1 : 0]) h = fnv(h, v);
-  const step = s.bpp8 ? 2 : 1, bytes = TILE_BYTES * step;
-  const piece = (tileNum: number, w: number, hgt: number) => {
-    for (let ty = 0; ty < hgt >> 3; ty++) {
-      for (let tx = 0; tx < w >> 3; tx++) {
-        const tile = map2d ? tileNum + ty * 32 + tx * step : tileNum + (ty * (w >> 3) + tx) * step;
-        const a = OBJ_VRAM + (tile & 1023) * TILE_BYTES;
-        for (let k = 0; k < bytes; k += 4) {
-          const o = (a + k) % VRAM_SIZE;
-          h = fnv(h, vram[o] | (vram[o + 1] << 8) | (vram[o + 2] << 16) | (vram[o + 3] << 24));
-        }
+  h = fnv(h, s.width); h = fnv(h, s.height); h = fnv(h, s.tileNum); h = fnv(h, s.bpp8 ? 1 : 0);
+  h = fnv(h, s.hflip ? 1 : 0); h = fnv(h, s.vflip ? 1 : 0); h = fnv(h, map2d ? 1 : 0);
+  const step = s.bpp8 ? 2 : 1, pieces = s.pieces;
+  if (pieces) {
+    for (let i = 0; i < pieces.length; i++) {
+      const q = pieces[i];
+      h = fnv(h, q.x); h = fnv(h, q.y); h = fnv(h, q.width); h = fnv(h, q.height); h = fnv(h, q.tileOffset);
+      h = hashTiles(h, vram, s.tileNum + q.tileOffset, q.width, q.height, map2d, step);
+    }
+  } else h = hashTiles(h, vram, s.tileNum, s.width, s.height, map2d, step);
+  return h;
+}
+
+/** `h` hashed on with the bytes of the OBJ tiles of a `w` × `hgt` piece from `tileNum` (`step` tile numbers per tile: 2
+ *  at 8 bpp), as spriteAtlas.ts addresses them. */
+function hashTiles(h: number, vram: Uint8Array, tileNum: number, w: number, hgt: number, map2d: boolean, step: number): number {
+  const bytes = TILE_BYTES * step;
+  for (let ty = 0; ty < hgt >> 3; ty++) {
+    for (let tx = 0; tx < w >> 3; tx++) {
+      const tile = map2d ? tileNum + ty * 32 + tx * step : tileNum + (ty * (w >> 3) + tx) * step;
+      const a = OBJ_VRAM + (tile & 1023) * TILE_BYTES;
+      for (let k = 0; k < bytes; k += 4) {
+        const o = (a + k) % VRAM_SIZE;
+        h = fnv(h, vram[o] | (vram[o + 1] << 8) | (vram[o + 2] << 16) | (vram[o + 3] << 24));
       }
     }
-  };
-  if (s.pieces) {
-    for (const q of s.pieces) {
-      for (const v of [q.x, q.y, q.width, q.height, q.tileOffset]) h = fnv(h, v);
-      piece(s.tileNum + q.tileOffset, q.width, q.height);
-    }
-  } else piece(s.tileNum, s.width, s.height);
+  }
   return h;
 }
 

@@ -17,6 +17,7 @@ import { STAGE, type Stage } from './stage';
 import { arenaPalette, type ArenaPalette } from './palette';
 import { arenaLook, type ArenaLook } from './look';
 import { GROUND_PART, groundCells } from './parts/ground';
+import { FLOOR_STYLE } from './parts/floor';
 import { PLATFORM_PART } from './parts/platforms';
 import { HORIZON_PART } from './parts/horizon';
 import { FLORA_PART } from './parts/flora';
@@ -146,9 +147,10 @@ export class ModernArena {
     this.builtPalette = null;
     let at = 'foundation';
     try {
-      // the palette, the ground's cells and the look, before the parts (they all read them)
+      // the palette, the ground's cells and the look, before the parts (they all read them; a hall's floor — FLOOR_STYLE:
+      // boards or tiles, no terrain — reads no cells: one blank cell)
       const palette = arenaPalette(kind, colors);
-      const cells = groundCells(kind, palette, STAGE);
+      const cells = FLOOR_STYLE[kind] ? { data: new Uint8Array(4), w: 1, h: 1, min: [0, 0] } : groundCells(kind, palette, STAGE);
       const tex = new THREE.DataTexture(cells.data, cells.w, cells.h, THREE.RGBAFormat, THREE.UnsignedByteType);
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;

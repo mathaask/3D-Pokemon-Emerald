@@ -4,6 +4,10 @@
 import * as THREE from 'three';
 import { put, markRange } from '../instanceUpload';
 
+/** The actors' render order (the cards here, the inflated actors: actors/inflatedActors.ts): after the opaque world at 0.
+ *  In a battle, the battlers and their cards (battle/parts/ground.ts lists the battle's orders). */
+export const ACTOR_RENDER_ORDER = 2;
+
 const MAX = 128;
 const WHITE = [1, 1, 1, 1] as const;
 
@@ -138,7 +142,7 @@ export class Billboards {
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.mesh.customDepthMaterial = this.depthMaterial;
-    this.mesh.renderOrder = 2;
+    this.mesh.renderOrder = ACTOR_RENDER_ORDER;
   }
 
   /** A geometry sharing this mesh's instance attributes (used by BlobShadows). */

@@ -15,7 +15,7 @@
 // — the battle's (BATTLE_VARIANT: 64-px pictures, relief down to the feet) — with any atlas and field of the same layout.
 
 import * as THREE from 'three';
-import type { BillboardSpec } from '../overworld/billboards';
+import { ACTOR_RENDER_ORDER, type BillboardSpec } from '../overworld/billboards';
 import { put, markRange } from '../instanceUpload';
 import { INFLATE, BATTLE_INFLATE, type InflateParams } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
@@ -456,7 +456,7 @@ export class InflatedActors {
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
     this.mesh.customDepthMaterial = depth;
-    this.mesh.renderOrder = 2;
+    this.mesh.renderOrder = ACTOR_RENDER_ORDER;
   }
 
   /** Actors drawn (instances). */

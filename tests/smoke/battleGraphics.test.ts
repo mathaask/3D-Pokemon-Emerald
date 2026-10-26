@@ -23,7 +23,9 @@ describe('battle graphics from the ROM', () => {
     const lines: string[] = [];
     for (const kind of ARENA_KINDS) {
       const gfx = readBattleBackground(rom, kind);
-      expect(gfx.tiles.length, kind).toBeGreaterThanOrEqual(0x1000);
+      // (every battle background: 0x2000 bytes of tiles, a 0x1000-byte tilemap — installBattleBackground lays them out so)
+      expect(gfx.tiles.length, kind).toBe(0x2000);
+      expect(gfx.tilemap.length, kind).toBe(0x1000);
       const vram = new Uint8Array(0x18000), pal = new Uint16Array(512);
       const img = decodeBg3(vram, pal, installBattleBackground(gfx, vram, pal));
       const c = sampleArenaColors(img);

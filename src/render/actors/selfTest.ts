@@ -300,8 +300,9 @@ export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: Sprite
 }
 
 /**
- * The field's used slot rows as a PNG data URL (2×, sprites upright): grey = height / inflateMax();
- * texels transparent in the atlas get a blue tint, so the silhouettes show.
+ * The field over the atlas's used slot rows as a PNG data URL (2×, sprites upright): grey = height / inflateMax();
+ * texels transparent in the atlas get a blue tint, so the silhouettes show. The battle's field covers only its battlers'
+ * slots (BattleView.fieldSlots): the atlas's other used slots (HUD, move effects) show black there, their silhouettes blue.
  */
 export function fieldDump(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): string {
   const { width: W, height: H } = field.target;

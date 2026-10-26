@@ -29,11 +29,11 @@ export interface ArenaTree {
 export interface ArenaClump { x: number; z: number; scale: number; yaw: number; shade: number }
 
 /** A kind's trees: how many, the annulus, their spacing and size, the style of each (u uniform in 0..1) and any extra
- *  rule for where they stand. */
+ *  rule for where they stand (`where`: made once per placement, the rule for each candidate). */
 interface TreeRule {
   count: number; r: [number, number]; gap: number; scale: [number, number];
   style(u: number): TreeStyle;
-  accept?(x: number, z: number, stage: Stage, seed: number): boolean;
+  where?(stage: Stage, seed: number): (x: number, z: number) => boolean;
   /** The open kinds' trees stand in groves (where a broad noise field passes the threshold), close enough for their crowns
    *  to merge, and show at most `trunk` (× scale) of their trunks: a wood's edge, not single trees on sticks. */
   grove?: { salt: number; over: number; trunk: number };
@@ -47,7 +47,10 @@ const TREES: Partial<Record<ArenaKind, TreeRule>> = {
   plain: { count: 50, r: [13, 34], gap: 2.2, scale: [1.3, 1.8], style: () => 'round', grove: { salt: 0x9e0, over: -0.15, trunk: 0.25 } },
   // (palms stand in the hollows between the dunes, not up on them: out of the camera's view there)
   sand: { count: 8, r: [12, 26], gap: 4, scale: [0.95, 1.2], style: () => 'palm',
-    accept: (x, z, s, seed) => Math.abs(x - s.centre.x) >= 9 && !onDune(duneMounds(seed, s), x, z, 1.1) },
+    where: (s, seed) => {
+      const mounds = duneMounds(seed, s);
+      return (x, z) => Math.abs(x - s.centre.x) >= 9 && !onDune(mounds, x, z, 1.1);
+    } },
   pond: { count: 60, r: [17, 34], gap: 2.0, scale: [1.25, 1.7], style: (u) => (u < 0.5 ? 'round' : 'bushy'), grove: { salt: 0x90e, over: -0.2, trunk: 0.25 } },
 };
 
@@ -63,11 +66,11 @@ const salt = (kind: ArenaKind) => SALT[kind] ?? 0x7ee;
 export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
   const rule = TREES[kind];
   if (!rule) return [];
-  const ko = stageKeepOut(stage);
+  const ko = stageKeepOut(stage), where = rule.where?.(stage, seed);
   const s = seed * 7919 + salt(kind);
   const pts = scatter(s, {
     centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: rule.count, minGap: rule.gap,
-    accept: (x, z) => ko.tallOk(x, z) && (!rule.accept || rule.accept(x, z, stage, seed))
+    accept: (x, z) => ko.tallOk(x, z) && (!where || where(x, z))
       && (!rule.grove || noise2(x * GROVE_FREQ, z * GROVE_FREQ, rule.grove.salt) > rule.grove.over),
   });
   const r = rng(s ^ 0x5eed);

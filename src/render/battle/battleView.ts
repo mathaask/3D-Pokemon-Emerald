@@ -64,6 +64,12 @@ const TODAY_LIGHT = { day: todayLight(1.15, 2.4), night: todayLight(0.7, 0.6), r
 /** The Modern battlers' exposure range (BattleView.applyLook). */
 const EXPOSURE = { min: 0.5, max: 3 };
 const _sunDir = new THREE.Vector3();
+/** Whether two key lists are equal (updateField's, every frame: no closure, no callback). */
+function sameKeys(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 export class BattleView {
   readonly scene = new THREE.Scene();
@@ -223,10 +229,9 @@ export class BattleView {
       key.push(rects.getX(i), rects.getY(i), rects.getZ(i), rects.getW(i), battlerAlphaKey(s, bus.vram, map2d));
       colours.push(battlerPaletteKey(s, bus.pram16));
     }
-    const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, k) => v === b[k]);
-    const fieldSame = this.fieldValid && same(key, this.fieldKey);
+    const fieldSame = this.fieldValid && sameKeys(key, this.fieldKey);
     // (the decisions compare colours: a fade or a flash re-bakes them, the field stays)
-    const xbrSame = fieldSame && same(colours, this.xbrKey);
+    const xbrSame = fieldSame && sameKeys(colours, this.xbrKey);
     if (!fieldSame) {
       this.fieldRects.clearUpdateRanges();
       if (n > 0) this.fieldRects.addUpdateRange(0, n * 4);

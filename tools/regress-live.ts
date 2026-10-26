@@ -938,6 +938,7 @@ async function main(): Promise<void> {
     defaultViewport: { width: VIEW_W, height: VIEW_H, deviceScaleFactor: dpr },
   });
   const failures: string[] = [];
+  const gbaDiffFailures: string[] = []; // GBA pictures whose diff against the reference failed (nothing is removed)
   const errored: string[] = []; // entries that logged page errors
   const missingRefs: string[] = [];
   const selftestFailures: string[] = [];
@@ -1159,7 +1160,7 @@ async function main(): Promise<void> {
             diffs.push(`diff ${name.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
             console.log(`gba  ${name.padEnd(24)} diff ${d.pct.toFixed(2)} % (${d.pixels} px)`);
           } catch (err) {
-            failures.push(name);
+            gbaDiffFailures.push(name);
             console.log(`[${name}] FAILED: ${(err as Error).message}`);
           }
         } else {
@@ -1220,12 +1221,15 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
+  if (gbaDiffFailures.length) console.log(`GBA picture diff failed (the pictures and stats stay): ${gbaDiffFailures.join(', ')}`);
   if (selftestFailures.length) {
     console.log(`self-test failed (no slots, field parity > max(0.02, 0.003·inflateMax) px, xbr > ${XBR_TOL.toFixed(4)} or baked xbr `
       + `> ${XBR_BAKED_VS_LIVE} bytes off the live one) in: ${selftestFailures.join(', ')}`);
   }
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
-  if (pageErrors || missingRefs.length || failures.length || selftestFailures.length || walkFailures.length) process.exitCode = 1;
+  if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((e) => {

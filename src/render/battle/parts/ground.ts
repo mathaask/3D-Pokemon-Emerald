@@ -290,10 +290,21 @@ export function groundDisc(kind: ArenaKind, stage: Stage): THREE.BufferGeometry 
 }
 
 const PN = { position: 3, normal: 3 };
-/** The ground draws after every other opaque thing of the battle (the arena's parts at 0, the battlers and cards at 2;
- *  three sorts opaque objects by render order, then material, then depth): the full-screen terrain shading then runs
- *  only where the ground shows — not under the platforms, battlers and props drawn over it (−2.4 ms on b_grass). The
- *  order changes no pixel: nothing it overlaps lies at its depth. */
+/**
+ * The battle's opaque draw order. three sorts opaque objects by group order (the render order of their nearest Group:
+ * 0 for every battle mesh — the arena's parts, the actors' group), then render order, then material, then depth:
+ *   −1   deep water (parts/water.ts WATER_RENDER_ORDER: the seabed and basins under it are never shaded)
+ *    0   the arena's scenery and rooms (and today's arena: the Retro look)
+ *    2   the battlers and their cards (ACTOR_RENDER_ORDER)
+ *    2.5 the platform tops (TOPS_RENDER_ORDER)
+ *    3   the ground (GROUND_RENDER_ORDER)
+ *    3.5 the Sky Pillar's clouds (parts/skyPillar.ts CLOUD_RENDER_ORDER: under the floor's depth)
+ *   10   the sky (BattleSky: at the far plane, depth-tested; today's sky, under today's arena: −10, drawn first)
+ * (tests/battleRenderOrder.test.ts holds a build to it.) The ground draws after every other opaque thing of the battle
+ * but the clouds and the sky: the full-screen terrain shading then runs only where the ground shows — not under the
+ * platforms, battlers and props drawn over it (−2.4 ms on b_grass). The order changes no pixel: nothing it overlaps lies
+ * at its depth.
+ */
 export const GROUND_RENDER_ORDER = 3;
 /** The platform tops (parts/platforms.ts: the ground's material over cells of their own) draw after the battlers too, but
  *  before the ground: at one render order three draws the lower material id first — the ground's, built first — and the

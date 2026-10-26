@@ -1,12 +1,14 @@
-// The inflation field of the sprite atlas, on the GPU: for every texel of every used slot, the height
-// (sprite px) the inflated actors displace their front sheet by. Four passes over the used slots
-// (instanced quads, sharing the atlas's slot attribute), mirroring inflateMath.ts exactly:
+// The inflation field of the sprite atlas, on the GPU: for every texel of the slots it covers, the height
+// (sprite px) the inflated actors displace their front sheet by. Four passes over those slots
+// (instanced quads, on the caller's slot attribute: the atlas's own for the overworld, the battlers' in a battle),
+// mirroring inflateMath.ts exactly:
 //   1 rows    (atlas → A): distance to the nearest transparent texel of the row (≤ WINDOW, else WINDOW + 1)
 //   2 columns (A → B):     exact Euclidean distance d − 0.5, profile AMP·sqrt(clamp(d, 0, CAP))
 //   3 blur x  (B → A)      4 blur y, masked to the opaque texels (A → B = `texture`)
 // Every read stays inside the sprite's own rectangle (outside it is transparent / 0), so neighbouring
-// slots never bleed into each other. Recomputed whenever the atlas is (sprites animate and change slot
-// every frame); same size and layout as the atlas. Not tied to the overworld (battles can reuse it).
+// slots never bleed into each other. The overworld recomputes it with every atlas update (sprites animate and change
+// slot every frame), the battle only when a battler's slot or tiles change (BattleView.updateField); same size and
+// layout as the atlas. Not tied to the overworld (the battle has an instance of its own, with its own parameters).
 
 import * as THREE from 'three';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
@@ -137,9 +139,11 @@ export class SpriteField {
     return Promise.all(this.passes.map((p) => renderer.compileAsync(p.scene, this.camera))).then(() => undefined);
   }
 
-  /** Draws the 4 passes over the first `count` slots of `slots` (instanced quads, like the atlas). */
+  /** Draws the 4 passes over the first `count` slots of `slots` (instanced quads, like the atlas); every other texel of
+   *  the result is 0. */
   update(renderer: THREE.WebGLRenderer, atlas: THREE.Texture, slots: THREE.InstancedBufferAttribute, count: number): void {
-    // the atlas's own attribute (no copy): the field always covers the slots of the atlas it reads
+    // the caller's slot attribute, not a copy: the overworld's field covers every used slot of the atlas (its own
+    // slotRects), the battle's only its battlers' (BattleView.fieldRects)
     if (this.geometry.getAttribute('aSlotSize') !== slots) this.geometry.setAttribute('aSlotSize', slots);
     this.geometry.instanceCount = count;
     const prev = renderer.getRenderTarget();
