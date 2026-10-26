@@ -1,8 +1,9 @@
 // The horizon's hills: two bands of rolling hills round the back and sides of the outdoor arenas (a near ring and a far
-// one), in the palette's darkened leaf green (sand and mountain: their ground), crests lighter. The battle camera never
+// one), in the palette's darkened leaf green (sand: its ground), crests lighter. (Not the mountain's: its cliff band,
+// parts/rock.ts, stands in front of them, taller than any camera's sight of them.) The battle camera never
 // frames the sky (D1): at its top edge it sees the near ring's slopes rise behind the treeline, the fog carrying them
 // into the haze; the far ring shows when the camera stands higher (the intro sweep, zoomed out). One draw, the kit's
-// soil material, no shadows; the bare kinds' hills moonlit at night as their field (moonlitAsGround).
+// soil material, no shadows; the desert's bare hills moonlit at night as its field (moonlitAsGround).
 
 import * as THREE from 'three';
 import { noise2 } from '../../kit/geom';
@@ -89,14 +90,14 @@ const PNC = { position: 3, normal: 3, color: 3 };
 
 export const HORIZON_PART: ArenaPart = {
   name: 'horizon',
-  kinds: ['grass', 'longGrass', 'plain', 'sand', 'pond', 'mountain'],
+  kinds: ['grass', 'longGrass', 'plain', 'sand', 'pond'],
   catalogue(): readonly CatalogueEntry[] {
     return [{ material: SOIL_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: false }];
   },
   build(ctx) {
     const p = ctx.palette;
-    // (forested hills in the leaf's green; the desert's and the mountain's in their ground's colour)
-    const bare = ctx.kind === 'sand' || ctx.kind === 'mountain';
+    // (forested hills in the leaf's green; the desert's in its ground's colour)
+    const bare = ctx.kind === 'sand';
     const color = bare ? p.ground : p.leaf;
     const ground = (x: number, z: number) => groundHeight(ctx.kind, x, z, ctx.stage);
     const near = ridgeGeometry(1, ctx.stage, { ...NEAR, color: scale(color, bare ? 0.92 : NEAR.shade), ground });
@@ -109,7 +110,7 @@ export const HORIZON_PART: ArenaPart = {
     const mesh = new THREE.Mesh(g, material);
     mesh.castShadow = false;
     mesh.receiveShadow = false;
-    // (the bare kinds' hills, in their ground's warm colour, moonlit at night as their field; leafy hills stay as the trees)
+    // (the desert's bare hills, in its ground's warm colour, moonlit at night as its field; leafy hills stay as the trees)
     moonlitAsGround(mesh, material, toLinear(color), ctx.uniforms.uNight);
     return mesh;
   },

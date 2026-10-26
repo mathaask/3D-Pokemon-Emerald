@@ -2,18 +2,19 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { rockWallGeometry, stalagmiteGeometry, lavaGeometry } from '../src/render/battle/parts/rock';
 import { stageKeepOut } from '../src/render/battle/parts/scatter';
-import { STAGE, GROUND_Y } from '../src/render/battle/stage';
+import { STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
 import {
   BEHIND_REACH, BOULDER_TOP, LAVA_MATERIAL, ROCK_PART, ROCK_RULES, SMALL_FRONT, TALL_SIZE, TIP_SHOWN, WALL_SEED, boulderPlacements,
-  clusterSpires, lavaPools, stalagmitePlacements, wallRadius,
+  clusterSpires, lavaPools, poolRadius, stalagmitePlacements, wallRadius, type LavaPool,
 } from '../src/render/battle/parts/rock';
-import { frameTop, insideEllipse, sightCap } from '../src/render/battle/parts/scatter';
+import { SCENERY_SEED, frameProjector, frameTop, sightCap } from '../src/render/battle/parts/scatter';
 import { arenaClear } from '../src/render/battle/parts/flora';
 import { CAVE_POND, groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { arenaPalette } from '../src/render/battle/palette';
-import { arenaLook } from '../src/render/battle/look';
+import { arenaLook, CAVE_LIGHT } from '../src/render/battle/look';
+import { ARENA_KINDS, ARENA_SETTING } from '../src/render/battle/arenaKind';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { luma, toLinear } from '../src/render/kit/palette';
 import type { ArenaKind } from '../src/render/battle/arenaKind';
@@ -60,6 +61,8 @@ describe('rock arenas', () => {
 describe('rock arenas: bands, placements, the part', () => {
   const ko = stageKeepOut(STAGE), clear = arenaClear(STAGE), cap = sightCap(STAGE), top = frameTop(STAGE);
   const KINDS: ArenaKind[] = ['mountain', 'cave', 'cavePond', 'groudon', 'kyogre'];
+  /** The arenas' seed and a few more: the rules hold whatever the seed. */
+  const SEEDS = [SCENERY_SEED, 2, 3];
   const behind = (x: number, z: number, reach: number) =>
     [STAGE.player, STAGE.enemy].some((p) => z < p.z && z > p.z - reach && Math.abs(x - p.x) < 3.5);
 
@@ -84,11 +87,11 @@ describe('rock arenas: bands, placements, the part', () => {
   });
 
   it('places stalagmites on the rules: tall ones on the tall rule, their tips under the frame top, none behind a battler', () => {
-    for (const kind of KINDS) {
-      const spires = stalagmitePlacements(kind, STAGE, 1), rule = ROCK_RULES[kind]!.spires;
+    for (const seed of SEEDS) for (const kind of KINDS) {
+      const spires = stalagmitePlacements(kind, STAGE, seed), rule = ROCK_RULES[kind]!.spires;
       if (!rule) { expect(spires, kind).toEqual([]); continue; }
       const tall = spires.filter((s) => s.height > 1);
-      expect(tall.length, kind).toBeGreaterThanOrEqual(kind === 'cavePond' ? 6 : 10);
+      if (seed === SCENERY_SEED) expect(tall.length, kind).toBeGreaterThanOrEqual(kind === 'cavePond' ? 6 : 10);
       for (const s of spires) {
         const ground = groundHeight(kind, s.x, s.z, STAGE);
         expect(s.height, kind).toBeLessThanOrEqual(rule.height[1]);
@@ -109,18 +112,29 @@ describe('rock arenas: bands, placements, the part', () => {
     }
   });
 
-  it('keeps boulders, scree and the talus on the rules and off the lava', () => {
-    const pools = lavaPools(STAGE, 1);
-    expect(pools.length).toBeGreaterThanOrEqual(3); expect(pools.length).toBeLessThanOrEqual(5);
-    for (const p of pools) {
-      for (let q = 0; q < 24; q++) {
-        const a = (q / 24) * Math.PI * 2, x = p.x + Math.cos(a) * p.r * 1.3, z = p.z + Math.sin(a) * p.r * 1.3;
-        expect(clear(x, z) && ko.ellipses.every((e) => !insideEllipse(e, x, z)), 'pool off the platforms').toBe(true);
-      }
-      expect(Math.hypot(p.x - STAGE.centre.x, p.z - STAGE.centre.z)).toBeGreaterThanOrEqual(7 - 1e-9);
+  it("places Groudon's lava against the frame: two pools in the idle frame (over the text box), every pool in one", () => {
+    const frames = [0, -0.9, 0.9].map((y) => frameProjector(STAGE, y)), v = new THREE.Vector3();
+    for (const seed of SEEDS) {
+      const pools = lavaPools(STAGE, seed);
+      expect(pools.length, `seed ${seed}`).toBeGreaterThanOrEqual(3); expect(pools.length).toBeLessThanOrEqual(5);
+      // (the pools' own geometry: its outline off the platforms (the brief's test) and the strip in front of the player's)
+      const p = lavaGeometry(seed, STAGE, pools).getAttribute('position');
+      for (let i = 0; i < p.count; i++) expect(clear(p.getX(i), p.getZ(i)), 'pool off the strip').toBe(true);
+      // (its middle: the centre and half its radius out — the rim may run past the frame's edge)
+      const shows = (pool: LavaPool, f: (typeof frames)[number]) => Array.from({ length: 25 }, (_, q) => {
+        const a = (q / 24) * Math.PI * 2, d = q === 24 ? 0 : poolRadius(pool, a) * 0.5;
+        return f(pool.x + Math.cos(a) * d, GROUND_Y, pool.z + Math.sin(a) * d, v);
+      }).every((n) => n.z < 1 && Math.abs(n.x) <= 0.9 && n.y <= 0.85 && n.y >= -0.35);
+      expect(pools.filter((pool) => shows(pool, frames[0])).length, `seed ${seed} idle`).toBeGreaterThanOrEqual(2);
+      for (const pool of pools) expect(frames.some((f) => shows(pool, f)), `seed ${seed} framed`).toBe(true);
+      for (const pool of pools) expect(Math.hypot(pool.x - STAGE.centre.x, pool.z - STAGE.centre.z)).toBeGreaterThanOrEqual(4.5 * 0.75 - 1e-9);
     }
-    for (const kind of KINDS) {
-      const rocks = boulderPlacements(kind, STAGE, 1);
+  });
+
+  it('keeps boulders, scree and the talus on the rules and off the lava', () => {
+    for (const seed of SEEDS) for (const kind of KINDS) {
+      const pools = kind === 'groudon' ? lavaPools(STAGE, seed) : [];
+      const rocks = boulderPlacements(kind, STAGE, seed, pools);
       expect(rocks.length, kind).toBeGreaterThan(5);
       for (const b of rocks) {
         if (b.size >= TALL_SIZE) expect(ko.tallOk(b.x, b.z), `${kind} tall boulder`).toBe(true);
@@ -129,10 +143,10 @@ describe('rock arenas: bands, placements, the part', () => {
         if (r < ROCK_RULES[kind]!.band.r - 4) {
           expect(groundHeight(kind, b.x, b.z, STAGE) + b.size * BOULDER_TOP <= cap(b.x, b.z) || b.size >= TALL_SIZE, `${kind} scree cap`).toBe(true);
         }
-        if (kind === 'groudon') for (const p of pools) expect(Math.hypot(p.x - b.x, p.z - b.z), 'off the lava').toBeGreaterThan(p.r * 1.28);
+        for (const p of pools) expect(Math.hypot(p.x - b.x, p.z - b.z), 'off the lava').toBeGreaterThan(p.r * 1.28);
       }
+      for (const s of stalagmitePlacements(kind, STAGE, seed, pools)) for (const p of pools) expect(Math.hypot(p.x - s.x, p.z - s.z)).toBeGreaterThan(p.r * 1.28);
     }
-    for (const s of stalagmitePlacements('groudon', STAGE, 1)) for (const p of pools) expect(Math.hypot(p.x - s.x, p.z - s.z)).toBeGreaterThan(p.r * 1.28);
   });
 
   it("builds one rock draw per kind (cliff material, casting) and Groudon's lava (emissive, in the background's accent)", () => {
@@ -178,5 +192,23 @@ describe('rock arenas: bands, placements, the part', () => {
     // (their light: the cave and the cave pond lit warm and bright enough that the tonemapper keeps the tan's blue)
     const look = arenaLook('cave', cave, 12);
     expect(look.sunI * look.sunColor.b + look.hemiI * look.sky.b).toBeGreaterThan(2.5);
+    // (every cave kind has a light of its own: the per-frame look never falls back silently)
+    for (const k of ARENA_KINDS) if (ARENA_SETTING[k] === 'cave') expect(CAVE_LIGHT[k], k).toBeDefined();
+    // (the mountain's cliff paler than its gravel, as the GBA's mountain is pale)
+    expect(luma(p('mountain').rock)).toBeGreaterThan(luma(p('mountain').ground) + 0.06);
+  });
+
+  it("darkens Kyogre's band and rubble at the waterline (wet rock: no grey lumps on the water)", () => {
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('kyogre', defaultArenaColors('kyogre'), 'medium')).toBe(true);
+    const g = (arena.group.getObjectByName('rockWalls') as THREE.Mesh).geometry;
+    const p = g.getAttribute('position'), c = g.getAttribute('color');
+    const mean = (y0: number, y1: number) => {
+      let s = 0, n = 0;
+      for (let i = 0; i < p.count; i++) if (p.getY(i) >= y0 && p.getY(i) < y1) { s += c.getX(i) + c.getY(i) + c.getZ(i); n++; }
+      return s / n;
+    };
+    expect(mean(WATER_Y - 0.1, WATER_Y + 0.04)).toBeLessThan(mean(WATER_Y + 0.6, WATER_Y + 1.2) * 0.7);
+    arena.dispose();
   });
 });

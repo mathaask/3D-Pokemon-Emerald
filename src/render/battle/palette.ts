@@ -37,8 +37,9 @@ const copy = (c: RGB): RGB => [c[0], c[1], c[2]];
  * grass / longGrass / plain: the field Grass from the platform's green (soften(scale(c.platform, 0.78 / 0.9 / 1.0))), a
  * worn earth Path ring (earthTone(c.rim)), lush Grass tops on soil sides, a lush rim-coloured grass skirt; sand: Sand
  * field and tops; water / kyogre: a sandy seabed under the platform's water colour, the rim's foam (Kyogre's rock a wet
- * blue-grey); pond: a grass shore around the pond (lily pads in the rim's green); cavePond: a bank and rock of warm tan
- * cave stone (CAVE_TAN); underwater: pale turquoise sand, kelp, rocks; mountain: Gravel field, Rock path and tops; cave:
+ * blue-grey); pond: a grass shore around the pond (lily pads in the rim's green); cavePond: a Dirt bank and rock of warm
+ * tan cave stone (CAVE_TAN); underwater: pale turquoise sand, kelp, rocks; mountain: Gravel field, Rock path and tops, a
+ * pale stone cliff; cave:
  * a smooth warm tan Dirt floor from the backdrop, its rock the backdrop towards the top band's brown, Rock tops from the
  * platform fill; groudon: a cracked volcanic Rock floor, red-brown volcanic rock, its lava the top band; building: Deck floor, Paving tops; gym … champion: Paving floor and tops (the
  * Stadium kinds' walls from the dark top band); rayquaza: pale Paving. Unlisted fields: path = ground, skirt = blade and
@@ -98,7 +99,7 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
       // (a cave of warm tan rock round the pond: its picture's pale backdrop turned to the cave's stone)
       const stone = soften(mix(c.backdrop, CAVE_TAN, 0.85)), ground = scale(stone, 0.8);
       p = {
-        groundMat: GroundMat.Rock, ground, pathMat: GroundMat.Rock, path: ground,
+        groundMat: GroundMat.Dirt, ground, pathMat: GroundMat.Rock, path: ground,
         platformMat: GroundMat.Rock, platformTop: copy(c.rim), platformSide: scale(ground, 0.8), skirt: lush(c.rim),
         leaf, trunk: TRUNK, blade: lush(c.rim), rock: scale(stone, 0.9), water: copy(c.platform),
         wall: copy(c.backdrop), accent: copy(c.top),
@@ -117,11 +118,13 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
       break;
     }
     case 'mountain': {
-      const side = scale(soften(c.platform), 0.8);
+      // (Task 9: its cliff a pale warm stone, the platform's beige turned half way to the GBA's pale backdrop — lighter than
+      // the gravel, as the GBA's mountain is pale; the platform's beige × 0.8 read khaki-olive, the gravel's own tone)
+      const side = scale(soften(c.platform), 0.8), cliff = soften(mix(c.platform, c.backdrop, 0.55));
       p = {
         groundMat: GroundMat.Gravel, ground: soften(c.platform), pathMat: GroundMat.Rock, path: soften(c.rim),
         platformMat: GroundMat.Rock, platformTop: soften(c.rim), platformSide: side, skirt: blade,
-        leaf, trunk: TRUNK, blade, rock: side, water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
+        leaf, trunk: TRUNK, blade, rock: cliff, water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
       };
       break;
     }

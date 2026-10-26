@@ -15,11 +15,11 @@ import { mix, scale, toLinear, type RGB } from '../../kit/palette';
 import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaContext, ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, type Stage } from '../stage';
+import { GROUND_Y, WATER_Y, type Stage } from '../stage';
 import { CAVE_POND, groundHeight, moonlitAsGround } from './ground';
 import { rockCluster } from './rocks';
 import { arenaClear } from './flora';
-import { SCENERY_SEED, frameTop, insideEllipse, scatter, sightCap, stageKeepOut } from './scatter';
+import { SCENERY_SEED, frameProjector, frameTop, insideEllipse, scatter, sightCap, stageKeepOut } from './scatter';
 
 // ------------------------------------------------------------------------------------------------- the cliff band
 
@@ -30,9 +30,12 @@ export interface WallBand { r: number; arc: number; height: [number, number] }
 /** The band's build: a column every `col` units along the arc, `rows` vertex rows per unit of height from `foot` under
  *  the ground; its relief (noise3, radial, ±`displace` at `freq` per unit); its radius wandering ±`wobble` along the arc;
  *  its face leaning back `lean` per unit up; strata `layer` units thick, each bulging `bulge` towards the stage between
- *  grooves (up to: the ledges come and go along the band); a rounded lip of radius `lip` on top; its heights falling to `endHeight` over the arc's last (1 − `end`). */
+ *  grooves (up to: the ledges come and go along the band); buttresses standing out up to `buttress` and alcoves sunk up
+ *  to `alcove` along it (a noise2 every ≈ 1 / `bays` units: the camera frames only the band's lowest ≈ 1.2–1.6 units —
+ *  they break its line there, the strata stepping `step` up or down across them); a rounded lip of radius `lip` on top;
+ *  its heights falling to `endHeight` over the arc's last (1 − `end`). */
 const WALL = { col: 1.2, rows: 4, foot: 0.3, displace: 0.35, freq: 0.3, wobble: 1.0, lean: 0.18, layer: [0.45, 0.95] as const,
-  bulge: 0.24, lip: 0.6, end: 0.85, endHeight: 0.6 };
+  bulge: 0.24, buttress: 1.3, alcove: 0.9, bays: 0.17, step: 0.45, lip: 0.6, end: 0.85, endHeight: 0.6 };
 
 /** The seed every band is built with (the talus at its foot must agree on it). */
 export const WALL_SEED = SCENERY_SEED * 17 + 3;
@@ -89,8 +92,12 @@ export function rockWallGeometry(seed: number, stage: Stage, band: WallBand, col
     const end = 1 - smooth(band.arc * W.end, band.arc, Math.abs(a));
     const h = W.endHeight + (h0 + (h1 - h0) * hn - W.endHeight) * end;
     const lip = Math.min(W.lip, h * 0.4), top = g + h, foot = g - W.foot;
-    // (the strata slant a little along the band)
-    const slant = 0.22 * noise2(u * 0.12 + o, seed * 0.7, 0x5a7);
+    // the buttresses and alcoves: out towards the stage where a noise along the band is high, sunk where it is low; a
+    // buttress spreads at its foot (wider and further out at the ground, as rock fallen from it)
+    const bay = noise2(u * W.bays + o, seed * 0.9, 0xb7e);
+    const out = smooth(0.12, 0.5, bay), sunk = smooth(0.15, 0.55, -bay);
+    // (the strata slant a little along the band, and step across the buttresses)
+    const slant = 0.22 * noise2(u * 0.12 + o, seed * 0.7, 0x5a7) + W.step * bay;
     let li = 0;
     for (let k = 0; k < rows; k++) {
       const y = foot + ((top - foot) * k) / K, yy = y - g;
@@ -100,7 +107,8 @@ export function rockWallGeometry(seed: number, stage: Stage, band: WallBand, col
       const f = (ys - st.at[li]) / (st.at[li + 1] - st.at[li]);
       // (each stratum's ledge comes and goes along the band)
       const ledge = 0.3 + 0.7 * THREE.MathUtils.clamp(0.5 + 0.6 * noise2(u * 0.14 + li * 3.7, li * 1.9, 0xb17), 0, 1);
-      let rad = rs + W.lean * Math.max(0, yy) - W.bulge * ledge * bump(f);
+      let rad = rs + W.lean * Math.max(0, yy) - W.bulge * ledge * bump(f)
+        - W.buttress * out * (1 - 0.45 * smooth(0, 3, yy)) + W.alcove * sunk * (1 - 0.6 * smooth(2, 6, yy));
       // (the lip: within its radius of the top the face rounds back over)
       const dl = y - (top - lip);
       if (dl > 0) rad += lip - Math.sqrt(Math.max(0, lip * lip - dl * dl));
@@ -110,7 +118,7 @@ export function rockWallGeometry(seed: number, stage: Stage, band: WallBand, col
       // darker at the foot, the stratum's shade, darker in the grooves, a little variation along the band, a lighter lip
       const sh = st.shade[li];
       const k0 = (0.8 + 0.2 * smooth(-0.1, 0.6, yy)) * (0.9 + 0.1 * bump(f)) * (0.93 + 0.14 * noise2(u * 0.09, y * 0.15, 0x5ad))
-        * (1 + 0.12 * smooth(0, lip, dl));
+        * (1 + 0.12 * smooth(0, lip, dl)) * (1 + 0.08 * out - 0.16 * sunk * (1 - smooth(2, 6, yy)));
       col[i] = base[0] * sh[0] * k0; col[i + 1] = base[1] * sh[1] * k0; col[i + 2] = base[2] * sh[2] * k0;
     }
   }
@@ -239,12 +247,13 @@ export const ROCK_RULES: Partial<Record<ArenaKind, RockRule>> = {
     scree: { count: 10, r: [6, 14], size: [0.2, 0.6] }, lava: true },
   cavePond: { band: { r: 21, arc: 1.7, height: [10, 16] }, talus: { per: 0.5, size: [0.4, 1.3] },
     spires: { count: [10, 14], r: [13, 20], height: [1.5, 4], small: [0, 0] } },
-  kyogre: { band: { r: 19, arc: 1.7, height: [10, 16] }, talus: { per: 0.3, size: [0.5, 1.4] } },
+  kyogre: { band: { r: 19, arc: 1.7, height: [10, 16] }, talus: { per: 0.25, size: [0.8, 1.6] } },
 };
 
-/** Off the kind's lava pools (their banks and a little more). */
-function offLava(kind: ArenaKind, stage: Stage, seed: number): (x: number, z: number) => boolean {
-  const pools = ROCK_RULES[kind]?.lava ? lavaPools(stage, seed) : [];
+/** A kind's lava pools (lavaPools: Groudon's; none elsewhere). */
+const kindPools = (kind: ArenaKind, stage: Stage, seed: number): LavaPool[] => (ROCK_RULES[kind]?.lava ? lavaPools(stage, seed) : []);
+/** Off `pools` (their banks and a little more). */
+function offLava(pools: readonly LavaPool[]): (x: number, z: number) => boolean {
   return (x, z) => pools.every((p) => Math.hypot(p.x - x, p.z - z) > p.r * (1 + LAVA.wobble) + LAVA.margin + 0.4);
 }
 
@@ -266,14 +275,15 @@ const onPondBank = (stage: Stage, x: number, z: number) =>
  *  1.1 units is left out); small ones (≤ 1 unit) off the platforms and the strip in front of the player's, under the
  *  camera's sight lines to the platforms, beside or behind the stage (SMALL_FRONT); the cave pond's on its bank. Some
  *  stand in clusters (1–3 spires: clusterSpires). */
-export function stalagmitePlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaSpire[] {
+export function stalagmitePlacements(kind: ArenaKind, stage: Stage, seed: number,
+  pools: readonly LavaPool[] = kindPools(kind, stage, seed)): ArenaSpire[] {
   const rule = ROCK_RULES[kind]?.spires;
   if (!rule) return [];
   const band = ROCK_RULES[kind]!.band;
   const r = rng(seed * 7307 + 0x5917);
   const n = rule.count[0] + Math.floor(r() * (rule.count[1] - rule.count[0] + 1));
   const ko = stageKeepOut(stage), clear = arenaClear(stage), cap = sightCap(stage), top = frameTop(stage);
-  const lava = offLava(kind, stage, seed);
+  const lava = offLava(pools);
   const bank = kind === 'cavePond' ? (x: number, z: number) => onPondBank(stage, x, z) : lava;
   const r1 = Math.min(rule.r[1], band.r - SPIRE_BAND_GAP);
   const tall = scatter(seed * 7307 + 0x7a11, { centre: stage.centre, r0: rule.r[0], r1, count: n, minGap: 2.2,
@@ -313,11 +323,12 @@ export const BOULDER_TOP = 0.65, TALL_SIZE = 1.1;
 /** A kind's boulders: clusters at the stage's sides (on the tall rule, out from behind the battlers), scree on the ground
  *  (off the platforms and the strip in front of the player's, under the sight lines: a stone whose top would cross them
  *  is left out; wide ones on the tall rule) and the talus along its band's foot. */
-export function boulderPlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaBoulder[] {
+export function boulderPlacements(kind: ArenaKind, stage: Stage, seed: number,
+  pools: readonly LavaPool[] = kindPools(kind, stage, seed)): ArenaBoulder[] {
   const rule = ROCK_RULES[kind];
   if (!rule) return [];
   const r = rng(seed * 4241 + 0xb01d);
-  const ko = stageKeepOut(stage), clear = arenaClear(stage), cap = sightCap(stage), lava = offLava(kind, stage, seed);
+  const ko = stageKeepOut(stage), clear = arenaClear(stage), cap = sightCap(stage), lava = offLava(pools);
   const cx = stage.centre.x, cz = stage.centre.z;
   const seeds = () => Array.from({ length: 1 + Math.floor(r() * 3) }, () => Math.floor(r() * 1e6));
   const out: ArenaBoulder[] = [];
@@ -362,47 +373,112 @@ export function boulderPlacements(kind: ArenaKind, stage: Stage, seed: number): 
 /** A lava pool: its centre, its radius (its outline wanders ± `wobble` of it) and its seed. */
 export interface LavaPool { x: number; z: number; r: number; seed: number }
 /** Lava pools: radii, how far their outlines wander, the annulus, their spacing, the margin their banks keep off the
- *  platforms and the strip in front of the player's; their surface this far over the ground. */
-const LAVA = { count: [3, 5] as const, r: [1.3, 2.3] as const, wobble: 0.28, ring: [7, 14] as const, gap: 4, margin: 0.8, y: 0.02, rings: 3, segments: 28 };
-
+ *  platforms and the strip in front of the player's, the ground behind each battler they keep off (its silhouette's: this
+ *  far to its side, up to `reach` behind it); darts per pool; their surface this far over the ground. */
+const LAVA = { count: [3, 5] as const, r: [1.2, 2.1] as const, wobble: 0.28, ring: [4.5, 14] as const, gap: 2, margin: 0.8,
+  behind: { half: 2.2, reach: 8 }, tries: 400, y: 0.02, rings: 3, segments: 28 };
 /** A pool's outline radius at angle `a` (its rim wanders by noise2). */
-function poolRadius(p: LavaPool, a: number): number {
+export function poolRadius(p: LavaPool, a: number): number {
   const o = (p.seed % 991) * 0.71;
   return p.r * (1 + LAVA.wobble * noise2(Math.cos(a) * 1.3 + o, Math.sin(a) * 1.3 - o, 0x1a4a));
 }
 
-/** Groudon's lava pools: 3–5 (the seed picks), r 7–14 from the stage centre, their outlines and banks (+ LAVA.margin) off
- *  the platforms × 1.25 (the keep-outs), the strip in front of the player's and the ground behind the battlers (8 units:
- *  their glow beside a silhouette), on the ground the camera frames. */
+/** A pool shows in a frame when its middle — its centre and the points half its radius out — projects inside it, this
+ *  far in from its sides and its top, over its bottom third (the GBA's text box covers that in play). */
+const LAVA_FRAMED = { side: 0.9, top: 0.85, bottom: -0.35, margin: 0.5 };
+/** The frames the pools are placed against: the idle camera's (every pool shows there), then the ones it swings to. */
+const LAVA_YAWS = [0, -0.9, 0.9];
+/** A battler as the pools keep off it in the idle frame: a box this wide and tall (world units: a 64-px sprite is 2) on its
+ *  platform, projected — a pool's middle never lies in it (behind or before the battler: its glow round a silhouette;
+ *  its rim may peek past one). */
+const BATTLER_BOX = { half: 1.0, depth: 0.3, height: 2.0 };
+/** A frame (frameProjector) and the battlers' boxes in it (NDC x0, y0, x1, y1). */
+interface LavaFrame { project: ReturnType<typeof frameProjector>; boxes: [number, number, number, number][] }
+function lavaFrame(stage: Stage, yaw: number): LavaFrame {
+  const project = frameProjector(stage, yaw), B = BATTLER_BOX;
+  const boxes = [stage.player, stage.enemy].map((p): [number, number, number, number] => {
+    const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const dx of [-B.half, B.half]) for (const dz of [-B.depth, B.depth]) for (const y of [0, B.height]) {
+      const v = project(p.x + dx, y, p.z + dz, _v);
+      box[0] = Math.min(box[0], v.x); box[1] = Math.min(box[1], v.y); box[2] = Math.max(box[2], v.x); box[3] = Math.max(box[3], v.y);
+    }
+    return box;
+  });
+  return { project, boxes };
+}
+/** A pool's middle: its centre and 8 points LAVA_FRAMED.margin of its radius out. */
+function poolMiddle(p: LavaPool, each: (x: number, z: number) => boolean): boolean {
+  if (!each(p.x, p.z)) return false;
+  for (let q = 0; q < 8; q++) {
+    const a = (q / 8) * Math.PI * 2, d = poolRadius(p, a) * LAVA_FRAMED.margin;
+    if (!each(p.x + Math.cos(a) * d, p.z + Math.sin(a) * d)) return false;
+  }
+  return true;
+}
+/** Whether a pool shows in a frame (LAVA_FRAMED); `clear`: and its middle lies over neither battler's box there. */
+function poolShows(p: LavaPool, f: LavaFrame, clear = false): boolean {
+  return poolMiddle(p, (x, z) => {
+    const v = f.project(x, GROUND_Y, z, _v);
+    if (v.z >= 1 || Math.abs(v.x) > LAVA_FRAMED.side || v.y > LAVA_FRAMED.top || v.y < LAVA_FRAMED.bottom) return false;
+    return !clear || !f.boxes.some((b) => v.x > b[0] && v.x < b[2] && v.y > b[1] && v.y < b[3]);
+  });
+}
+const _v = new THREE.Vector3();
+
+/** Groudon's lava pools: 3–5 (the seed picks), radius 1.2–2.1, r 4.5–14 from the stage centre (the brief's 7–14 left the
+ *  mid-ground beside the stage bare), placed against the frame: each shows in the idle camera's frame where one fits
+ *  (LAVA_FRAMED: over the text box, its middle off the battlers' boxes) — the first two the nearest darts that do, the rest
+ *  those showing in most of the frames the camera swings to (yaw ∓0.9) as well, then the nearest; a pool that fits there
+ *  nowhere is tried a quarter smaller, then in any of the three frames (its middle off the battlers' boxes there): the
+ *  idle frame, between and round its battlers, holds two; the rest show as the camera swings. Their outlines and banks
+ *  (+ LAVA.margin) keep off the platforms × 1.25 (the keep-outs) and the strip in front of the player's, their outlines
+ *  off the ground just behind each battler (LAVA.behind); a pool that fits nowhere at all is left out. */
 export function lavaPools(stage: Stage, seed: number): LavaPool[] {
   const r = rng(seed * 3371 + 0x1a4a);
   const n = LAVA.count[0] + Math.floor(r() * (LAVA.count[1] - LAVA.count[0] + 1));
-  const ko = stageKeepOut(stage), clear = arenaClear(stage);
+  const ko = stageKeepOut(stage), clear = arenaClear(stage), frames = LAVA_YAWS.map((y) => lavaFrame(stage, y));
   const radii = Array.from({ length: n }, () => LAVA.r[0] + (LAVA.r[1] - LAVA.r[0]) * r());
   const seeds = Array.from({ length: n }, () => Math.floor(r() * 1e6));
-  let k = 0;
-  const fits = (x: number, z: number) => {
-    const p: LavaPool = { x, z, r: radii[k], seed: seeds[k] };
+  const behind = (x: number, z: number) => [stage.player, stage.enemy].some((p) =>
+    z < p.z && z > p.z - LAVA.behind.reach && Math.abs(x - p.x) < LAVA.behind.half);
+  const fits = (p: LavaPool) => {
     for (let q = 0; q < 24; q++) {
-      const a = (q / 24) * Math.PI * 2, d = poolRadius(p, a) + LAVA.margin;
-      const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
-      if (ko.ellipses.some((e) => insideEllipse(e, px, pz)) || !clear(px, pz) || behindBattler(stage, px, pz, 8)) return false;
+      const a = (q / 24) * Math.PI * 2, d = poolRadius(p, a), c = Math.cos(a), s = Math.sin(a);
+      const bx = p.x + c * (d + LAVA.margin), bz = p.z + s * (d + LAVA.margin);
+      if (ko.ellipses.some((e) => insideEllipse(e, bx, bz)) || !clear(bx, bz) || behind(p.x + c * d, p.z + s * d)) return false;
     }
     return true;
   };
   const out: LavaPool[] = [];
-  // (one pool at a time: each tries its own radius)
-  for (; k < n; k++) {
-    const pts = scatter(seed * 3371 + 0x7001 + k * 0x101, { centre: stage.centre, r0: LAVA.ring[0], r1: LAVA.ring[1], count: 1, minGap: 0,
-      accept: (x, z) => fits(x, z) && out.every((o) => Math.hypot(o.x - x, o.z - z) >= o.r + radii[k] + LAVA.gap) });
-    if (pts.length) out.push({ x: pts[0].x, z: pts[0].z, r: radii[k], seed: seeds[k] });
+  const cx = stage.centre.x, cz = stage.centre.z, [r0, r1] = LAVA.ring;
+  const darts = rng(seed * 3371 + 0x7001);
+  const near = (p: LavaPool) => Math.hypot(p.x - cx, p.z - cz);
+  for (let k = 0; k < n; k++) {
+    // (in the idle frame; else a quarter smaller there; else in any of the frames)
+    const passes = [{ idle: true, scale: 1 }, { idle: true, scale: 0.75 }, { idle: false, scale: 1 }];
+    let best: { p: LavaPool; score: number } | null = null;
+    for (const pass of passes) {
+      const pr = Math.max(LAVA.r[0] * 0.75, radii[k] * pass.scale);
+      for (let t = 0; t < LAVA.tries; t++) {
+        const rad = Math.sqrt(r0 * r0 + darts() * (r1 * r1 - r0 * r0)), ang = darts() * Math.PI * 2;
+        const p: LavaPool = { x: cx + Math.cos(ang) * rad, z: cz + Math.sin(ang) * rad, r: pr, seed: seeds[k] };
+        if (!out.every((o) => Math.hypot(o.x - p.x, o.z - p.z) >= (o.r + p.r) * (1 + LAVA.wobble) + LAVA.gap)) continue;
+        if (pass.idle ? !poolShows(p, frames[0], true) : !frames.some((f) => poolShows(p, f, true))) continue;
+        if (!fits(p)) continue;
+        // (the first two: the nearest; the rest: shown in most of the swung frames, then the nearest)
+        const swung = k < 2 ? 0 : (poolShows(p, frames[1]) ? 1 : 0) + (poolShows(p, frames[2]) ? 1 : 0);
+        const score = swung * 100 - near(p);
+        if (!best || score > best.score) best = { p, score };
+      }
+      if (best) break;
+    }
+    if (best) out.push(best.p);
   }
   return out;
 }
 
 /** Irregular flat lava pools at GROUND_Y + 0.02 (position, normal), outside the keep-outs (lavaPools). */
-export function lavaGeometry(seed: number, stage: Stage): THREE.BufferGeometry {
-  const pools = lavaPools(stage, seed);
+export function lavaGeometry(seed: number, stage: Stage, pools: readonly LavaPool[] = lavaPools(stage, seed)): THREE.BufferGeometry {
   const R = LAVA.rings, S = LAVA.segments, per = 1 + R * S;
   const pos = new Float32Array(Math.max(1, pools.length * per) * 3), nor = new Float32Array(pos.length);
   const idx: number[] = [];
@@ -500,6 +576,17 @@ export const LAVA_MATERIAL: KitMaterialOptions = {
 
 const PN = { position: 3, normal: 3 }, PNC = { position: 3, normal: 3, color: 3 };
 
+/** Wet rock at a waterline: under it and up to WET.band[0] over it, the vertex colours × (1 − WET.dark) — a dark wet band
+ *  where the band and its rubble meet Kyogre's water (they read as grey lumps on it) —, fading out by WET.band[1]. */
+const WET = { dark: 0.45, band: [0.04, 0.42] as const };
+export function wetBand(g: THREE.BufferGeometry, waterY: number): void {
+  const p = g.getAttribute('position'), c = g.getAttribute('color');
+  for (let i = 0; i < p.count; i++) {
+    const k = 1 - WET.dark * (1 - smooth(WET.band[0], WET.band[1], p.getY(i) - waterY));
+    c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k);
+  }
+}
+
 /** `g` (non-indexed: the boulders) with an index of its own vertices in order (merged with the indexed band). */
 function indexed(g: THREE.BufferGeometry): THREE.BufferGeometry {
   if (!g.index) g.setIndex(Array.from({ length: g.getAttribute('position').count }, (_, i) => i));
@@ -530,18 +617,21 @@ export const ROCK_PART: ArenaPart = {
     const group = new THREE.Group();
     // (the band rises from the ground the arena lies on: the mountain's rolls; Kyogre's stands in its water)
     const ground = kind === 'mountain' ? (x: number, z: number) => groundHeight(kind, x, z, stage) : () => GROUND_Y;
+    // (the lava pools once: the stalagmites and the boulders keep off them)
+    const pools = kindPools(kind, stage, SCENERY_SEED);
     const parts: THREE.BufferGeometry[] = [rockWallGeometry(WALL_SEED, stage, rule.band, colors.wall, ground)];
-    for (const s of stalagmitePlacements(kind, stage, SCENERY_SEED)) {
+    for (const s of stalagmitePlacements(kind, stage, SCENERY_SEED, pools)) {
       parts.push(stalagmiteCluster(s.seeds, s.height, colors.spire).translate(s.x, groundHeight(kind, s.x, s.z, stage), s.z));
     }
-    for (const b of boulderPlacements(kind, stage, SCENERY_SEED)) {
-      const y = kind === 'kyogre' ? GROUND_Y : groundHeight(kind, b.x, b.z, stage);
+    for (const b of boulderPlacements(kind, stage, SCENERY_SEED, pools)) {
+      // (Kyogre's stand in its water, a quarter of their width under it, as the sea's rocks: water.ts ROCK_SINK)
+      const y = kind === 'kyogre' ? WATER_Y - 0.13 * b.size : groundHeight(kind, b.x, b.z, stage);
       parts.push(indexed(rockCluster(b.seeds, b.size, colors.boulder)).translate(b.x, y - 0.12 * b.size, b.z));
     }
-    const pools = rule.lava ? lavaPools(stage, SCENERY_SEED) : [];
     for (const p of pools) parts.push(lavaBankGeometry(p, scale(palette.rock, 0.55), mix(palette.accent, palette.rock, 0.35), palette.ground));
     const g = mergeGeometries(parts)!;
     for (const x of parts) x.dispose();
+    if (kind === 'kyogre') wetBand(g, WATER_Y);
     g.computeBoundingSphere();
     const material = kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material;
     const mesh = new THREE.Mesh(g, material);
@@ -552,7 +642,7 @@ export const ROCK_PART: ArenaPart = {
     if (ARENA_SETTING[kind] === 'outdoor') moonlitAsGround(mesh, material, toLinear(palette.rock), ctx.uniforms.uNight);
     group.add(mesh);
     if (pools.length) {
-      const lava = new THREE.Mesh(lavaGeometry(SCENERY_SEED, stage),
+      const lava = new THREE.Mesh(lavaGeometry(SCENERY_SEED, stage, pools),
         kitMaterial(ctx.uniforms, { ...LAVA_MATERIAL, uniforms: { uLava: { value: new THREE.Color(...toLinear(palette.accent)) } } }).material);
       lava.name = 'lava';
       lava.receiveShadow = true;

@@ -188,7 +188,7 @@ describe('arena scenery', () => {
     for (const p of palms) expect(onDune(mounds, p.x, p.z)).toBe(false);
   });
 
-  it("moonlights the bare kinds' hills, the dunes, dry tufts and warm rocks at night; leafy hills and green grass as they are", () => {
+  it("moonlights the bare kinds' hills, the dunes, dry tufts and warm rocks (the mountain's cliff) at night; leafy hills and green grass as they are", () => {
     const u = createKitUniforms();
     const dummy = [null, null, null, null, null, null] as unknown as Parameters<THREE.Object3D['onBeforeRender']>;
     const night = (kind: 'sand' | 'mountain' | 'grass') => {
@@ -199,10 +199,11 @@ describe('arena scenery', () => {
         arena.group.children.find((c) => c.name === name)?.traverse((m) => { if ((m as THREE.Mesh).isMesh) out.push(m as THREE.Mesh); });
         return out.filter((m) => m.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender);
       };
-      const res = { hills: hooked('horizon'), dunes: hooked('dunes'), grass: hooked('flora').filter((m) => m.name.startsWith('grass:')) };
+      const res = { hills: hooked('horizon'), dunes: hooked('dunes'), grass: hooked('flora').filter((m) => m.name.startsWith('grass:')),
+        rock: hooked('rock') };
       // (at full night the hooked materials' colour moves off white towards the lifted neutral)
       u.uNight.value = 1;
-      for (const m of [...res.hills, ...res.dunes, ...res.grass]) {
+      for (const m of [...res.hills, ...res.dunes, ...res.grass, ...res.rock]) {
         m.onBeforeRender(...dummy);
         const c = (m.material as THREE.MeshStandardMaterial).color;
         expect(c.r !== 1 || c.g !== 1 || c.b !== 1, `${kind} ${m.name}`).toBe(true);
@@ -215,7 +216,9 @@ describe('arena scenery', () => {
     expect(sand.hills.length).toBe(1);
     expect(sand.dunes.length).toBe(1);
     expect(sand.grass.length).toBeGreaterThan(0);
-    expect(mountain.hills.length).toBe(1);
+    // (Task 9: the mountain has no hills — its cliff band stands in front of them —, its cliff is moonlit instead)
+    expect(mountain.hills.length).toBe(0);
+    expect(mountain.rock.length).toBe(1);
     expect(grass.hills.length).toBe(0);
     expect(grass.grass.length).toBe(0);
   });

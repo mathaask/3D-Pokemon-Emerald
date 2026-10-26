@@ -173,3 +173,15 @@ export function frameTop(stage: Stage, yaws: readonly number[] = SIGHT_YAWS): (x
     return top;
   };
 }
+
+/** The settled battle camera at user yaw `yaw` (battleCamera, its 24° field of view; `aspect` the window's, default the
+ *  harness's 1280 × 800) as a projection: world (x, y, z) → normalised device coordinates into `out` (x, y in −1..1
+ *  inside the frame, z < 1 in front of the camera). */
+export function frameProjector(stage: Stage, yaw: number, aspect = 1.6): (x: number, y: number, z: number, out: THREE.Vector3) => THREE.Vector3 {
+  const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(CAMERA_FOV), aspect, 0.1, 400);
+  cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look));
+  cam.lookAt(look);
+  cam.updateMatrixWorld();
+  cam.updateProjectionMatrix();
+  return (x, y, z, out) => out.set(x, y, z).project(cam);
+}

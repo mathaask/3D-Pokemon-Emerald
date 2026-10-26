@@ -40,11 +40,10 @@ function linearOf(p: ArenaPalette): { wall: THREE.Color; ground: THREE.Color; ro
  *  blue-grey over its dark water. (Before Task 9 every cave had sun (1.0, 0.85, 0.7) × 0.9 — Groudon's (1.0, 0.6, 0.35) —,
  *  sky (0.55, 0.5, 0.6) × 1.2 and fog the backdrop × 0.12 — Groudon's (0.18, 0.07, 0.04) —, 14..40: a murky olive cave,
  *  Kyogre's top band olive.) */
-type CaveKind = 'cave' | 'cavePond' | 'groudon' | 'kyogre';
 interface CaveLight { sun: THREE.Color; sunI: number; sky: THREE.Color; hemiI: number; fog: number | THREE.Color; near: number; far: number }
 const WARM_CAVE: CaveLight = { sun: new THREE.Color(1.0, 0.93, 0.84), sunI: 1.8, sky: new THREE.Color(0.84, 0.81, 0.78), hemiI: 1.6,
   fog: 0.45, near: 18, far: 50 };
-export const CAVE_LIGHT: Readonly<Record<CaveKind, CaveLight>> = {
+export const CAVE_LIGHT: Readonly<Partial<Record<ArenaKind, CaveLight>>> = {
   cave: WARM_CAVE,
   cavePond: WARM_CAVE,
   groudon: { sun: new THREE.Color(1.0, 0.78, 0.6), sunI: 1.7, sky: new THREE.Color(0.85, 0.66, 0.58), hemiI: 1.5,
@@ -107,7 +106,8 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.caustics = 1;
       break;
     case 'cave': {
-      const c = CAVE_LIGHT[kind as CaveKind];
+      // (a cave kind without a light of its own: the warm cave's — never a throw in the per-frame look)
+      const c = CAVE_LIGHT[kind] ?? WARM_CAVE;
       o.sunColor.copy(c.sun);
       o.sunI = c.sunI;
       o.sky.copy(c.sky);
