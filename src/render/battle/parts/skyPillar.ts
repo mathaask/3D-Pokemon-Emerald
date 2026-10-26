@@ -1,8 +1,10 @@
 // The Sky Pillar's top (Rayquaza): its pale stone floor (the ground part's disc, ending at r 14: ground.ts GROUND_RADIUS)
 // broken off at a jagged edge over a sea of clouds, broken pillar stumps and fallen drums standing on it. The battle
 // camera never frames the horizon (D1): it looks over the floor's edge, ≈ 25 units off, at its frame's top fifth — the
-// rays there pass over the edge and fall onto the cloud tops 40–90 units out (.scratch/t11/sky.ts), the farthest lost in
-// the haze (the look's fog, 25..90; the sky dome's horizon is the fog's colour). The floor under it hides everything
+// rays there pass over the edge and fall onto the cloud layer from ≈ 40 units out (from the stage centre; ≈ 30 in the
+// intro sweep's first frames, .scratch/t11/sky.ts), the farthest lost in the haze (the look's fog, 25..90 units from the
+// camera: past ≈ 76 from the centre the puffs are all but gone; the sky dome's horizon is the fog's colour) — the sea's
+// puffs stand r 30–76 from the centre (CLOUD_SEA). The floor under it hides everything
 // nearer: the edge shows as its outline and its lip, its broken face (facing away from the stage) only to a camera outside
 // it. Draws: the stone (CLIFF_MATERIAL, faceted: the edge, fallen masonry on it, the stumps, the drums) and the clouds (SOIL_MATERIAL: blobCrown
 // puffs, white with a cool underside, drawn after the floor — its early depth rejects the clouds it hides).
@@ -16,10 +18,10 @@ import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import { blobCrown } from '../../kit/trees';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, type Stage } from '../stage';
+import { BATTLE_CAMERA, GROUND_Y, type Stage } from '../stage';
 import { GROUND_RENDER_ORDER } from './ground';
 import { Soup } from './rooms';
-import { SCENERY_SEED, battleCamera } from './scatter';
+import { FRAME_ASPECT, SCENERY_SEED, battleCamera } from './scatter';
 
 const lin = (c: RGB): RGB => toLinear([Math.min(1, Math.max(0, c[0])), Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2]))]);
 
@@ -196,14 +198,15 @@ const DRUMS: readonly [number, number, number, number][] = [[0.02, 11.7, 0.5, 0.
 // ------------------------------------------------------------------------------------------------- the cloud sea
 
 /** The cloud sea: rows of cloud puffs every `spacing` units (jittered) from `r[0]` to `r[1]` round the stage centre,
- *  ± `arc` rad from straight behind (the camera never looks the other way), centred `depth` units under the floor; each a
+ *  ± `arc` rad from straight behind (the camera never looks further round: the intro sweep's first frame from yaw ±0.9
+ *  in a 21:9 window, FRAME_ASPECT.widest, sees the cloud layer ≈ 2.06 rad round), centred `depth` units under the floor; each a
  *  blobCrown (radii `blob`, ≤ 1.5) squashed to `squash` of its height — by its distance (`lod`: up to r, blobs, icosphere
  *  detail) five round blobs near the edge, four and three lumpier ones further out. The brief's r 16–40 lies under the
  *  floor's edge in every frame (rays over the edge meet the clouds at r ≥ 40, the intro sweep's from r ≈ 30:
  *  .scratch/t11/sky.ts), and past r 76 the look's fog (25..90) has all but swallowed them (the sky dome's horizon is the
  *  fog's colour): the sea reaches from under the edge into the haze, and only the puffs some battle frame shows are built
  *  (cloudShown). */
-export const CLOUD_SEA = { r: [30, 76] as const, arc: 1.85, depth: [4, 7] as const, spacing: 3.1, blob: [0.85, 1.45] as const,
+export const CLOUD_SEA = { r: [30, 76] as const, arc: 2.15, depth: [4, 7] as const, spacing: 3.1, blob: [0.85, 1.45] as const,
   spread: 1.5, squash: 0.62, lod: [[40, 5, 1], [58, 4, 0], [Infinity, 3, 0]] as const };
 
 /** A cloud puff's template (blobCrown at the origin, its colours turned white with a cool underside, RGB): cached per
@@ -240,12 +243,12 @@ function puff(variant: number, blobs: number, detail: number): Puff {
 interface Placed { x: number; y: number; z: number; yaw: number; s: number; v: number; blobs: number; d: number }
 
 /** Whether a battle frame can show a puff whose top stands at (x, y, z): the settled camera at yaw 0 and ±0.45, ±0.9, and
- *  the intro sweep's first frames (ease 0) from yaw 0 and ±0.9 (a 16:9 frame: the widest) — the top, or a point 1.5 to
- *  its side, inside the frame (a little margin) and the ray to it passing over the floor's edge (crossing the floor's
- *  plane beyond r 14.5: the floor hides it otherwise). */
+ *  the intro sweep's first frames (ease 0) from yaw 0 and ±0.9, in the widest window the arena is composed for
+ *  (FRAME_ASPECT.widest, 21:9) — the top, or a point 1.5 to its side, inside the frame (a little margin) and the ray to it
+ *  passing over the floor's edge (crossing the floor's plane beyond r 14.5: the floor hides it otherwise). */
 export function cloudShown(stage: Stage): (x: number, y: number, z: number) => boolean {
   const cams = [[1, 0], [1, -0.45], [1, 0.45], [1, -0.9], [1, 0.9], [0, 0], [0, -0.9], [0, 0.9]].map(([ease, yaw]) => {
-    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
+    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(BATTLE_CAMERA.fov, FRAME_ASPECT.widest, 0.1, 400);
     cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look, ease));
     cam.lookAt(look);
     cam.updateMatrixWorld();
@@ -291,7 +294,7 @@ function cloudPuffs(seed: number, stage: Stage): Placed[] {
 }
 
 /** Soft cloud puffs (blobCrown blobs ≤ 1.5 radius, white with a cool underside) centred 4–7 units below the floor, r
- *  30–76 (CLOUD_SEA; those some frame shows), nearest first (the floor's and the near puffs' depth rejects the far ones
+ *  30–76 from the stage centre (CLOUD_SEA; those some frame shows), nearest first (the floor's and the near puffs' depth rejects the far ones
  *  behind them). position, normal, color(3), indexed. */
 export function cloudSeaGeometry(seed: number, stage: Stage): THREE.BufferGeometry {
   const C = CLOUD_SEA, placed = cloudPuffs(seed, stage);
@@ -326,7 +329,9 @@ export function cloudSeaGeometry(seed: number, stage: Stage): THREE.BufferGeomet
 // ------------------------------------------------------------------------------------------------- the part
 
 const PNC = { position: 3, normal: 3, color: 3 };
-/** The clouds draw after the floor (GROUND_RENDER_ORDER: the floor's depth rejects the clouds it hides) and before the sky
+/** The clouds draw after the floor, above the ground's render order (GROUND_RENDER_ORDER, 3): an opaque draw sorts by
+ *  render order first — the floor, nearer, then writes the depth that rejects the clouds it hides (most of the sea's
+ *  fragments, before they are shaded); drawn first, they would be shaded and then overdrawn by the floor. Before the sky
  *  (10). */
 export const CLOUD_RENDER_ORDER = GROUND_RENDER_ORDER + 0.5;
 

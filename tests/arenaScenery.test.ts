@@ -8,7 +8,7 @@ import { duneGeometry, duneMounds, onDune } from '../src/render/battle/parts/dun
 import { treeGeometry } from '../src/render/kit/trees';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
 import { boulderGeometry, rockPlacements } from '../src/render/battle/parts/rocks';
-import { arenaClear, CLUMP_TOP, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
+import { arenaClear, CLUMP_TOP, REED, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
 import { groundHeight, CLOUD_SHADOW } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
@@ -152,6 +152,27 @@ describe('arena scenery', () => {
     expect(capped).toBeGreaterThan(20);
   });
 
+  it("hides no platform top behind the grass at any of the user's zooms (0.6–1.6: zoomed out the sight lines run flatter)", () => {
+    // (an oracle through the cameras themselves: the ray from a camera through a clump's top, continued, meets the platform
+    // tops' plane y = 0 outside both platforms)
+    const tops = [{ p: STAGE.player, rx: 2.1, rz: 2.1 * 0.62 }, { p: STAGE.enemy, rx: 1.9, rz: 1.9 * 0.62 }];
+    const cams = [0.6, 1, 1.3, 1.6].flatMap((zoom) => [0, 0.5, 1].flatMap((e) => [-0.9, -0.45, 0, 0.45, 0.9].map((y) =>
+      battleCamera(STAGE, y, new THREE.Vector3(), new THREE.Vector3(), e, zoom))));
+    for (const kind of ['grass', 'longGrass', 'plain', 'sand', 'pond'] as const) {
+      const tall = kind === 'pond' ? REED.tall : 1;
+      for (const g of grassPlacements(kind, STAGE, SCENERY_SEED, 'medium')) {
+        const ty = groundHeight(kind, g.x, g.z, STAGE) - 0.03 + CLUMP_TOP * tall * g.scale;
+        if (ty <= 0) continue;
+        for (const c of cams) {
+          const t = c.y / (c.y - ty), x = c.x + (g.x - c.x) * t, z = c.z + (g.z - c.z) * t;
+          for (const p of tops) {
+            expect(Math.hypot((x - p.p.x) / p.rx, (z - p.p.z) / p.rz), `${kind} clump at (${g.x.toFixed(2)}, ${g.z.toFixed(2)})`).toBeGreaterThanOrEqual(1);
+          }
+        }
+      }
+    }
+  });
+
   it("shows every framed tree's crown under the frame's top edge (no lollipops, no sticks); the groves' trunks short", () => {
     // (each kit shape's crown low edge: its crown vertices' 10th percentile, at scale 1)
     const low = new Map<string, number>();
@@ -179,6 +200,45 @@ describe('arena scenery', () => {
         if (kind === 'plain' || kind === 'pond') expect(crownLow - groundHeight(kind, t.x, t.z, STAGE)).toBeLessThanOrEqual(0.25 * t.scale + 1e-6);
       }
     }
+  });
+
+  it("shows no bare trunk in the intro sweep's frames nor zoomed in (0.6): a framed tree shows its crown, or stands crown on the ground", () => {
+    // (an oracle through real cameras, 16:9: the sweep's first frames at the user's yaws, and the closest zoom settled; where
+    // a frame shows a tree's foot it shows 0.3 of its crown too — or its crown's low edge is down at the ground)
+    const views = [...[0, 0.25, 0.5, 0.75].flatMap((ease) => [-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease, zoom: 1 }))),
+      ...[-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease: 1, zoom: 0.6 }))];
+    const cams = views.map(({ yaw, ease, zoom }) => {
+      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
+      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look, ease, zoom));
+      cam.lookAt(look);
+      cam.updateMatrixWorld();
+      cam.updateProjectionMatrix();
+      return cam;
+    });
+    const low = { round: 0.74, bushy: 0.66, pine: 0.4, palm: 2.0 } as const;
+    const v = new THREE.Vector3();
+    let fitted = 0;
+    for (const kind of ['grass', 'longGrass', 'plain', 'pond', 'sand'] as const) {
+      for (const t of treePlacements(kind, STAGE, SCENERY_SEED)) {
+        const ky = t.style === 'palm' ? 0.68 : 1, g = groundHeight(kind, t.x, t.z, STAGE);
+        const crownLow = g - 0.15 * t.scale - (t.sink ?? 0) + low[t.style] * t.scale * ky;
+        if (crownLow <= g + 1e-9) continue;
+        for (const cam of cams) {
+          v.set(t.x, g, t.z).project(cam);
+          if (!(v.z < 1 && Math.abs(v.x) <= 1 && v.y <= 1 && v.y >= -1)) continue;
+          fitted++;
+          v.set(t.x, crownLow + 0.3, t.z).project(cam);
+          expect(v.y, `${kind} ${t.style} at (${t.x.toFixed(1)}, ${t.z.toFixed(1)}): a bare trunk`).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+    expect(fitted).toBeGreaterThan(100);
+  });
+
+  it("sinks the groves' trees no further than their bare-trunk rule needs (their foot's own sink counted)", () => {
+    // (the plain's are round trees: the kit's crown low edge 0.9 × scale over the foot, the foot 0.15 × scale under the ground)
+    const bare = treePlacements('plain', STAGE, SCENERY_SEED).map((t) => ((0.9 - 0.15) * t.scale - (t.sink ?? 0)) / t.scale);
+    expect(Math.max(...bare)).toBeCloseTo(0.25, 9);
   });
 
   it('agrees on one scenery seed: the palms stand off the dunes the sand arena builds', () => {
@@ -223,24 +283,48 @@ describe('arena scenery', () => {
     expect(grass.grass.length).toBe(0);
   });
 
-  it('keeps at Low quality only the trees the settled camera frames at yaw 0', () => {
-    const u = createKitUniforms(), idle = frameTop(STAGE, [0]);
-    const arena = new ModernArena(u);
-    expect(arena.build('grass', defaultArenaColors('grass'), 'low')).toBe(true);
-    const at = new THREE.Matrix4(), p = new THREE.Vector3();
-    let n = 0;
-    arena.group.traverse((m) => {
-      if (!(m as THREE.InstancedMesh).isInstancedMesh || !m.name.startsWith('trees:')) return;
-      const im = m as THREE.InstancedMesh;
-      for (let i = 0; i < im.count; i++) {
-        im.getMatrixAt(i, at);
-        p.setFromMatrixPosition(at);
-        expect(idle(p.x, p.z)).toBeLessThan(Infinity);
-        n++;
-      }
+  it('keeps at Low quality the trees some settled frame shows (|yaw| ≤ 0.9), and only those', () => {
+    // (an oracle through real cameras, 16:9, at the user's yaws: a tree shows where its foot or its crown's top lies in the
+    // frame)
+    const cams = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12).map((yaw) => {
+      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
+      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
+      cam.lookAt(look);
+      cam.updateMatrixWorld();
+      cam.updateProjectionMatrix();
+      return cam;
     });
-    expect(n).toBeGreaterThan(10);
-    expect(n).toBeLessThan(treePlacements('grass', STAGE, SCENERY_SEED).length);
-    arena.dispose();
+    const v = new THREE.Vector3();
+    const inFrame = (x: number, y: number, z: number) => cams.some((c) => {
+      v.set(x, y, z).project(c);
+      return v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1;
+    });
+    for (const kind of ['grass', 'longGrass', 'plain', 'pond'] as const) {
+      const arena = new ModernArena(createKitUniforms());
+      expect(arena.build(kind, defaultArenaColors(kind), 'low')).toBe(true);
+      const at = new THREE.Matrix4(), p = new THREE.Vector3(), kept: [number, number][] = [];
+      arena.group.traverse((m) => {
+        if (!(m as THREE.InstancedMesh).isInstancedMesh || !m.name.startsWith('trees:')) return;
+        const im = m as THREE.InstancedMesh;
+        for (let i = 0; i < im.count; i++) {
+          im.getMatrixAt(i, at);
+          p.setFromMatrixPosition(at);
+          kept.push([p.x, p.z]);
+        }
+      });
+      const all = treePlacements(kind, STAGE, SCENERY_SEED);
+      let shown = 0;
+      for (const t of all) {
+        const g = groundHeight(kind, t.x, t.z, STAGE), foot = g - 0.15 * t.scale - (t.sink ?? 0);
+        // (its foot on the ground, its crown's top 2.25 × scale over its own foot)
+        if (!inFrame(t.x, g, t.z) && !inFrame(t.x, foot + 2.25 * t.scale * 0.9, t.z)) continue;
+        shown++;
+        // (the instance matrices are single floats)
+        expect(kept.some(([x, z]) => Math.abs(x - t.x) < 1e-3 && Math.abs(z - t.z) < 1e-3), `${kind}: a tree the frame shows at (${t.x.toFixed(1)}, ${t.z.toFixed(1)})`).toBe(true);
+      }
+      expect(shown, kind).toBeGreaterThan(10);
+      expect(kept.length, kind).toBeLessThan(all.length);
+      arena.dispose();
+    }
   });
 });

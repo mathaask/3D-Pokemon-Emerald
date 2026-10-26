@@ -17,7 +17,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { PLATFORM_FOOTPRINT, SUN_OFFSET, SUN_SHADOW, type Stage } from '../stage';
 import { groundHeight, moonlitAsGround, POND, WORN_RING } from './ground';
-import { battleCamera, frameTop, scatter, sightCap, stageKeepOut, insideEllipse, SCENERY_SEED, type Ellipse } from './scatter';
+import { battleCamera, frameTop, scatter, sightCap, stageKeepOut, insideEllipse, PASSING_VIEWS, SCENERY_SEED, type Ellipse } from './scatter';
 import { duneMounds, duneSurface, onDune } from './dunes';
 
 export interface ArenaTree {
@@ -71,14 +71,15 @@ export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): Are
       && (!rule.grove || noise2(x * GROVE_FREQ, z * GROVE_FREQ, rule.grove.salt) > rule.grove.over),
   });
   const r = rng(s ^ 0x5eed);
-  const top = frameTop(stage);
+  const top = frameTop(stage), passing = frameTop(stage, PASSING_VIEWS);
   const out: ArenaTree[] = [];
   for (const { x, z } of pts) {
     const style = rule.style(r());
     const variant = style === 'round' || style === 'bushy' ? Math.floor(r() * TREE_VARIANTS) % TREE_VARIANTS : 0;
     const t: ArenaTree = { style, variant, x, z, scale: rule.scale[0] + (rule.scale[1] - rule.scale[0]) * r(), yaw: r() * Math.PI * 2,
       shade: 0.92 + 0.26 * r() };
-    if (fitToFrame(t, groundHeight(kind, x, z, stage), top(x, z), rule.grove?.trunk)) out.push(t);
+    const g = groundHeight(kind, x, z, stage);
+    if (fitToFrame(t, g, top(x, z), passing(x, z, g), rule.grove?.trunk)) out.push(t);
   }
   return out;
 }
@@ -89,17 +90,23 @@ const CROWN_LOW: Readonly<Record<TreeStyle, number>> = { round: 0.9, bushy: 0.75
 /** This much of a crown at least shows under the frame's top edge. */
 const CROWN_SHOWN = 0.4;
 
-/** Fits a tree under the frame's top edge (`top`, world y, at its place: frameTop) standing on ground at `groundY`: where
- *  its crown would show less than CROWN_SHOWN — the frame's top passing under it, its trunk bare below: a lollipop, a
- *  stick — it sinks (`sink`) until enough shows, as far as its crown's low edge reaching the ground (its trunk buried: a
- *  far crown on the ground, as the edge of a wood); further than that, it is dropped (false). A grove's tree (`trunk`)
+/** Fits a tree (its foot SINK.tree × scale under the ground at `groundY`, as the build sets it) under the frame's top edge
+ *  (`top`, world y, at its place: frameTop over the settled frames): where its crown would show less than CROWN_SHOWN —
+ *  the frame's top passing under it, its trunk bare below: a lollipop, a stick — it sinks (`sink`) until enough shows, as
+ *  far as its crown's low edge reaching the ground (its trunk buried: a far crown on the ground, as the edge of a wood);
+ *  further than that, it is dropped (false). The same under `passing` (frameTop over PASSING_VIEWS that show its ground:
+ *  the intro sweep's frames, a zoom-in), but there a tree that cannot show enough crown sinks only as far as its crown's
+ *  low edge reaching the ground — the frames the battle is composed for decide what stands. A grove's tree (`trunk`)
  *  sinks at least until no more than `trunk` × scale of its trunk shows. */
-function fitToFrame(t: ArenaTree, groundY: number, top: number, trunk?: number): boolean {
+export function fitToFrame(t: ArenaTree, groundY: number, top: number, passing = Infinity, trunk?: number): boolean {
   const k = t.scale * (t.style === 'palm' ? PALM.squat : 1), low = CROWN_LOW[t.style] * k;
+  // (its crown's low edge over the ground, unsunk)
+  const over = low - SINK.tree * t.scale;
   // (a grove's trees: no more than `trunk` × scale of bare trunk under the crown)
-  let need = trunk === undefined ? 0 : low - trunk * t.scale;
-  if (top < Infinity) need = Math.max(need, groundY - SINK.tree * t.scale + low + CROWN_SHOWN - top);
+  let need = trunk === undefined ? 0 : over - trunk * t.scale;
+  if (top < Infinity) need = Math.max(need, groundY + over + CROWN_SHOWN - top);
   if (need > low + 1e-9) return false;
+  if (passing < Infinity) need = Math.max(need, Math.min(low, groundY + over + CROWN_SHOWN - passing));
   if (need > 0) t.sink = need;
   return true;
 }
@@ -300,9 +307,11 @@ export const FLORA_PART: ArenaPart = {
     const camera = battleCamera(stage, 0);
 
     // trees, one draw per (style, variant), one material per style, nearest first
-    // (at Low quality only the trees the settled camera frames at yaw 0: what the idle battle shows)
-    const idle = ctx.quality === 'low' ? frameTop(stage, [0]) : null;
-    const trees = byCameraDistance(treePlacements(kind, stage, SCENERY_SEED).filter((t) => !idle || idle(t.x, t.z) < Infinity), camera);
+    // (at Low quality only the trees a settled frame shows, at any of the user's yaws: some frame's top passes over the
+    // ground they stand on)
+    const shown = ctx.quality === 'low' ? frameTop(stage) : null;
+    const trees = byCameraDistance(treePlacements(kind, stage, SCENERY_SEED)
+      .filter((t) => !shown || shown(t.x, t.z, groundHeight(kind, t.x, t.z, stage)) < Infinity), camera);
     const leaf = toLinear(palette.leaf), trunk = toLinear(palette.trunk);
     // (only the trees near enough for their shadows to reach the ground the shadow map covers cast: the rest would only
     // add their shadow-pass draws)

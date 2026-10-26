@@ -112,22 +112,27 @@ export function stageKeepOut(stage: Stage): { ellipses: Ellipse[]; tallOk(x: num
   return { ellipses, tallOk };
 }
 
-/** Yaws the sight cap and the frame top check the camera at (the user's ±0.9, in steps), and the intro sweep's steps
- *  (ease 1: settled … 0: its first frame). */
+/** Yaws the sight cap and the frame top check the camera at (the user's ±0.9, in steps), the intro sweep's steps
+ *  (ease 1: settled … 0: its first frame) and the user's zooms the sight cap checks (their range's ends: a sight line to a
+ *  platform's near edge runs lower the further out the camera stands — zoomed out —, and lower beyond the point it looks
+ *  at the nearer it stands). */
 const SIGHT_YAWS = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12);
 const SIGHT_EASES = [1, 0.75, 0.5, 0.25, 0];
+const SIGHT_ZOOMS = [BATTLE_CAMERA.zoom[0], 1, BATTLE_CAMERA.zoom[1]];
 /** The sight cap stays this far under the sight line. */
 const SIGHT_MARGIN = 0.04;
 
 /** The highest a thing standing at (x, z) may reach (world y) without hiding a platform's top from the battle camera at
  *  any yaw in ±0.9, settled or anywhere in its intro sweep (battleCamera: the sweep stands 1.5× as far, and its sight
- *  lines to the player's near edge run flatter): below the sight line from the camera to the nearer edge of each
- *  platform top (y = 0) it stands in front of. Infinity where it stands in front of none. (The battlers stand on the tops,
- *  higher and further: under that line they stay whole too.) */
+ *  lines to the player's near edge run flatter), at any of the user's zooms (0.6–1.6: zoomed out, they run flatter still):
+ *  below the sight line from the camera to the nearer edge of each platform top (y = 0) it stands in front of. Infinity
+ *  where it stands in front of none. (The battlers stand on the tops, higher and further: under that line they stay whole
+ *  too.) */
 export function sightCap(stage: Stage): (x: number, z: number) => number {
   const fp = PLATFORM_FOOTPRINT;
   const tops = [{ p: stage.player, rx: fp.player.rx, rz: fp.player.rz }, { p: stage.enemy, rx: fp.enemy.rx, rz: fp.enemy.rz }];
-  const cams = SIGHT_EASES.flatMap((e) => SIGHT_YAWS.map((y) => battleCamera(stage, y, new THREE.Vector3(), new THREE.Vector3(), e)));
+  const cams = SIGHT_ZOOMS.flatMap((z) => SIGHT_EASES.flatMap((e) => SIGHT_YAWS.map((y) =>
+    battleCamera(stage, y, new THREE.Vector3(), new THREE.Vector3(), e, z))));
   return (x, z) => {
     let cap = Infinity;
     for (const c of cams) {
@@ -148,39 +153,65 @@ export function sightCap(stage: Stage): (x: number, z: number) => number {
   };
 }
 
-/** The frame's top edge dips this far below the horizontal (the settled camera's pitch less half its field of view), and
- *  the frame reaches this far to either side of the view (half the horizontal field of view of a 16:9 window, and a
- *  crown's width more). */
-const FRAME_DIP = CAMERA_PITCH - CAMERA_FOV / 2;
+/** The windows the arena is composed for (the battle camera keeps its 24° vertical field of view: a wider window sees
+ *  further to the sides, never higher). What must show — the lava pools, the props over the battlers' heads — is placed in
+ *  the frame of `shown`, the harness's 1280 × 800 (16:10; wider windows only add sides, narrower ones crop them); what
+ *  may show — the scenery fitted under the frame's top (FRAME_SIDE), the Sky Pillar's cloud sea (skyPillar.ts
+ *  cloudShown) — covers windows up to `widest`, 21:9. (Wider still, the frame's sides may show past the pruning.) */
+export const FRAME_ASPECT = { shown: 1.6, widest: 21 / 9 } as const;
+
+/** The frame reaches this far to either side of the view (frameTop): half the horizontal field of view of a 16:9 window
+ *  and a crown's width more (0.1) — 0.461 rad, the half-width of a 2.34:1 window's top edge, so a thing standing inside a
+ *  21:9 frame (FRAME_ASPECT.widest) is fitted under its top; there a crown standing just outside its side may poke in,
+ *  whole or cut by the top, never over a bare trunk. */
 const FRAME_SIDE = Math.atan(Math.tan(CAMERA_FOV / 2) * (16 / 9)) + 0.1;
 
-/** The height (world y) of the frame's top edge over (x, z): the lowest over the settled cameras at `yaws` (default the
- *  user's ±0.9) that frame the point across (its horizontal angle off the view within FRAME_SIDE) — what stands above it
- *  there never shows, at any of them. Infinity where none frames it. (The intro sweep stands higher: it frames more.) */
-export function frameTop(stage: Stage, yaws: readonly number[] = SIGHT_YAWS): (x: number, z: number) => number {
-  const views = yaws.map((y) => {
-    const look = new THREE.Vector3(), cam = battleCamera(stage, y, new THREE.Vector3(), look);
-    return { cam, dir: Math.atan2(look.x - cam.x, look.z - cam.z) };
+/** A state of the battle camera (battleCamera): the user's yaw, its ease through the intro sweep (1: settled) and the
+ *  user's zoom. A bare number is a yaw, settled at zoom 1. */
+export interface CameraView { yaw: number; ease: number; zoom: number }
+/** The frames the battle shows besides the settled ones at zoom 1: the intro sweep's (ease 0 … 0.75 at each of the user's
+ *  yaws: further out, 0.06 steeper — beyond ≈ 20 units behind the stage its top edge runs lower than the settled frame's,
+ *  ≈ 0.7 lower at 30) for its first ≈ 0.8 s, and the user's closest zoom (0.6) settled, kept from battle to battle (its
+ *  top edge ≈ 1 unit lower everywhere). The scenery fitted under the frame's top keeps to these too (flora.ts: no bare
+ *  trunks). (Not the sweep at zoom 0.6, the two together: its top runs lower still — fitting the trees to it put a third
+ *  of the grass arena's crowns on the ground.) */
+export const PASSING_VIEWS: readonly CameraView[] = [
+  ...SIGHT_EASES.filter((e) => e < 1).flatMap((ease) => SIGHT_YAWS.map((yaw) => ({ yaw, ease, zoom: 1 }))),
+  ...SIGHT_YAWS.map((yaw) => ({ yaw, ease: 1, zoom: BATTLE_CAMERA.zoom[0] })),
+];
+
+/** The height (world y) of the frame's top edge over (x, z): the lowest over the camera's `views` (default the settled
+ *  camera at the user's yaws, ±0.9, zoom 1) that frame the point across (its horizontal angle off the view within
+ *  FRAME_SIDE) and whose top edge passes over `floor` there (default: every one) — what stands above it never shows, in
+ *  any of them. Infinity where none does. (A floor of the ground's height leaves out the frames that do not show the
+ *  ground there: what stands on it shows in none of them.) */
+export function frameTop(stage: Stage, views: readonly (number | CameraView)[] = SIGHT_YAWS): (x: number, z: number, floor?: number) => number {
+  const frames = views.map((v) => {
+    const { yaw, ease, zoom } = typeof v === 'number' ? { yaw: v, ease: 1, zoom: 1 } : v;
+    const look = new THREE.Vector3(), cam = battleCamera(stage, yaw, new THREE.Vector3(), look, ease, zoom);
+    // (the frame's top edge dips this far below the horizontal: the camera's pitch less half its field of view)
+    const dip = Math.tan(CAMERA_PITCH + (1 - ease) * BATTLE_CAMERA.intro.pitch - CAMERA_FOV / 2);
+    return { cam, dir: Math.atan2(look.x - cam.x, look.z - cam.z), dip };
   });
-  const dip = Math.tan(FRAME_DIP);
-  return (x, z) => {
+  return (x, z, floor = -Infinity) => {
     let top = Infinity;
-    for (const { cam, dir } of views) {
+    for (const { cam, dir, dip } of frames) {
       const dx = x - cam.x, dz = z - cam.z;
       let off = Math.atan2(dx, dz) - dir;
       off = Math.atan2(Math.sin(off), Math.cos(off));
       if (Math.abs(off) > FRAME_SIDE) continue;
       // (the depth along the view: the frame's top edge dips by it)
-      top = Math.min(top, cam.y - Math.hypot(dx, dz) * Math.cos(off) * dip);
+      const t = cam.y - Math.hypot(dx, dz) * Math.cos(off) * dip;
+      if (t > floor) top = Math.min(top, t);
     }
     return top;
   };
 }
 
-/** The settled battle camera at user yaw `yaw` (battleCamera, its 24° field of view; `aspect` the window's, default the
- *  harness's 1280 × 800) as a projection: world (x, y, z) → normalised device coordinates into `out` (x, y in −1..1
- *  inside the frame, z < 1 in front of the camera). */
-export function frameProjector(stage: Stage, yaw: number, aspect = 1.6): (x: number, y: number, z: number, out: THREE.Vector3) => THREE.Vector3 {
+/** The settled battle camera at user yaw `yaw` (battleCamera, its 24° field of view; `aspect` the window's, default
+ *  FRAME_ASPECT.shown: the frame what must show is placed in) as a projection: world (x, y, z) → normalised device
+ *  coordinates into `out` (x, y in −1..1 inside the frame, z < 1 in front of the camera). */
+export function frameProjector(stage: Stage, yaw: number, aspect: number = FRAME_ASPECT.shown): (x: number, y: number, z: number, out: THREE.Vector3) => THREE.Vector3 {
   const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(CAMERA_FOV), aspect, 0.1, 400);
   cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look));
   cam.lookAt(look);
