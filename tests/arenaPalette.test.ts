@@ -15,8 +15,9 @@ describe('arenaPalette', () => {
   });
   it('gives each kind its ground material', () => {
     const mat = (k: Parameters<typeof arenaPalette>[0]) => arenaPalette(k, null).groundMat;
-    expect([mat('sand'), mat('cave'), mat('mountain'), mat('building'), mat('gym'), mat('water')])
-      .toEqual([GroundMat.Sand, GroundMat.Rock, GroundMat.Gravel, GroundMat.Deck, GroundMat.Paving, GroundMat.Sand]);
+    // (Task 9: the cave's floor smooth warm earth as the GBA's tan, no longer cracked rock; Groudon's volcanic floor cracked)
+    expect([mat('sand'), mat('cave'), mat('groudon'), mat('mountain'), mat('building'), mat('gym'), mat('water')])
+      .toEqual([GroundMat.Sand, GroundMat.Dirt, GroundMat.Rock, GroundMat.Gravel, GroundMat.Deck, GroundMat.Paving, GroundMat.Sand]);
   });
   it('uses the defaults without colours and stays in gamut for every kind', () => {
     expect(arenaPalette('grass', null)).toEqual(arenaPalette('grass', defaultArenaColors('grass')));

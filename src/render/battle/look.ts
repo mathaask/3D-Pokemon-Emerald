@@ -25,12 +25,33 @@ const _day: DayLight = { sunColor: new THREE.Color(), sunI: 0, sky: new THREE.Co
 const DAY_SKY_INV = new THREE.Color(1 / 0.75, 1 / 0.88, 1);
 const _c = new THREE.Color();
 /** A palette's colours the look reads, linear (computed once per palette: no allocation per frame). */
-const LINEAR = new WeakMap<ArenaPalette, { wall: THREE.Color; ground: THREE.Color }>();
-function linearOf(p: ArenaPalette): { wall: THREE.Color; ground: THREE.Color } {
+const LINEAR = new WeakMap<ArenaPalette, { wall: THREE.Color; ground: THREE.Color; rock: THREE.Color }>();
+function linearOf(p: ArenaPalette): { wall: THREE.Color; ground: THREE.Color; rock: THREE.Color } {
   let l = LINEAR.get(p);
-  if (!l) LINEAR.set(p, (l = { wall: new THREE.Color(...toLinear(p.wall)), ground: new THREE.Color(...toLinear(p.ground)) }));
+  if (!l) {
+    LINEAR.set(p, (l = { wall: new THREE.Color(...toLinear(p.wall)), ground: new THREE.Color(...toLinear(p.ground)),
+      rock: new THREE.Color(...toLinear(p.rock)) }));
+  }
   return l;
 }
+
+/** The caves' light (Task 9; linear): the cave and the cave pond a warm, dim light over their tan rock, the fog their rock
+ *  darkened (`fog`: × the palette's rock); Groudon's red-orange over volcanic rock in a red-brown haze; Kyogre's cool
+ *  blue-grey over its dark water. (Before Task 9 every cave had sun (1.0, 0.85, 0.7) × 0.9 — Groudon's (1.0, 0.6, 0.35) —,
+ *  sky (0.55, 0.5, 0.6) × 1.2 and fog the backdrop × 0.12 — Groudon's (0.18, 0.07, 0.04) —, 14..40: a murky olive cave,
+ *  Kyogre's top band olive.) */
+type CaveKind = 'cave' | 'cavePond' | 'groudon' | 'kyogre';
+interface CaveLight { sun: THREE.Color; sunI: number; sky: THREE.Color; hemiI: number; fog: number | THREE.Color; near: number; far: number }
+const WARM_CAVE: CaveLight = { sun: new THREE.Color(1.0, 0.93, 0.84), sunI: 1.8, sky: new THREE.Color(0.84, 0.81, 0.78), hemiI: 1.6,
+  fog: 0.45, near: 18, far: 50 };
+export const CAVE_LIGHT: Readonly<Record<CaveKind, CaveLight>> = {
+  cave: WARM_CAVE,
+  cavePond: WARM_CAVE,
+  groudon: { sun: new THREE.Color(1.0, 0.78, 0.6), sunI: 1.7, sky: new THREE.Color(0.85, 0.66, 0.58), hemiI: 1.5,
+    fog: new THREE.Color(0.16, 0.06, 0.035), near: 15, far: 46 },
+  kyogre: { sun: new THREE.Color(0.85, 0.93, 1.0), sunI: 1.5, sky: new THREE.Color(0.6, 0.7, 0.82), hemiI: 1.5,
+    fog: new THREE.Color(0.1, 0.16, 0.2), near: 20, far: 58 },
+};
 
 /** A new look (arenaLook's `out`). */
 function blankLook(): ArenaLook {
@@ -40,9 +61,8 @@ function blankLook(): ArenaLook {
 
 /** outdoor and water settings: timeOfDay(hour), night = nightFactor(hour), fog 30..80, clouds 1; sky (rayquaza): the
  *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.7, 0.95, 1.0) × 1.7, sky (0.5, 0.82,
- *  0.95), hemi 1.7, fog (0.3, 0.64, 0.8) 10..42, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
- *  hemi 1.2, fog = new THREE.Color(...toLinear(palette.wall)) × 0.12, 14..40 (groudon: fog (0.18, 0.07, 0.04),
- *  sun (1.0, 0.6, 0.35)); indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
+ *  0.95), hemi 1.7, fog (0.3, 0.64, 0.8) 10..42, caustics 1; cave (cave, cavePond, groudon, kyogre): CAVE_LIGHT;
+ *  indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
  *  fog = new THREE.Color(...toLinear(palette.wall)) × 0.6, 22..60, night 0.
  *  hemiGround = new THREE.Color(...toLinear(palette.ground)) × 0.6 (outdoors × the hour's sky / the day's sky: the
  *  ground bounces the light it gets). (toLinear: kit/palette.ts, sRGB RGB → linear RGB.)
@@ -86,20 +106,18 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.fogFar = 42;
       o.caustics = 1;
       break;
-    case 'cave':
-      if (kind === 'groudon') {
-        o.sunColor.setRGB(1.0, 0.6, 0.35);
-        o.fog.setRGB(0.18, 0.07, 0.04);
-      } else {
-        o.sunColor.setRGB(1.0, 0.85, 0.7);
-        o.fog.copy(lin.wall).multiplyScalar(0.12);
-      }
-      o.sunI = 0.9;
-      o.sky.setRGB(0.55, 0.5, 0.6);
-      o.hemiI = 1.2;
-      o.fogNear = 14;
-      o.fogFar = 40;
+    case 'cave': {
+      const c = CAVE_LIGHT[kind as CaveKind];
+      o.sunColor.copy(c.sun);
+      o.sunI = c.sunI;
+      o.sky.copy(c.sky);
+      o.hemiI = c.hemiI;
+      if (typeof c.fog === 'number') o.fog.copy(lin.rock).multiplyScalar(c.fog);
+      else o.fog.copy(c.fog);
+      o.fogNear = c.near;
+      o.fogFar = c.far;
       break;
+    }
     case 'indoor':
       o.sunColor.copy(INDOOR.sun);
       o.sunI = INDOOR.sunI;
