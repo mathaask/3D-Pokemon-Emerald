@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing } from '../src/render/battle/parts/ground';
+import {
+  groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER,
+  GROUND_NIGHT, groundNightScale, moonlitAsGround,
+} from '../src/render/battle/parts/ground';
+import type { RGB } from '../src/render/kit/palette';
 import { arenaPalette } from '../src/render/battle/palette';
 import { STAGE, GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
 import { GroundMat } from '../src/render/kit/terrain';
@@ -30,6 +34,60 @@ describe('arena ground', () => {
   });
   it('digs the pond under the water', () => {
     expect(groundHeight('pond', STAGE.centre.x, STAGE.centre.z + POND.dz - 6, STAGE)).toBeLessThan(WATER_Y - 0.3);
+  });
+});
+
+describe('the ground\'s draw order', () => {
+  it('draws the platform tops after the battlers and before the ground, whatever their material ids (Task 7b)', () => {
+    // (three sorts opaque objects by renderOrder, then material id: at one renderOrder the ground — built first, the lower
+    // pooled id — drew first and was shaded under both tops)
+    const u = createKitUniforms();
+    for (const kind of ['grass', 'sand', 'mountain', 'cave', 'gym', 'underwater'] as ArenaKind[]) {
+      const a = new ModernArena(u);
+      expect(a.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
+      const ground = a.group.getObjectByName('ground') as THREE.Mesh, tops = a.group.getObjectByName('platformTops') as THREE.Mesh;
+      expect(ground.renderOrder, kind).toBe(GROUND_RENDER_ORDER);
+      expect(tops.renderOrder, kind).toBe(TOPS_RENDER_ORDER);
+      const id = (m: THREE.Mesh) => (m.material as THREE.Material & { id: number }).id;
+      const painter = (x: THREE.Mesh, y: THREE.Mesh) => x.renderOrder - y.renderOrder || id(x) - id(y);
+      expect([ground, tops].sort(painter).map((m) => m.name), kind).toEqual(['platformTops', 'ground']);
+      a.dispose();
+    }
+    // after the battlers (renderOrder 2: their pixels skip the tops' terrain shading), before the ground
+    expect(TOPS_RENDER_ORDER).toBeGreaterThan(2);
+    expect(TOPS_RENDER_ORDER).toBeLessThan(GROUND_RENDER_ORDER);
+  });
+});
+
+describe('groundNightScale (GROUND_COLOR\'s moonlit earth as a colour factor)', () => {
+  const warmOf = (c: RGB) => THREE.MathUtils.smoothstep(c[0] - c[2], 0, 0.08) * (1 - THREE.MathUtils.smoothstep(c[1] - c[0], 0, 0.08));
+  it('is 1 by day and on cool colours; at night turns warm earth towards its lifted luminance', () => {
+    const earth: RGB = [0.5, 0.35, 0.2], leaf: RGB = [0.2, 0.5, 0.15], out: RGB = [0, 0, 0];
+    expect(groundNightScale(earth, 0, out)).toEqual([1, 1, 1]);
+    expect(groundNightScale(leaf, 1, out)).toEqual([1, 1, 1]);
+    const l = (0.2126 * earth[0] + 0.7152 * earth[1] + 0.0722 * earth[2]) * GROUND_NIGHT.lift;
+    for (const night of [0.4, 1]) {
+      const t = night * GROUND_NIGHT.mix * warmOf(earth);
+      const k = groundNightScale(earth, night, out);
+      for (let i = 0; i < 3; i++) expect(k[i]).toBeCloseTo((earth[i] + (l - earth[i]) * t) / earth[i], 12);
+    }
+    expect(groundNightScale([0.5, 0, 0.1], 1, out)[1]).toBe(1);   // (a channel at 0 keeps 1)
+  });
+  it('moonlitAsGround hooks warm colours only and follows uNight through the material colour', () => {
+    const night = { value: 0 };
+    const mat = new THREE.MeshStandardMaterial(), mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+    const plain = mesh.onBeforeRender;
+    moonlitAsGround(mesh, mat, [0.2, 0.5, 0.15], night);
+    expect(mesh.onBeforeRender).toBe(plain);
+    const earth: RGB = [0.5, 0.35, 0.2];
+    moonlitAsGround(mesh, mat, earth, night);
+    const draw = () => mesh.onBeforeRender(undefined as never, undefined as never, undefined as never, undefined as never, mat, undefined as never);
+    for (const v of [0, 0.7, 1]) {
+      night.value = v;
+      draw();
+      const k = groundNightScale(earth, v, [0, 0, 0]);
+      expect([mat.color.r, mat.color.g, mat.color.b].map((c, i) => c - k[i]).every((d) => Math.abs(d) < 1e-6)).toBe(true);
+    }
   });
 });
 

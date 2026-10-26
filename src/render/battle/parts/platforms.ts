@@ -17,7 +17,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint } from '../stage';
-import { arenaGround, arenaGroundMaterial, uniformCells, GROUND_RENDER_ORDER } from './ground';
+import { arenaGround, arenaGroundMaterial, uniformCells, TOPS_RENDER_ORDER } from './ground';
 
 export type PlatformStyle = 'earthGrass' | 'sandMound' | 'stoneSlab' | 'lilyPad' | 'rippleRing' | 'caveRock' | 'seabedRock';
 
@@ -385,8 +385,9 @@ export const PLATFORM_PART: ArenaPart = {
       ctx.disposables.push(cells.tex);
       const mesh = new THREE.Mesh(top, arenaGround(ctx, cells));
       mesh.name = 'platformTops';
-      // (drawn with the ground, after the battlers: their terrain shading is skipped where a battler covers them)
-      mesh.renderOrder = GROUND_RENDER_ORDER;
+      // (after the battlers — their terrain shading is skipped where a battler covers them — and before the ground, which
+      // runs on under them)
+      mesh.renderOrder = TOPS_RENDER_ORDER;
       mesh.receiveShadow = true;
       group.add(mesh);
     }

@@ -30,6 +30,9 @@ const FLAT_R = 9, ROLL_R = 22;
  *  under the platform's rim) out to a noise-frayed edge between `outer`'s two radii. Painted in the ground's shader
  *  (analytic: the terrain's warped cell borders broke a cell-painted ring into lobed patches). */
 export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
+/** GLSL's smoothstep(e0, e1, x). */
+const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
+
 /** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
  *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. (The platform
  *  bodies keep NIGHT_SOIL: with these, their earth went near-black.) */
@@ -40,8 +43,7 @@ export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
  *  in the ground's colours (the dunes, the bare hills, dry tufts, rocks) stays the field's colour under the moon. Into
  *  `out` (a channel of `rgb` at 0 keeps factor 1). */
 export function groundNightScale(rgb: RGB, night: number, out: RGB): RGB {
-  const s = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
-  const warm = s(0, 0.08, rgb[0] - rgb[2]) * (1 - s(0, 0.08, rgb[1] - rgb[0]));
+  const warm = smooth(0, 0.08, rgb[0] - rgb[2]) * (1 - smooth(0, 0.08, rgb[1] - rgb[0]));
   const l = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix * warm;
   for (let i = 0; i < 3; i++) out[i] = rgb[i] > 0 ? (rgb[i] + (l - rgb[i]) * t) / rgb[i] : 1;
   return out;
@@ -70,8 +72,6 @@ const POND_BED: RGB = [0.6, 0.56, 0.42];
 
 /** The disc: radius, segments, rings (densest near the stage: ring k at radius DISC_R · (k / DISC_RINGS)^DISC_POW). */
 const DISC_R = 64, DISC_SEGMENTS = 96, DISC_RINGS = 48, DISC_POW = 1.35;
-
-const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
  *  noise2; pond kinds: the pond ellipse → Sand (its bed). The field runs on under the platforms (their tops paint
@@ -287,6 +287,10 @@ const PN = { position: 3, normal: 3 };
  *  only where the ground shows — not under the platforms, battlers and props drawn over it (−2.4 ms on b_grass). The
  *  order changes no pixel: nothing it overlaps lies at its depth. */
 export const GROUND_RENDER_ORDER = 3;
+/** The platform tops (parts/platforms.ts: the ground's material over cells of their own) draw after the battlers too, but
+ *  before the ground: at one render order three draws the lower material id first — the ground's, built first — and the
+ *  ground's terrain shading ran under both tops, overwritten (−0.2 to −0.36 ms). The order changes no pixel either. */
+export const TOPS_RENDER_ORDER = 2.5;
 
 /** The arena ground's material for a build: its cells (default the context's ground), its worn ring (default none) and
  *  the look from the context. (The platform tops draw with it too, over cells of their own: platforms.ts.) */
