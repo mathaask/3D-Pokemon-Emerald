@@ -524,6 +524,30 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
   });
 
+  it("stands Drake's pillars clear of the player's sprite in the idle frame (its crest on a clear background)", () => {
+    // (the player's 64 × 64 sprite where the GBA draws it — sBattlerCoords (72, 80): GBA 40–104 × 48–112 — at its depth;
+    // each pillar's foot (its plinth's square) to the frame's top: their rectangles at 1280 × 800 at least 12 px apart.
+    // The back-left pillar at 0.42 rad stood tangent to it, its plinth on the crest of a 64-px back sprite)
+    const project = frameProjector(STAGE, 0), v = new THREE.Vector3(), px = (x: number, y: number, z: number) => {
+      project(x, y, z, v);
+      return [(v.x + 1) * 640, (1 - v.y) * 400];
+    };
+    const rect = (pts: number[][]) => [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])),
+      Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+    const sprite = rect([[40, 48], [104, 48], [40, 112], [104, 112]].map(([sx, sy]) => {
+      const w = STAGE.at(sx, sy, STAGE.playerDepth);
+      return px(w.x, w.y, w.z);
+    }));
+    const pillars = stadiumItems('drake', STAGE).filter((i) => i.kind === 'pillar');
+    expect(pillars.length).toBe(6);
+    for (const it of pillars) {
+      const h = Math.min(it.height, top0(it.x, it.z) - GROUND_Y);
+      const r = rect([-it.half, it.half].flatMap((dx) => [-it.half, it.half].flatMap((dz) => [0, h].map((y) => px(it.x + dx, GROUND_Y + y, it.z + dz)))));
+      const gap = Math.max(sprite[0] - r[2], r[0] - sprite[2], sprite[1] - r[3], r[1] - sprite[3]);
+      expect(gap, `pillar at (${it.x.toFixed(2)}, ${it.z.toFixed(2)})`).toBeGreaterThanOrEqual(12);
+    }
+  });
+
   it("stands Sidney's and Drake's spikes on the rules: tall ones on the tall rule with their tips in the frame, small ones under the sight lines", () => {
     for (const kind of ['sidney', 'drake'] as StadiumKind[]) {
       const spikes = spikePlacements(kind, STAGE, SCENERY_SEED);
