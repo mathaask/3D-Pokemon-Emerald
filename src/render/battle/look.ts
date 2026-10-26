@@ -39,8 +39,8 @@ function blankLook(): ArenaLook {
 }
 
 /** outdoor and water settings: timeOfDay(hour), night = nightFactor(hour), fog 30..80, clouds 1; sky (rayquaza): the
- *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.85, 0.94, 1.0) × 1.4, sky (0.46,
- *  0.68, 0.88), hemi 1.3, fog (0.12, 0.4, 0.6) 13..46, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
+ *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.7, 0.95, 1.0) × 1.7, sky (0.5, 0.82,
+ *  0.95), hemi 1.7, fog (0.3, 0.64, 0.8) 5.5..42, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
  *  hemi 1.2, fog = new THREE.Color(...toLinear(palette.wall)) × 0.12, 14..40 (groudon: fog (0.18, 0.07, 0.04),
  *  sun (1.0, 0.6, 0.35)); indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
  *  fog = new THREE.Color(...toLinear(palette.wall)) × 0.6, 22..60, night 0.
@@ -72,15 +72,17 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       break;
     }
     case 'underwater':
-      // (tuned at Task 8's review from sun (0.55, 0.8, 1.0) × 1.2, sky (0.3, 0.6, 0.9), hemi 1.2, fog (0.05, 0.22, 0.42)
-      // 10..38: the sea floor read as deep blue, not sand, and the haze swallowed its kelp and light shafts)
-      o.sunColor.setRGB(0.85, 0.94, 1.0);
-      o.sunI = 1.4;
-      o.sky.setRGB(0.46, 0.68, 0.88);
-      o.hemiI = 1.3;
-      o.fog.setRGB(0.12, 0.4, 0.6);
-      o.fogNear = 13;
-      o.fogFar = 46;
+      // (tuned at Task 8's reviews from sun (0.55, 0.8, 1.0) × 1.2, sky (0.3, 0.6, 0.9), hemi 1.2, fog (0.05, 0.22, 0.42)
+      // 10..38 — a deep blue floor, its kelp and light shafts lost in the haze —, then from a warm white light over warm
+      // sand, the haze from 13 units — a murky grey-olive lake bed: a bright, clear sea in the GBA's pale blues, cyan light
+      // over pale turquoise sand, a light turquoise haze from the stage on)
+      o.sunColor.setRGB(0.7, 0.95, 1.0);
+      o.sunI = 1.7;
+      o.sky.setRGB(0.5, 0.82, 0.95);
+      o.hemiI = 1.7;
+      o.fog.setRGB(0.3, 0.64, 0.8);
+      o.fogNear = 5.5;
+      o.fogFar = 42;
       o.caustics = 1;
       break;
     case 'cave':

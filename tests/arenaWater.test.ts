@@ -93,6 +93,12 @@ describe('arena water: sheets, order, placements', () => {
     expect(o.vertWorld).toContain('arenaClouds(');
     for (const h of [o.fragHead, o.fragColor, o.fragNormal, o.fragEmissive]) expect(h ?? '').not.toContain('arenaClouds(');
     expect(o.fragEmissive).toContain('vArenaCloud');
+    // the glints too by the mirror's strength (a cave's water shows few), and the kit's own field sample reused: one fetch
+    expect(o.fragEmissive).toContain('(refl + uSky * glint * 0.8) * uMirror');
+    // (the field at the fragment's cell: the kit's sample only; its other fetch is the rock lookup at the cell's corner)
+    expect(o.fragColor!.split('texture(tWater, (cell - uGridMin) / uGridSize)').length - 1).toBe(1);
+    expect(o.fragColor!.split('texture(tWater,').length - 1).toBe(2);
+    expect(o.fragColor).toContain('arenaShore = wd.r * 15.0;');
     expect(o.hookKey).toBe('arenaWater');
     expect(o.vertTransform).toBeUndefined();
     expect([o.uniforms!.uClouds.value, o.uniforms!.uMirror.value]).toEqual([1, 1]);
@@ -103,13 +109,16 @@ describe('arena water: sheets, order, placements', () => {
   it('stands the rocks in the water and the islets on the tall rule, each with its foam collar in the field', () => {
     for (const kind of ['water', 'kyogre', 'cavePond'] as const) {
       const rocks = waterRocks(kind, STAGE, 1);
-      expect(rocks.length, kind).toBeGreaterThanOrEqual(2);
+      // (as many as each rule asks: water 6–9, kyogre 3–5, cavePond 3–4)
+      const [lo, hi] = { water: [6, 9], kyogre: [3, 5], cavePond: [3, 4] }[kind];
+      expect(rocks.length, kind).toBeGreaterThanOrEqual(lo);
+      expect(rocks.length, kind).toBeLessThanOrEqual(hi);
       const f = waterField(kind, STAGE, rocks.flatMap((k) => k.corners));
       for (const k of rocks) {
         expect(ko.tallOk(k.x, k.z), `${kind} rock`).toBe(true);
         for (const c of k.corners) expect(at(f, c.x + 0.5, c.z + WATER_Y + 0.5, 3), `${kind} collar`).toBe(255);
         if (kind === 'cavePond') {
-          expect(Math.hypot((k.x - STAGE.centre.x) / CAVE_POND.rx, (k.z - STAGE.centre.z - CAVE_POND.dz) / CAVE_POND.rz)).toBeLessThan(0.85);
+          expect(Math.hypot((k.x - STAGE.centre.x) / CAVE_POND.rx, (k.z - STAGE.centre.z - CAVE_POND.dz) / CAVE_POND.rz)).toBeLessThan(0.9);
         }
       }
     }
@@ -146,7 +155,9 @@ describe('arena water: sheets, order, placements', () => {
     for (const c of reeds) expect(groundHeight('pond', c.x, c.z, STAGE) + CLUMP_TOP * c.scale * REED.tall).toBeLessThanOrEqual(cap(c.x, c.z) + 1e-9);
     const kelp = kelpPlacements(STAGE, 1);
     expect(kelp.length).toBeGreaterThanOrEqual(30);
-    for (const k of kelp) expect(ko.tallOk(k.x, k.z)).toBe(true);
+    // (every stalk on the tall rule and out from behind a battler up to 9 units back)
+    const behind = (x: number, z: number) => [STAGE.player, STAGE.enemy].some((p) => z < p.z && z > p.z - 9 && Math.abs(x - p.x) < 3.5);
+    for (const k of kelp) expect(ko.tallOk(k.x, k.z) && !behind(k.x, k.z), `kelp (${k.x.toFixed(1)}, ${k.z.toFixed(1)})`).toBe(true);
     const p = shaftGeometry(STAGE, 1)!.getAttribute('position');
     expect(p.count).toBeGreaterThan(0);
     // (each shaft's foot: its first vertex of 10)

@@ -33,7 +33,7 @@ const copy = (c: RGB): RGB => [c[0], c[1], c[2]];
  * grass / longGrass / plain: the field Grass from the platform's green (soften(scale(c.platform, 0.78 / 0.9 / 1.0))), a
  * worn earth Path ring (earthTone(c.rim)), lush Grass tops on soil sides, a lush rim-coloured grass skirt; sand: Sand
  * field and tops; water / kyogre: a sandy seabed under the platform's water colour, the rim's foam; pond: a grass shore
- * around the pond (lily pads in the rim's green); cavePond: a dark rock bed; underwater: seabed sand, kelp, rocks;
+ * around the pond (lily pads in the rim's green); cavePond: a dark rock bed; underwater: pale turquoise sand, kelp, rocks;
  * mountain: Gravel field, Rock path and tops; cave / groudon: dark Rock from the backdrop, Rock tops from the platform
  * fill, Groudon's lava the top band; building: Deck floor, Paving tops; gym … champion: Paving floor and tops (the
  * Stadium kinds' walls from the dark top band); rayquaza: pale Paving. Unlisted fields: path = ground, skirt = blade and
@@ -99,9 +99,9 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
       break;
     }
     case 'underwater': {
-      // (the sea floor's sand 0.75 of the way to the seabed's: tuned at Task 8's review from 0.45, a lilac grey that read as
-      // no sand under the blue light)
-      const kelp = mix(lush(c.rim), [0.35, 0.4, 0.2], 0.5), rock = scale(c.platform, 0.8), floor = mix(c.platform, SEABED, 0.75);
+      // (tuned at Task 8's reviews: the sea floor a pale turquoise sand — the backdrop's pale blue 0.3 of the way to the
+      // seabed's sand, blue over red — and the platforms the GBA's lavender lightened, not darkened (× 0.8 read navy))
+      const kelp = mix(lush(c.rim), [0.35, 0.4, 0.2], 0.5), rock = mix(c.platform, [1, 1, 1], 0.3), floor = mix(c.backdrop, SEABED, 0.3);
       p = {
         groundMat: GroundMat.Sand, ground: floor, pathMat: GroundMat.Sand, path: floor,
         platformMat: GroundMat.Rock, platformTop: rock, platformSide: rock, skirt: kelp,

@@ -130,15 +130,19 @@ const WATER_VERT_WORLD = /* glsl */ `
 
 const WATER_HEAD = /* glsl */ `
 uniform float uMirror;
+float arenaShore;
 varying float vArenaCloud;
 varying float vArenaShoal;
 `;
+/** The kit's FRAG_COLOR (kit/water.ts) samples its field into a local once: the arena keeps that sample (arenaShore, its
+ *  shore distance) rather than fetching the field a second time. */
+const KIT_FIELD_FETCH = '  vec4 wd = texture(tWater, (cell - uGridMin) / uGridSize);';
+const KEEP_FIELD = `${KIT_FIELD_FETCH}\n  arenaShore = wd.r * 15.0;`;
 // The arena's colour (after the kit's: its foam kept), and a pond's sheet faded out past its water's edge (the field's
 // shoreline: 0.5 cells), its foam with it.
 const WATER_COLOR = /* glsl */ `
 {
-  vec2 sc = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);
-  float sd = texture(tWater, (sc - uGridMin) / uGridSize).r * 15.0;
+  float sd = arenaShore;
   vec3 tint = kitSrgbToLinear(uTint);
   float deep = smoothstep(0.8, 4.5, sd) * (1.0 - ${f2(WATER_LOOK.shoal)} * vArenaShoal);
   vec3 col = mix(mix(tint, vec3(0.0, 0.55, 0.62), 0.6), tint * ${v3(WATER_LOOK.deep)}, deep);
@@ -153,7 +157,7 @@ normal = normalize(mix(normal, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0))
   smoothstep(${f2(WATER_LOOK.fade[0])}, ${f2(WATER_LOOK.fade[1])}, length(vViewPosition)) * ${f2(WATER_LOOK.far)}));
 `;
 // The reflection (in place of the kit's): the sky's gradient with its clouds, by fresnel off the calmer normal; the kit's
-// glints on the waves; none on foam. Night water: uSky is dark — a faint sheen.
+// glints on the waves; both by `mirror`, none on foam. Night water: uSky is dark — a faint sheen.
 const WATER_EMISSIVE = /* glsl */ `
 {
   vec3 vW = inverseTransformDirection(normalize(vViewPosition), viewMatrix);
@@ -163,21 +167,25 @@ const WATER_EMISSIVE = /* glsl */ `
   float fres = pow(1.0 - clamp(dot(nC, vW), 0.0, 1.0), ${f2(WATER_LOOK.power)});
   vec3 sky = uSky * mix(vec3(${f2(WATER_LOOK.horizon)}), ${v3(WATER_LOOK.zenith)}, sqrt(clamp(rW.y, 0.0, 1.0)));
   vec3 cloud = mix(uSky, vec3(dot(uSky, vec3(0.2126, 0.7152, 0.0722))), ${f2(WATER_LOOK.white)}) * ${f2(WATER_LOOK.cloud)};
+  // (the kit's glint, kit/water.ts FRAG_EMISSIVE's hW / glint lines, verbatim)
   vec3 hW = normalize(vec3(0.0, 1.0, 0.0) + 0.16 * normalize(vec3(vW.x, 0.0, vW.z) + 1e-5));
   float glint = pow(max(dot(nW, hW), 0.0), 2500.0);
   vec3 refl = mix(sky * (${f2(WATER_LOOK.base)} + ${f2(WATER_LOOK.fresnel)} * fres), cloud * (${f2(WATER_LOOK.cloudBase)} + ${f2(WATER_LOOK.cloudFresnel)} * fres), vArenaCloud);
   // (clear shallows: the sandy basin shows through, the reflection fades with the water's opacity there)
   refl *= mix(${f2(WATER_LOOK.clear)}, 1.0, smoothstep(${f2(WATER_LOOK.shallow[0])}, 1.0, diffuseColor.a));
-  totalEmissiveRadiance += (refl * uMirror + uSky * glint * 0.8) * (1.0 - kitFoam);
+  // (the glints too by the mirror's strength: a cave's water shows few)
+  totalEmissiveRadiance += (refl + uSky * glint * 0.8) * uMirror * (1.0 - kitFoam);
 }
 `;
 
-/** waterMaterial(...) + cloud reflections: fragHead += CLOUD_GLSL, fragEmissive += the clouds seen along the reflected
- *  ray (skyCloudUv, as the sky), × fresnel × uSky × (1 − foam); hookKey 'arenaWater'. As built: the clouds per vertex
- *  (CLOUD_GLSL in the vertex prelude, a varying), `clouds` their strength (the look's: 0 in caves); the kit's colour and
- *  reflection re-balanced for the battle camera (WATER_LOOK: the reflection replaces the kit's, `mirror` its strength);
- *  no swell (the lily pads and ripple rings lie 0.01–0.03 over the water). Transparent as the kit's (a pond's shallow
- *  rim); opaqueWater makes the deep sheet. */
+/** waterMaterial(...) — its field, foam, rock collars and waves kept — with the battle's water over it (WATER_LOOK): its
+ *  colour re-done after the kit's (the kit's own field sample reused: KIT_FIELD_FETCH), and its reflection replaced by the
+ *  arena's (fragEmissive: the sky's gradient and the battle sky's clouds seen along the reflected ray, × fresnel × uSky ×
+ *  (1 − foam), the kit's glints; all × `mirror`). The clouds are evaluated per vertex: CLOUD_GLSL in the vertex prelude
+ *  (vertHead), skyCloudUv as the sky, into the varying vArenaCloud — none per pixel; `clouds` their strength (the look's:
+ *  0 in caves). No swell (the lily pads and ripple rings lie 0.01–0.03 over the water). hookKey 'arenaWater'.
+ *  Transparent as the kit's (a pond's shallow rim); opaqueWater makes the deep sheet. Throws if the kit's FRAG_COLOR no
+ *  longer samples its field as KIT_FIELD_FETCH says (the part fails: today's arena; the drift guard's test fails). */
 export function arenaWaterMaterial(tex: THREE.Texture, min: THREE.Vector2, size: THREE.Vector2, tint: RGB, clouds = 1,
   mirror = 1): KitMaterialOptions {
   const k = waterMaterial(tex, min, size, new THREE.Vector3(...tint));
@@ -185,7 +193,7 @@ export function arenaWaterMaterial(tex: THREE.Texture, min: THREE.Vector2, size:
     ...k,
     uniforms: { ...k.uniforms, uClouds: { value: clouds }, uMirror: { value: mirror } },
     fragHead: (k.fragHead ?? '') + WATER_HEAD,
-    fragColor: (k.fragColor ?? '') + WATER_COLOR,
+    fragColor: keepField(k.fragColor ?? '') + WATER_COLOR,
     fragNormal: (k.fragNormal ?? '') + WATER_NORMAL,
     fragEmissive: WATER_EMISSIVE,
     vertTransform: undefined,
@@ -193,6 +201,12 @@ export function arenaWaterMaterial(tex: THREE.Texture, min: THREE.Vector2, size:
     vertWorld: WATER_VERT_WORLD,
     hookKey: 'arenaWater',
   };
+}
+
+/** The kit's FRAG_COLOR with its field sample kept in arenaShore (KIT_FIELD_FETCH). */
+function keepField(kit: string): string {
+  if (!kit.includes(KIT_FIELD_FETCH)) throw new Error('arena water: kit/water.ts FRAG_COLOR no longer samples its field as KIT_FIELD_FETCH');
+  return kit.replace(KIT_FIELD_FETCH, KEEP_FIELD);
 }
 
 /** The deep water's material: arenaWaterMaterial's, opaque and writing depth (drawn first: what lies under it is never
@@ -332,8 +346,10 @@ export interface WaterRock { x: number; z: number; size: number; seed: number; c
 const WATER_ROCKS: Partial<Record<ArenaKind, { count: [number, number]; r: [number, number]; size: [number, number] }>> = {
   water: { count: [6, 9], r: [9, 30], size: [0.8, 1.7] },
   kyogre: { count: [3, 5], r: [9, 26], size: [0.8, 1.6] },
-  cavePond: { count: [3, 4], r: [9, 15], size: [0.7, 1.3] },
+  cavePond: { count: [3, 4], r: [9, 16], size: [0.7, 1.3] },
 };
+/** A cave pond's rocks stand inside this elliptical radius of its CAVE_POND ellipse (in its water, off its shore). */
+const POND_ROCK_E = 0.9;
 const SMALL_ROCK = 1.2;
 /** Rocks and islets keep out of the ground behind each battler (its silhouette's background), this far to its side. */
 const BEHIND_HALF = 3.5;
@@ -358,7 +374,7 @@ const BEHIND_REACH = 12;
 /** Rocks in the water stand within this angle of straight behind the stage (the camera's view at any yaw). */
 const BACK_ARC = 1.3;
 
-/** water 6–9 rocks (r 9–30), kyogre 3–5, cavePond 3–4 inside its pond: within BACK_ARC of straight behind, on the tall
+/** water 6–9 rocks (r 9–30), kyogre 3–5 (r 9–26), cavePond 3–4 (r 9–16) inside POND_ROCK_E of its pond: within BACK_ARC of straight behind, on the tall
  *  rule, out from behind the battlers (BEHIND_REACH); each centred on a field corner (narrow) or a cell's middle (wide). */
 export function waterRocks(kind: ArenaKind, stage: Stage, seed: number): WaterRock[] {
   const rule = WATER_ROCKS[kind];
@@ -366,7 +382,7 @@ export function waterRocks(kind: ArenaKind, stage: Stage, seed: number): WaterRo
   const r = rng(seed * 6007 + 0x70c);
   const n = rule.count[0] + Math.floor(r() * (rule.count[1] - rule.count[0] + 1));
   const ko = stageKeepOut(stage), pond = pondOf(kind);
-  const inPond = (x: number, z: number) => !pond || Math.hypot((x - stage.centre.x) / pond.rx, (z - stage.centre.z - pond.dz) / pond.rz) < 0.8;
+  const inPond = (x: number, z: number) => !pond || Math.hypot((x - stage.centre.x) / pond.rx, (z - stage.centre.z - pond.dz) / pond.rz) < POND_ROCK_E;
   const pts = scatter(seed * 6007 + 0x5ea, { centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: n, minGap: 3.5,
     accept: (x, z) => ko.tallOk(x, z) && !behindBattler(stage, x, z, BEHIND_REACH) && inPond(x, z)
       && Math.abs(Math.atan2(x - stage.centre.x, stage.centre.z - z)) <= BACK_ARC });
@@ -509,8 +525,8 @@ function fanned(stage: Stage, r: () => number, angles: readonly number[], r0: nu
 
 /** The sea floor's kelp forests: two in the frame's back band (0.15–0.5 rad off straight behind, r 15–21) and one each
  *  side (0.8–1.2 rad off, r 11–16: in view as the camera swings), on the tall rule and out from behind the battlers (9
- *  units: beyond, they rise over a battler's head); 30–50 kelp round them (within 3 units of one, r 6–24, on the tall
- *  rule: the camera's sight lines and the stage stay clear), scale 0.75–1.15. */
+ *  units: beyond, they rise over a battler's head); 30–50 kelp round them (within 3 units of one, r 6–24, each on the
+ *  tall rule — the camera's sight lines and the stage stay clear — and out from behind the battlers), scale 0.75–1.15. */
 const KELP_BEHIND = 9;
 export function kelpPlacements(stage: Stage, seed: number): { x: number; z: number; scale: number; yaw: number; shade: number; variant: number }[] {
   const r = rng(seed * 811 + 0x6e1b);
@@ -525,7 +541,8 @@ export function kelpPlacements(stage: Stage, seed: number): { x: number; z: numb
     for (let t = 0; t < 30; t++) {
       const f = forests[i % forests.length], a = r() * Math.PI * 2, d = 3 * Math.sqrt(r());
       const x = f.x + Math.cos(a) * d, z = f.z + Math.sin(a) * d, rc = Math.hypot(x - stage.centre.x, z - stage.centre.z);
-      if (rc < 6 || rc > 24 || !ko.tallOk(x, z) || out.some((k) => (k.x - x) ** 2 + (k.z - z) ** 2 < 0.36)) continue;
+      // (each stalk on the rules, not only its forest's centre: a stalk 3 units out may stand behind a battler)
+      if (rc < 6 || rc > 24 || !ok(x, z) || out.some((k) => (k.x - x) ** 2 + (k.z - z) ** 2 < 0.36)) continue;
       out.push({ x, z, scale: 0.75 + 0.4 * r(), yaw: r() * Math.PI * 2, shade: 0.85 + 0.3 * r(), variant: Math.floor(r() * KELP_VARIANTS) });
       break;
     }
