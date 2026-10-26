@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { roomShell, courtLines, pillarGeometry, HALLS } from '../src/render/battle/parts/rooms';
 import { stageKeepOut } from '../src/render/battle/parts/scatter';
 import { arenaPalette } from '../src/render/battle/palette';
-import { STAGE, GROUND_Y } from '../src/render/battle/stage';
+import { BATTLE_CAMERA, STAGE, GROUND_Y } from '../src/render/battle/stage';
 import * as THREE from 'three';
 import { HALL_PART, PANEL, SEATS, SHELF, SHELL, bannerGeometry, hallColors, hallLayout, seatTiers, wallFrame, type HallKind } from '../src/render/battle/parts/rooms';
 import { COURT_BOUNDS, FLOOR_COURT, FLOOR_STYLE, hallFloorMaterial } from '../src/render/battle/parts/floor';
@@ -524,27 +524,38 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
   });
 
-  it("stands Drake's pillars clear of the player's sprite in the idle frame (its crest on a clear background)", () => {
-    // (the player's 64 × 64 sprite where the GBA draws it — sBattlerCoords (72, 80): GBA 40–104 × 48–112 — at its depth;
-    // each pillar's foot (its plinth's square) to the frame's top: their rectangles at 1280 × 800 at least 12 px apart.
-    // The back-left pillar at 0.42 rad stood tangent to it, its plinth on the crest of a 64-px back sprite)
-    const project = frameProjector(STAGE, 0), v = new THREE.Vector3(), px = (x: number, y: number, z: number) => {
-      project(x, y, z, v);
-      return [(v.x + 1) * 640, (1 - v.y) * 400];
-    };
-    const rect = (pts: number[][]) => [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])),
-      Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
-    const sprite = rect([[40, 48], [104, 48], [40, 112], [104, 112]].map(([sx, sy]) => {
-      const w = STAGE.at(sx, sy, STAGE.playerDepth);
-      return px(w.x, w.y, w.z);
-    }));
+  it("stands Drake's pillars clear of both battlers' sprites through the idle sway, the back one in the frame", () => {
+    // (the idle camera sways its yaw ± BATTLE_CAMERA.sway (0.04): at yaw −0.04, 0 and +0.04, 1280 × 800, each pillar's foot
+    // (its plinth's square) to the frame's top against the battlers' 64 × 64 sprites where the GBA draws them —
+    // sBattlerCoords (72, 80) and (176, 40): GBA 40–104 × 48–112 and 144–208 × 8–72 — at their depths: every pillar the
+    // frame shows at least 24 px from both (the inflated silhouette reaches ≈ 17 px past the box's top in the shots); the
+    // back pillar (the first) at least half in the frame at every sway. At −0.42 rad its plinth stood on a back sprite's
+    // crest; at −0.53 it cleared it at yaw 0 only — swayed to +0.031 its corner went behind the crest again)
     const pillars = stadiumItems('drake', STAGE).filter((i) => i.kind === 'pillar');
     expect(pillars.length).toBe(6);
-    for (const it of pillars) {
-      const h = Math.min(it.height, top0(it.x, it.z) - GROUND_Y);
-      const r = rect([-it.half, it.half].flatMap((dx) => [-it.half, it.half].flatMap((dz) => [0, h].map((y) => px(it.x + dx, GROUND_Y + y, it.z + dz)))));
-      const gap = Math.max(sprite[0] - r[2], r[0] - sprite[2], sprite[1] - r[3], r[1] - sprite[3]);
-      expect(gap, `pillar at (${it.x.toFixed(2)}, ${it.z.toFixed(2)})`).toBeGreaterThanOrEqual(12);
+    const rect = (pts: number[][]) => [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])),
+      Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+    for (const sway of [-BATTLE_CAMERA.sway, 0, BATTLE_CAMERA.sway]) {
+      const project = frameProjector(STAGE, sway), v = new THREE.Vector3(), px = (x: number, y: number, z: number) => {
+        project(x, y, z, v);
+        return [(v.x + 1) * 640, (1 - v.y) * 400];
+      };
+      const sprite = (gx: number, gy: number, depth: number) => rect([[gx, gy], [gx + 64, gy], [gx, gy + 64], [gx + 64, gy + 64]].map(([sx, sy]) => {
+        const w = STAGE.at(sx, sy, depth);
+        return px(w.x, w.y, w.z);
+      }));
+      const sprites = [sprite(40, 48, STAGE.playerDepth), sprite(144, 8, STAGE.enemyDepth)];
+      pillars.forEach((it, i) => {
+        const h = Math.min(it.height, top0(it.x, it.z) - GROUND_Y);
+        const r = rect([-it.half, it.half].flatMap((dx) => [-it.half, it.half].flatMap((dz) => [0, h].map((y) => px(it.x + dx, GROUND_Y + y, it.z + dz)))));
+        const shown = Math.max(0, Math.min(1280, r[2]) - Math.max(0, r[0])) / (r[2] - r[0]);
+        if (i === 0) expect(shown, `the back pillar at sway ${sway}: in the frame`).toBeGreaterThanOrEqual(0.5);
+        if (shown === 0 || r[3] < 0 || r[1] > 800) return;
+        for (const s of sprites) {
+          const gap = Math.max(s[0] - r[2], r[0] - s[2], s[1] - r[3], r[1] - s[3]);
+          expect(gap, `pillar at (${it.x.toFixed(2)}, ${it.z.toFixed(2)}), sway ${sway}`).toBeGreaterThanOrEqual(24);
+        }
+      });
     }
   });
 
