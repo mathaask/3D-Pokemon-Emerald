@@ -128,8 +128,10 @@ const GRASS: Partial<Record<ArenaKind, GrassRule>> = {
 };
 /** The plain's grass grows in 6–10 patches of these radii. */
 const PATCH = { min: 6, max: 10, r: [1.6, 2.8] as const };
-/** The pond's shore band (elliptical radius of its POND ellipse: the water's edge at 1): reeds from the water's edge up
- *  the bank (the shallows before them show the pond's sandy basin: parts/water.ts). */
+/** The pond's reed band (elliptical radius of its POND ellipse): from the crest of the bank's lip at 1 up its back to 1.4.
+ *  The water's edge lies inside the ellipse (POND_BANK.waterline, 0.9 units in, parts/ground.ts): between it and the
+ *  reeds a strip of sandy beach rises to the lip; the clear shallows before it show the pond's sandy bed
+ *  (parts/water.ts). */
 const SHORE: [number, number] = [1.0, 1.4];
 /** The pond's clumps are reeds: a clump drawn `tall` × taller and `narrow` × narrower (the sight cap holds their full
  *  height), in the leaves' green turned `mix` of the way to a dry reed brown; in stands where a noise field (`stands` per
