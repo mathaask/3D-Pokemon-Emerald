@@ -9,7 +9,9 @@ import {
 } from '../src/render/battle/parts/water';
 import { CAVE_POND, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER, groundHeight } from '../src/render/battle/parts/ground';
 import { CLUMP_TOP, REED, arenaClear, grassPlacements } from '../src/render/battle/parts/flora';
-import { frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
+import { battleCamera, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
+import { arenaPalette } from '../src/render/battle/palette';
+import { arenaLook } from '../src/render/battle/look';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { createKitUniforms } from '../src/render/kit/materials';
@@ -145,6 +147,15 @@ describe('arena water: sheets, order, placements', () => {
         expect(insideEllipse({ x: c.x, z: c.z, rx: f.rx * 1.7, rz: f.rz * 1.7 }, p.x, p.z)).toBe(false);
       }
     }
+  });
+
+  it('floors the sea with a pale turquoise sand (blue over red), the haze starting behind the player\'s battler', () => {
+    const g = arenaPalette('underwater', null).ground;
+    expect(g[2]).toBeGreaterThan(g[0]);
+    expect(Math.min(...g)).toBeGreaterThan(0.6);
+    const l = arenaLook('underwater', arenaPalette('underwater', null), 12);
+    // (the battle camera stands ≈ 10 from the player's platform: its battler out of the haze)
+    expect(l.fogNear).toBeGreaterThanOrEqual(battleCamera(STAGE, 0).distanceTo(STAGE.player) - 0.05);
   });
 
   it('keeps the reeds, the kelp and the light shafts out of the camera\'s way', () => {

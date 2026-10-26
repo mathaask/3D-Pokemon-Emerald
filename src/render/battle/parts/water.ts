@@ -83,10 +83,11 @@ export function waterField(kind: ArenaKind, stage: Stage, rocks: readonly { x: n
 // battle camera looks at it from 5–28° above, where the kit's fresnel over its full wave tilt turned the whole sea into
 // streaks of milky sky. The arena keeps the kit's field, foam, rock collars, waves (normals) and glints, and re-balances
 // its colour and reflection for that view (WATER_LOOK): its deep water a clearer, lighter blue with lighter shoals
-// in it (the open sea's shallow-deep tint), a pond's shallows sandy towards its shore; the sky's reflection — its gradient, deeper overhead, and its
-// soft clouds — strong only towards the frame's top, where the camera looks along the water (a sharper fresnel, off a
-// calmer normal), `mirror` its strength (the look's: a cave's ceiling reflects little); the waves calming with distance
-// (far ripples alias into streaks at a grazing view).
+// in it (the open sea's shallow-deep tint), a pond's shallows sandy towards its shore; the sky's reflection — its
+// gradient, deeper overhead, and its soft clouds — strong only towards the frame's top, where the camera looks along the
+// water (a sharper fresnel, off a calmer normal); `mirror` the strength of the reflection and the glints both (1 on open
+// water, CAVE_WATER.mirror in caves: a cave's ceiling reflects little); the waves calming with distance (far ripples
+// alias into streaks at a grazing view).
 //
 // The clouds along the view ray reflected off the level water are evaluated per vertex (the sky's own clouds: CLOUD_GLSL
 // along skyCloudUv, as BattleSky draws them; three noise lookups per vertex, none per pixel), into vArenaCloud — faded
