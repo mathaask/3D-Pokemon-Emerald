@@ -22,7 +22,7 @@ import { CLOUD_GLSL } from '../clouds.glsl';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaContext, ArenaPart, CatalogueEntry } from '../modernArena';
 import { PLATFORM_FOOTPRINT, WATER_Y, type Stage } from '../stage';
-import { CAVE_POND, POND, groundHeight, moonlitAsGround } from './ground';
+import { CAVE_POND, POND, POND_BANK, groundHeight, moonlitAsGround, pondShore } from './ground';
 import { addPad } from './platforms';
 import { boulderGeometry, rockCluster } from './rocks';
 import { arenaClear, arenaTreeMaterial, PALM } from './flora';
@@ -36,8 +36,9 @@ const FIELD = 96;
 /** The pond kinds' ellipse (null: open water). */
 const pondOf = (kind: ArenaKind) => (kind === 'pond' ? POND : kind === 'cavePond' ? CAVE_POND : null);
 
-/** The kit water shader's cells (1 unit, cell = (x, z − WATER_Y)): r = shore distance / 15 × 255 (BFS from land; sea
- *  kinds: 15 everywhere; ponds: a cell is water when its centre lies inside the POND / CAVE_POND ellipse), a = 255 on a sea
+/** The kit water shader's cells (1 unit, cell = (x, z − WATER_Y)): r = shore distance / 15 × 255 (sea kinds: 15
+ *  everywhere; the cave pond: BFS from land, a cell is water when its centre lies inside the CAVE_POND ellipse; the pond:
+ *  analytic, 0.5 + the distance into the water from its waterline, ground.ts pondShore), a = 255 on a sea
  *  rock's cell (the cell whose corner is the rock's integer (x, z): the shader's foam collar). 96 × 96 cells, min =
  *  [floor(centre.x) − 48, floor(centre.z − WATER_Y) − 48] (integer-aligned: the shader's rock lookup assumes it).
  *  (The shader centres a rock's collar 0.15 south of its corner, +z: a rock at corner (x, z) stands at world
@@ -49,6 +50,15 @@ export function waterField(kind: ArenaKind, stage: Stage, rocks: readonly { x: n
   const pond = pondOf(kind);
   if (!pond) {
     for (let i = 0; i < w * h; i++) data[i * 4] = 255;
+  } else if (kind === 'pond') {
+    // the pond's: analytic — 0.5 on its waterline (ground.ts pondShore: the shader's sheet runs out there as its bank
+    // rises over the water), a cell more per unit into it (the land cells' polygonal shore gone)
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const sd = Math.min(15, Math.max(0, 0.5 - pondShore(min[0] + i + 0.5, min[1] + j + 0.5 + WATER_Y, stage)));
+        data[(j * w + i) * 4] = Math.round((sd / 15) * 255);
+      }
+    }
   } else {
     // a local 4-neighbour flood from the land cells, capped at 15 (as kit/water.ts shoreDistance on a map)
     const dist = new Uint8Array(w * h).fill(255);
@@ -266,7 +276,9 @@ export function waterSheets(kind: ArenaKind, stage: Stage): { deep: THREE.Buffer
     return { deep, rim: null };
   }
   const cx = stage.centre.x, cz = stage.centre.z + pond.dz;
-  const crx = pond.rx - P.core, crz = pond.rz - P.core;
+  // (the pond's water ends POND_BANK.waterline inside its ellipse: its core as far inside the water as the cave pond's)
+  const core = P.core + (kind === 'pond' ? POND_BANK.waterline : 0);
+  const crx = pond.rx - core, crz = pond.rz - core;
   // (the core's last ring and the rim's first: the same vertices)
   const deep = sheet(cx, cz, P.coreRings, P.segments, (k) => {
     const t = Math.pow(k / P.coreRings, 1.2);

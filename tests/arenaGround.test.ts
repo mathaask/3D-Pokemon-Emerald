@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
+  groundCells, groundDisc, groundHeight, CAVE_POND, POND, POND_BANK, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
   GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS,
 } from '../src/render/battle/parts/ground';
 import type { ArenaContext } from '../src/render/battle/modernArena';
@@ -36,6 +36,60 @@ describe('arena ground', () => {
   });
   it('digs the pond under the water', () => {
     expect(groundHeight('pond', STAGE.centre.x, STAGE.centre.z + POND.dz - 6, STAGE)).toBeLessThan(WATER_Y - 0.3);
+  });
+  it("raises the pond's bank into a sandy lip over the water: its waterline analytic, its profile without kinks", () => {
+    // (along rays from the POND ellipse's centre, every 5°: up to the ellipse the ground crosses WATER_Y once,
+    // POND_BANK.waterline inside it, and stands over the water from there — a lip before the reeds (at the ellipse; behind
+    // it the bank falls back to the field, the water there long transparent); the slope changes smoothly all the way; the
+    // cells on the beach and the lip are sand. Before, the bank met the ellipse at GROUND_Y, under the water)
+    const cx = STAGE.centre.x, cz = STAGE.centre.z + POND.dz, p = arenaPalette('pond', defaultArenaColors('pond'));
+    const cells = groundCells('pond', p, STAGE), step = 0.01;
+    for (let k = 0; k < 72; k++) {
+      const a = (k / 72) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+      const R = 1 / Math.hypot(c / POND.rx, s / POND.rz);
+      const h = (d: number) => groundHeight('pond', cx + c * d, cz + s * d, STAGE);
+      const from = R - POND_BANK.waterline - 3, to = R + POND_BANK.back + 1;
+      const crossings: number[] = [];
+      let crest = -Infinity, lastSlope = NaN;
+      for (let d = from; d < to; d += step) {
+        const h0 = h(d), h1 = h(d + step), slope = (h1 - h0) / step;
+        if (d < R && (h0 - WATER_Y) * (h1 - WATER_Y) <= 0 && h0 !== h1) crossings.push(d + step * (WATER_Y - h0) / (h1 - h0));
+        crest = Math.max(crest, h0);
+        if (!Number.isNaN(lastSlope)) expect(Math.abs(slope - lastSlope), `angle ${k * 5}°: a kink at ${d.toFixed(2)}`).toBeLessThan(0.02);
+        lastSlope = slope;
+      }
+      expect(crossings.length, `angle ${k * 5}°: crossings`).toBe(1);
+      expect(crossings[0] - (R - POND_BANK.waterline), `angle ${k * 5}°: the waterline`).toBeCloseTo(0, 3);
+      expect(h(R), `angle ${k * 5}°: the lip's crest`).toBeGreaterThanOrEqual(WATER_Y + 0.08);
+      expect(crest, `angle ${k * 5}°: the lip's crest`).toBeCloseTo(h(R), 6);
+      // (the terrain's cells in its cell space: (x, z − y))
+      for (const d of [R - POND_BANK.waterline, R - POND_BANK.waterline / 2, R]) {
+        const x = cx + c * d, z = cz + s * d;
+        expect(matAt(cells, x, z - h(d)), `angle ${k * 5}°: sand at ${(d - R).toFixed(2)}`).toBe(GroundMat.Sand);
+      }
+    }
+    // (the cave pond keeps its basin: GROUND_Y at its shore)
+    expect(groundHeight('cavePond', STAGE.centre.x, STAGE.centre.z + CAVE_POND.dz - CAVE_POND.rz, STAGE)).toBe(GROUND_Y);
+  });
+  it("builds the pond's ground with its waterline where the profile has it (the disc's own triangles)", () => {
+    // (every disc edge crossing WATER_Y inside the ellipse — the water's side of the lip's crest — crosses it within 0.06 of the
+    // analytic waterline, measured along the ray: the default disc's rings missed it by up to 0.4)
+    const g = groundDisc('pond', STAGE), pos = g.getAttribute('position'), idx = g.getIndex()!;
+    const cx = STAGE.centre.x, cz = STAGE.centre.z + POND.dz;
+    let n = 0;
+    for (let t = 0; t < idx.count; t += 3) {
+      for (let q = 0; q < 3; q++) {
+        const i = idx.getX(t + q), j = idx.getX(t + (q + 1) % 3);
+        const yi = pos.getY(i) - WATER_Y, yj = pos.getY(j) - WATER_Y;
+        if (yi * yj >= 0) continue;
+        const f = yi / (yi - yj), x = pos.getX(i) + (pos.getX(j) - pos.getX(i)) * f, z = pos.getZ(i) + (pos.getZ(j) - pos.getZ(i)) * f;
+        const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz), R = d / Math.hypot(dx / POND.rx, dz / POND.rz);
+        if (d >= R) continue;
+        expect(Math.abs(d - (R - POND_BANK.waterline)), `crossing at (${x.toFixed(2)}, ${z.toFixed(2)})`).toBeLessThan(0.06);
+        n++;
+      }
+    }
+    expect(n).toBeGreaterThan(96);
   });
   it("ends the Sky Pillar's floor at its broken edge (r 14); every other kind's runs on to 64", () => {
     expect(groundHeight('rayquaza', STAGE.centre.x, STAGE.centre.z - 13, STAGE)).toBe(GROUND_Y);

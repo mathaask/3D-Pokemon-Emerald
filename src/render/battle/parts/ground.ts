@@ -16,7 +16,7 @@ import { CLOUD_GLSL } from '../clouds.glsl';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, type Stage } from '../stage';
+import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, WATER_Y, type Stage } from '../stage';
 import { FLOOR_COURT, FLOOR_STYLE, courtColor, hallFloorMaterial } from './floor';
 
 export const GROUND_GRID = 72;   // cells (1 unit each) around stage.centre
@@ -24,8 +24,18 @@ export const POND = { dz: -1, rx: 15, rz: 10 }, CAVE_POND = { dz: -1, rx: 18, rz
 
 /** The seabed under open water (water, kyogre) and the pond basins' floor. */
 const SEABED_Y = -1.2, BASIN_Y = -0.9;
-/** The pond basin's shore: it slopes up to GROUND_Y over its last BASIN_SHORE units. */
+/** The cave pond's basin shore: it slopes up to GROUND_Y over its last BASIN_SHORE units. */
 const BASIN_SHORE = 2;
+/** The pond's bank (the pond only; the cave pond keeps its basin): its waterline `waterline` units inside the POND
+ *  ellipse (along the ray from the ellipse's centre: pondShore), a sandy lip rising from it to `crest` over WATER_Y at
+ *  the ellipse — where the reeds start (flora.ts SHORE) — and easing back down to the field over `back` units beyond it;
+ *  under the water the bed falls from the waterline as steeply as the lip rises, to BASIN_Y. One profile, C1 throughout
+ *  (pondBank): the water meets the ground on a smooth, analytic waterline, and the camera sees a strip of beach before
+ *  the reeds. */
+export const POND_BANK = { waterline: 0.9, crest: 0.12, back: 2 };
+/** The bed's run from the waterline down to BASIN_Y: its slope at the waterline (2 · depth / run, a parabola) the lip's
+ *  (2 · crest / waterline). */
+const POND_BED_RUN = ((WATER_Y - BASIN_Y) * POND_BANK.waterline) / POND_BANK.crest;
 /** Flat within FLAT_R of the stage centre; outdoors the field rolls in fully by ROLL_R. */
 const FLAT_R = 9, ROLL_R = 22;
 /** The worn ring round the platforms (outdoor kinds; elliptical radius × footprint): worn from `inner` (a soft edge
@@ -69,8 +79,9 @@ export const CLOUD_SHADOW = 0.15;
 /** The battle ground's border warp reaches this far from the stage centre (cells; faded out over its last 4): beyond,
  *  the field is one material — nothing to bend (WARP_GLSL). */
 const WARP_R = 30;
-/** The pond bed's muddy sand (its cells' tint: Sand). */
-const POND_BED: RGB = [0.6, 0.56, 0.42];
+/** The pond bed's muddy sand (its cells' tint: Sand); the pond's beach and lip over the water a warm, dry sand (the
+ *  shallows' sandy shelf: water.ts WATER_LOOK.sand), each a little of the field's colour. */
+const POND_BED: RGB = [0.6, 0.56, 0.42], POND_BEACH: RGB = [0.86, 0.78, 0.56];
 
 /** The disc's radius (units from the stage centre): 64 (`default`) — beyond the battle camera's sight of the ground —,
  *  but the Sky Pillar's floor ends at its broken edge (parts/skyPillar.ts: the edge's lip covers the disc's rim). */
@@ -82,7 +93,8 @@ export const DISC_SEGMENTS = 96;
 const DISC_RINGS = 48, DISC_POW = 1.35;
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
- *  noise2; pond kinds: the pond ellipse → Sand (its bed). The field runs on under the platforms (their tops paint
+ *  noise2; pond kinds → Sand: the cave pond's ellipse (its bed), the pond's bed, beach and lip (pondSand). The field
+ *  runs on under the platforms (their tops paint
  *  themselves: platforms.ts, uniformCells — platform cells here reached out past the slabs' plinths and, shifted 0.28
  *  towards −z in cell space, past the sand mounds' far side, where the worn ring's tint turned them near white); the worn
  *  ring is the shader's (WORN_RING). (The grid is in the terrain shader's cell space, (x, z − y): the field at GROUND_Y.) */
@@ -90,16 +102,18 @@ export function groundCells(kind: ArenaKind, p: ArenaPalette, stage: Stage): { d
   const w = GROUND_GRID, h = GROUND_GRID;
   const min: [number, number] = [Math.floor(stage.centre.x) - w / 2, Math.floor(stage.centre.z) - h / 2];
   const data = new Uint8Array(w * h * 4);
-  const pond = kind === 'pond' ? POND : kind === 'cavePond' ? CAVE_POND : null;
-  const bed = mix(POND_BED, p.ground, 0.25);
+  const pond = kind === 'cavePond' ? CAVE_POND : null;
+  const bed = mix(POND_BED, p.ground, 0.25), beach = mix(POND_BEACH, p.ground, 0.12);
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       // the cell's centre in cell space; on ground at GROUND_Y the world's z is that + GROUND_Y
       const x = min[0] + i + 0.5, z = min[1] + j + 0.5, zg = z + GROUND_Y;
       let mat = p.groundMat, tint = p.ground;
-      if (pond && Math.hypot((x - stage.centre.x) / pond.rx, (zg - stage.centre.z - pond.dz) / pond.rz) <= 1) {
+      const shore = kind === 'pond' ? pondCellShore(x, z, stage) : 0;
+      if (kind === 'pond' ? shore <= POND_BANK.waterline + POND_SAND_PAST_CREST
+        : pond && Math.hypot((x - stage.centre.x) / pond.rx, (zg - stage.centre.z - pond.dz) / pond.rz) <= 1) {
         mat = GroundMat.Sand;
-        tint = bed;
+        tint = kind === 'pond' && shore > POND_BEACH_FROM ? beach : bed;
       }
       const k = 1 + 0.06 * noise2(x * 0.23, z * 0.23, 0x6a7);
       const o = (j * w + i) * 4;
@@ -119,22 +133,59 @@ function roll(x: number, z: number, r: number, amp: number): number {
   return smooth(FLAT_R, ROLL_R, r) * (0.9 * noise2(x * 0.07, z * 0.07) - 0.25) * amp;
 }
 
+/** The pond's signed distance to its waterline at (x, z) (POND_BANK): along the ray from the POND ellipse's centre,
+ *  positive on the bank (the ellipse itself at POND_BANK.waterline). */
+export function pondShore(x: number, z: number, stage: Stage): number {
+  const dx = x - stage.centre.x, dz = z - stage.centre.z - POND.dz;
+  const e = Math.hypot(dx / POND.rx, dz / POND.rz), d = Math.hypot(dx, dz);
+  // (d / e: the ellipse's radius along the ray; at its centre any)
+  return (e < 1e-9 ? -POND.rz : d - d / e) + POND_BANK.waterline;
+}
+
+/** The pond's ground at signed distance `s` from its waterline (pondShore) over a field at `field`: the bed (a parabola
+ *  from BASIN_Y up to WATER_Y over POND_BED_RUN), the lip (a parabola from WATER_Y up to its crest at the ellipse, the
+ *  same slope at the waterline), its back (a smoothstep from the crest down to the field over POND_BANK.back). */
+function pondBank(s: number, field: number): number {
+  const B = POND_BANK, crest = WATER_Y + B.crest;
+  if (s <= 0) {
+    const t = Math.min(1, -s / POND_BED_RUN);
+    return WATER_Y - (WATER_Y - BASIN_Y) * (1 - (1 - t) * (1 - t));
+  }
+  if (s <= B.waterline) {
+    const t = s / B.waterline;
+    return WATER_Y + B.crest * (1 - (1 - t) * (1 - t));
+  }
+  return crest + (field - crest) * smooth(0, B.back, s - B.waterline);
+}
+
+/** The pond's cells are sand up to this far past its lip's crest (one cell: the terrain's border warp, up to ≈ 0.9 of a
+ *  cell, keeps the beach and the crest sand), its dry beach's from this far short of its waterline (a cell straddling it). */
+const POND_SAND_PAST_CREST = 1, POND_BEACH_FROM = -0.3;
+/** The pond's ground cell at cell-space (x, z) — the terrain's (x, z − y) — as pondShore of its point on the ground (z + y,
+ *  the ground's height found in two steps from the water's): on the bed, the beach, the lip or beyond. */
+function pondCellShore(x: number, z: number, stage: Stage): number {
+  let zw = z + WATER_Y;
+  for (let k = 0; k < 2; k++) zw = z + groundHeight('pond', x, zw, stage);
+  return pondShore(x, zw, stage);
+}
+
 /** Ground height at world (x, z): GROUND_Y within 9 units of the centre; outdoor kinds roll beyond (smoothstep(9, 22, r) ×
- *  (0.9 · noise2(x·0.07, z·0.07) − 0.25), sand ×2); cave/indoor flat; water/kyogre the seabed −1.2; pond/cavePond a basin
- *  (POND / CAVE_POND ellipse around the centre) at −0.9 sloping up to GROUND_Y over its last 2 units. (Underwater's sea
- *  floor rolls as the outdoor field; the pond's shore beyond its basin too; the Sky Pillar's top is flat.) */
+ *  (0.9 · noise2(x·0.07, z·0.07) − 0.25), sand ×2); cave/indoor flat; water/kyogre the seabed −1.2; the pond its bank
+ *  (POND_BANK: a bed under the water, a lip over it, the rolling field beyond); cavePond a basin (CAVE_POND ellipse
+ *  around the centre) at −0.9 sloping up to GROUND_Y over its last 2 units. (Underwater's sea floor rolls as the outdoor
+ *  field; the Sky Pillar's top is flat.) */
 export function groundHeight(kind: ArenaKind, x: number, z: number, stage: Stage): number {
   const dx = x - stage.centre.x, dz = z - stage.centre.z;
   if (kind === 'water' || kind === 'kyogre') return SEABED_Y;
-  const pond = kind === 'pond' ? POND : kind === 'cavePond' ? CAVE_POND : null;
-  if (pond) {
-    const e = Math.hypot(dx / pond.rx, (dz - pond.dz) / pond.rz);
+  if (kind === 'pond') return pondBank(pondShore(x, z, stage), GROUND_Y + roll(x, z, Math.hypot(dx, dz), 1));
+  if (kind === 'cavePond') {
+    const pond = CAVE_POND, e = Math.hypot(dx / pond.rx, (dz - pond.dz) / pond.rz);
     if (e < 1) {
       // (distance to the shore along the ray from the basin's centre: its radius that way less this point's)
       const d = Math.hypot(dx, dz - pond.dz), shore = d / Math.max(e, 1e-6) - d;
       return GROUND_Y + (BASIN_Y - GROUND_Y) * smooth(0, BASIN_SHORE, shore);
     }
-    return kind === 'pond' ? GROUND_Y + roll(x, z, Math.hypot(dx, dz), 1) : GROUND_Y;
+    return GROUND_Y;
   }
   const setting = ARENA_SETTING[kind];
   if (setting === 'outdoor' || setting === 'underwater') return GROUND_Y + roll(x, z, Math.hypot(dx, dz), kind === 'sand' ? 2 : 1);
@@ -253,9 +304,62 @@ export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size
   };
 }
 
+/** A disc's index: a fan from vertex 0 to its first ring, then `rings` − 1 bands, each ring `segments` vertices from 1. */
+function discIndex(rings: number, segments: number): Uint32Array {
+  const idx = new Uint32Array((segments + (rings - 1) * segments * 2) * 3);
+  const vi = (k: number, s: number) => 1 + (k - 1) * segments + (s % segments);
+  let t = 0;
+  // (counter-clockwise seen from above: +y faces up)
+  for (let s = 0; s < segments; s++) { idx[t++] = 0; idx[t++] = vi(1, s + 1); idx[t++] = vi(1, s); }
+  for (let k = 1; k < rings; k++) {
+    for (let s = 0; s < segments; s++) {
+      const a = vi(k, s), b = vi(k, s + 1), c = vi(k + 1, s + 1), d = vi(k + 1, s);
+      idx[t++] = a; idx[t++] = b; idx[t++] = c;
+      idx[t++] = a; idx[t++] = c; idx[t++] = d;
+    }
+  }
+  return idx;
+}
+
+/** The pond's disc: rings round the POND ellipse's centre along the rays from it (the ellipse's parametric angle, evenly
+ *  along its shore), `segments` round — `inner` rings scaling the ellipse (to `innerE` of it), then rings at the signed
+ *  distances `shore` from the waterline (pondShore: one ring on the waterline, dense over the beach and the lip: the water
+ *  meets the ground on the analytic waterline), then `outer` rings out to `reach` units past the ellipse (every ray past 64
+ *  from the stage centre, as the default disc). */
+const POND_DISC = { segments: 128, inner: 6, innerE: 0.55,
+  shore: [-3, -2.3, -1.7, -1.2, -0.8, -0.5, -0.3, -0.15, 0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.15, 1.5, 1.95, 2.45, 2.9] as const,
+  outer: 18, reach: 56 };
+function pondDisc(stage: Stage): THREE.BufferGeometry {
+  const P = POND_DISC, cx = stage.centre.x, cz = stage.centre.z + POND.dz, W = POND_BANK.waterline;
+  const last = P.shore[P.shore.length - 1];
+  // (each ring's distance along the ray from the centre, for the ray's ellipse radius R)
+  const rings: ((R: number) => number)[] = [
+    ...Array.from({ length: P.inner }, (_, k) => (R: number) => R * P.innerE * ((k + 1) / P.inner)),
+    ...P.shore.map((s) => (R: number) => R - W + s),
+    ...Array.from({ length: P.outer }, (_, k) => (R: number) => R - W + last + (P.reach + W - last) * Math.pow((k + 1) / P.outer, 1.6)),
+  ];
+  const n = 1 + rings.length * P.segments, pos = new Float32Array(n * 3);
+  pos.set([cx, groundHeight('pond', cx, cz, stage), cz]);
+  let o = 3;
+  for (const ring of rings) {
+    for (let s = 0; s < P.segments; s++) {
+      const t = (s / P.segments) * Math.PI * 2, ex = Math.cos(t) * POND.rx, ez = Math.sin(t) * POND.rz;
+      const R = Math.hypot(ex, ez), d = ring(R), x = cx + (ex / R) * d, z = cz + (ez / R) * d;
+      pos[o++] = x; pos[o++] = groundHeight('pond', x, z, stage); pos[o++] = z;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(discIndex(rings.length, P.segments), 1));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+
 /** The disc's geometry: DISC_RINGS rings of DISC_SEGMENTS vertices around (cx, cz) out to the kind's groundRadius, plus
- *  the centre, at groundHeight; position + normal (smooth). */
+ *  the centre, at groundHeight; position + normal (smooth). (The pond's follows its shore: pondDisc.) */
 export function groundDisc(kind: ArenaKind, stage: Stage): THREE.BufferGeometry {
+  if (kind === 'pond') return pondDisc(stage);
   const cx = stage.centre.x, cz = stage.centre.z, R = groundRadius(kind);
   const n = 1 + DISC_RINGS * DISC_SEGMENTS;
   const pos = new Float32Array(n * 3);
@@ -269,18 +373,7 @@ export function groundDisc(kind: ArenaKind, stage: Stage): THREE.BufferGeometry 
       pos[o++] = x; pos[o++] = groundHeight(kind, x, z, stage); pos[o++] = z;
     }
   }
-  const idx = new Uint32Array((DISC_SEGMENTS + (DISC_RINGS - 1) * DISC_SEGMENTS * 2) * 3);
-  const vi = (k: number, s: number) => 1 + (k - 1) * DISC_SEGMENTS + (s % DISC_SEGMENTS);
-  let t = 0;
-  // (counter-clockwise seen from above: +y faces up)
-  for (let s = 0; s < DISC_SEGMENTS; s++) { idx[t++] = 0; idx[t++] = vi(1, s + 1); idx[t++] = vi(1, s); }
-  for (let k = 1; k < DISC_RINGS; k++) {
-    for (let s = 0; s < DISC_SEGMENTS; s++) {
-      const a = vi(k, s), b = vi(k, s + 1), c = vi(k + 1, s + 1), d = vi(k + 1, s);
-      idx[t++] = a; idx[t++] = b; idx[t++] = c;
-      idx[t++] = a; idx[t++] = c; idx[t++] = d;
-    }
-  }
+  const idx = discIndex(DISC_RINGS, DISC_SEGMENTS);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
