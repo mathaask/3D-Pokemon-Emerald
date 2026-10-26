@@ -129,19 +129,38 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     }
     expect(relief).toBeCloseTo(SHELL.relief, 5);
     expect(SHELF.back).toBeGreaterThanOrEqual(SHELL.relief + 0.01);
-    // and the books and the back panel stand there: no vertex of the room between the relief and the bookcase's back
-    // where a bookcase stands, but its sides' and top's (the boards running back to the wall)
+    // In each bookcase of the built room (hallRoom): (a) its back panel's four corners stand at d = SHELF.back; (b) every
+    // vertex inside its interior (between its side boards, over its plinth, under its top board) that is not the wall's
+    // own (roomShell's vertices: the trim and panels behind it) stands at d ≥ SHELF.back — the books, the shelves and the
+    // back panel; at the old offsets (back panel 0.035, shelves 0.04, books 0.06) both fail.
     const arena = new ModernArena(createKitUniforms());
     expect(arena.build('building', defaultArenaColors('building'), 'medium')).toBe(true);
     const q = (arena.group.getObjectByName('hallRoom') as THREE.Mesh).geometry.getAttribute('position');
+    const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
+    const wall = new Set<string>();
+    for (let i = 0; i < p.count; i++) wall.add(key(p.getX(i), p.getY(i), p.getZ(i)));
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-4;
     for (const sh of hallLayout('building').shelves) {
-      const x0 = cx + sh.s - SHELF.width / 2 + SHELF.board + 1e-4, x1 = cx + sh.s + SHELF.width / 2 - SHELF.board - 1e-4;
-      for (let i = 0; i < q.count; i++) {
-        const x = q.getX(i), y = q.getY(i), d = q.getZ(i) - back;
-        if (x > x0 && x < x1 && y > GROUND_Y + SHELF.plinth && y < GROUND_Y + SHELF.height - SHELF.board && d > SHELL.relief + 1e-4 && d < SHELF.back - 1e-4) {
-          throw new Error(`bookcase at s ${sh.s}: a vertex at d ${d} behind its back panel`);
+      const xi0 = cx + sh.s - SHELF.width / 2 + SHELF.board, xi1 = cx + sh.s + SHELF.width / 2 - SHELF.board;
+      const yi0 = GROUND_Y + SHELF.plinth, yi1 = GROUND_Y + SHELF.height - SHELF.board;
+      // (a) the back panel's corners
+      const corners = [[xi0, yi0], [xi1, yi0], [xi1, yi1], [xi0, yi1]].map(([cxr, cyr]) => {
+        for (let i = 0; i < q.count; i++) {
+          if (near(q.getX(i), cxr) && near(q.getY(i), cyr) && near(q.getZ(i) - back, SHELF.back)) return true;
         }
+        return false;
+      });
+      expect(corners, `bookcase at s ${sh.s}: back panel corners at d ${SHELF.back}`).toEqual([true, true, true, true]);
+      // (b) the nearest non-wall vertex inside it
+      let nearest = Infinity, inside = 0;
+      for (let i = 0; i < q.count; i++) {
+        const x = q.getX(i), y = q.getY(i), z = q.getZ(i);
+        if (!(x > xi0 + 1e-4 && x < xi1 - 1e-4 && y > yi0 + 1e-4 && y < yi1 - 1e-4) || wall.has(key(x, y, z))) continue;
+        inside++;
+        nearest = Math.min(nearest, z - back);
       }
+      expect(inside, `bookcase at s ${sh.s}: books inside`).toBeGreaterThan(100);
+      expect(nearest, `bookcase at s ${sh.s}: nearest thing inside, off the wall`).toBeGreaterThanOrEqual(SHELF.back - 1e-4);
     }
     arena.dispose();
   });
