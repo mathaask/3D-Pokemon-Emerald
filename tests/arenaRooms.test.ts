@@ -338,6 +338,32 @@ describe('stadiums and the Sky Pillar', () => {
 
 // Beyond the brief's tests: the stadiums' parts, walls, props and colours against the frame and the rules; the Sky
 // Pillar's edge, clouds and stumps against the frame.
+/** The intro sweep's frames (battleCamera at ease 0 and 0.5 from a persisted yaw of 0 or ±0.9: its start stands 0.5
+ *  further round, 1.5× as far, where the tall rule — the settled camera's — does not reach): whether a thing `half` wide
+ *  and `height` tall at (x, z) shows in one of them nearer the camera than the nearer platform (in front of the stage). */
+function inFrontOfIntro(x: number, z: number, half: number, height: number): boolean {
+  const v = new THREE.Vector3();
+  return [0, 0.5].some((ease) => [-0.9, 0, 0.9].some((yaw) => {
+    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
+    cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look, ease));
+    cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+    const d = Math.hypot(x - cam.position.x, z - cam.position.z);
+    const near = Math.min(...[STAGE.player, STAGE.enemy].map((p) => Math.hypot(p.x - cam.position.x, p.z - cam.position.z)));
+    if (d >= near) return false;
+    // (its box's projection over the frame: the rectangle round its corners when all stand in front of the camera; else
+    // any point of its edges, at nine heights, in front of the camera and inside the frame)
+    const r = [Infinity, Infinity, -Infinity, -Infinity];
+    let inFront = true, shows = false;
+    for (const dx of [-half, 0, half]) for (const dz of [-half, 0, half]) for (let k = 0; k <= 8; k++) {
+      v.set(x + dx, GROUND_Y + (height * k) / 8, z + dz).project(cam);
+      if (v.z >= 1 || v.z <= -1) { inFront = false; continue; }
+      if (Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1) shows = true;
+      r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
+    }
+    return shows || (inFront && r[0] < 1 && r[2] > -1 && r[1] < 1 && r[3] > -1);
+  }));
+}
+
 describe('stadium rooms: the part, walls, props, colours', () => {
   const ko = stageKeepOut(STAGE), top0 = frameTop(STAGE, [0]), cap = sightCap(STAGE), clear = arenaClear(STAGE);
   const cx = STAGE.centre.x, cz = STAGE.centre.z;
@@ -425,7 +451,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
   });
 
-  it('stands the props in the idle frame, never over a battler there', () => {
+  it('stands the props in the idle frame, never over a battler there, and the tall ones never before the stage in the intro', () => {
     const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
     const rect = (pts: [number, number, number][]) => {
       const r = [Infinity, Infinity, -Infinity, -Infinity];
@@ -455,6 +481,8 @@ describe('stadium rooms: the part, walls, props, colours', () => {
         else expect(clear(it.x, it.z) && GROUND_Y + it.height <= cap(it.x, it.z) + 1e-9, `${kind} ${it.kind} small`).toBe(true);
         // (off the rim: they stand outside it)
         expect(Math.hypot(it.x - cx, it.z - cz) - it.half, `${kind} ${it.kind} off the rim`).toBeGreaterThanOrEqual(RIM.outer);
+        // (a tall one never in front of the stage in the intro sweep's first frames: a small one keeps under the sight lines)
+        if (it.height > 1) expect(inFrontOfIntro(it.x, it.z, it.half, it.height), `${kind} ${it.kind} at (${it.x.toFixed(2)}, ${it.z.toFixed(2)}): intro`).toBe(false);
       }
       if (items.length) expect(shown, `${kind}: props in the idle frame`).toBeGreaterThanOrEqual(2);
     }
@@ -599,7 +627,7 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
     }
   });
 
-  it('stands broken pillar stumps on the floor inside the edge, on the tall rule, off the battlers in the idle frame', () => {
+  it('stands broken pillar stumps on the floor inside the edge, on the tall rule, off the battlers in the idle frame and the intro', () => {
     const project = frameProjector(STAGE, 0), v = new THREE.Vector3(), top0 = frameTop(STAGE, [0]);
     const rect = (pts: [number, number, number][]) => {
       const r = [Infinity, Infinity, -Infinity, -Infinity];
@@ -618,6 +646,7 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
       const half = s.radius * 1.5;
       expect(Math.hypot(s.x - cx, s.z - cz) + half, 'on the floor').toBeLessThanOrEqual(EDGE.inner[0]);
       if (s.height > 1) expect(ko.tallOk(s.x, s.z), 'tall').toBe(true);
+      expect(inFrontOfIntro(s.x, s.z, half, s.height), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}): intro`).toBe(false);
       const h = Math.min(s.height, top0(s.x, s.z) - GROUND_Y);
       const r = rect([[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
       expect(boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(false);

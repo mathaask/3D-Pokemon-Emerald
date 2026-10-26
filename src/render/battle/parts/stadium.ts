@@ -279,8 +279,8 @@ const ITEMS: Readonly<Partial<Record<StadiumKind, readonly [StadiumItem['kind'],
   glacia: [['crystal', -0.32, 13.4, 2.5], ['crystal', -0.05, 11.6, 1.9], ['crystal', 0.68, 10.4, 2.3], ['crystal', -1.1, 11.4, 2.8],
     ['crystal', 1.15, 11.6, 2.6], ['crystal', 0.72, 8.1, 0.85], ['crystal', -0.07, 8.0, 0.7], ['crystal', -1.0, 8.6, 0.9],
     ['crystal', 1.2, 8.9, 0.8]],
-  drake: [['pillar', -0.42, 14.6], ['pillar', 0.66, 12.6], ['pillar', -1.1, 13.0], ['pillar', 1.15, 13.0], ['pillar', -1.62, 13.4],
-    ['pillar', 1.68, 13.4]],
+  drake: [['pillar', -0.42, 14.6], ['pillar', 0.66, 12.6], ['pillar', -1.1, 13.0], ['pillar', 1.15, 13.0], ['pillar', -1.45, 14.2],
+    ['pillar', 1.5, 14.2]],
 };
 
 /** A kind's props (ITEMS) in world units. */
