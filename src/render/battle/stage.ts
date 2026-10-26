@@ -23,6 +23,18 @@ export const WATER_Y = -0.06;
 export const SUN_OFFSET = { swing: 6, x: -4, y: 14, z: 10 } as const;
 export const SUN_SHADOW = { half: 14, near: 1, far: 80 } as const;
 
+/** The 3D battle camera (BattleView.update; the arena's scenery is placed against it: parts/scatter.ts battleCamera, held
+ *  to BattleView's by tests/battleCamera.test.ts). Its vertical field of view (degrees); its pitch REF_PITCH − `pitchDrop`
+ *  once settled; its distance (80 / PX) / tan(fov / 2) × the user's zoom (`zoom`: its range, kept between battles); the
+ *  user's yaw within ± `yaw`. The intro sweep's first frame stands `intro.yaw` further round, (1 + `intro.dist`) × as far
+ *  and `intro.pitch` steeper, and eases in over `intro.seconds` (ease 1 − (1 − t)³). A slow sway of ± `sway` (sin of a
+ *  quarter of the view's clock) and, while a move plays, a `focusYaw` nudge towards its target, `focusPush` closer. */
+export const BATTLE_CAMERA = {
+  fov: 24, pitchDrop: 0.13, yaw: 0.9, zoom: [0.6, 1.6] as const,
+  intro: { yaw: 0.5, dist: 0.5, pitch: 0.06, seconds: 2.2 },
+  sway: 0.04, focusYaw: 0.06, focusPush: 0.08,
+} as const;
+
 /** A platform's half-extents on the ground (world units). */
 export interface Footprint { rx: number; rz: number }
 /** Today's platforms (BattleArena.setPlatforms: radius 2.1 / 1.9, depth scaled by 0.62). */

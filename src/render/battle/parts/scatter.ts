@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { rng } from '../../kit/geom';
-import { PLATFORM_FOOTPRINT, PX, REF_PITCH, type Stage } from '../stage';
+import { BATTLE_CAMERA, PLATFORM_FOOTPRINT, PX, REF_PITCH, type Stage } from '../stage';
 
 export interface Ellipse { x: number; z: number; rx: number; rz: number }
 export interface ScatterOptions {
@@ -69,16 +69,19 @@ export const SCENERY_SEED = 1;
  *  user's yaw past +0.4 its first frames stand beyond this wedge, on the +x side, where a tall thing beside the stage may
  *  pass between it and the stage for a moment. The tall rule keeps to the settled camera.) */
 const CAMERA_YAW = 1.0;
-/** The battle camera's vertical field of view (BattleView: 24°) and its pitch once settled (REF_PITCH − 0.13). */
-const CAMERA_FOV = THREE.MathUtils.degToRad(24), CAMERA_PITCH = REF_PITCH - 0.13;
+/** The battle camera's vertical field of view (BATTLE_CAMERA: 24°) and its pitch once settled (REF_PITCH − 0.13). */
+const CAMERA_FOV = THREE.MathUtils.degToRad(BATTLE_CAMERA.fov), CAMERA_PITCH = REF_PITCH - BATTLE_CAMERA.pitchDrop;
 
-/** Where the battle camera stands at user yaw `yaw` (BattleView.update's camera at zoom 1, with no sway or focus), at
- *  `ease` through its intro sweep (default 1: done — the lowest and nearest it stands; at 0, its first frame: yaw + 0.5,
- *  1.5× as far, 0.06 steeper — the sight lines to the near platform run flatter there), and the point it looks at. */
-export function battleCamera(stage: Stage, yaw: number, out = new THREE.Vector3(), look = new THREE.Vector3(), ease = 1): THREE.Vector3 {
+/** Where the battle camera stands at yaw `yaw` (BattleView.update's camera with no focus: the user's yaw plus its sway),
+ *  at `ease` through its intro sweep (default 1: done — the lowest it stands; at 0, its first frame: yaw + 0.5, 1.5× as
+ *  far, 0.06 steeper — the sight lines to the near platform run flatter there) and the user's `zoom` (default 1; 0.6–1.6:
+ *  its distance × zoom), and the point it looks at. (tests/battleCamera.test.ts holds it to BattleView's.) */
+export function battleCamera(stage: Stage, yaw: number, out = new THREE.Vector3(), look = new THREE.Vector3(), ease = 1,
+  zoom = 1): THREE.Vector3 {
+  const C = BATTLE_CAMERA;
   stage.at(120, 82, (stage.playerDepth + stage.enemyDepth) / 2, look);
-  const y = yaw + (1 - ease) * 0.5;
-  const dist = ((80 / PX) / Math.tan(CAMERA_FOV / 2)) * (1 + (1 - ease) * 0.5), pitch = CAMERA_PITCH + (1 - ease) * 0.06;
+  const y = yaw + (1 - ease) * C.intro.yaw;
+  const dist = ((80 / PX) / Math.tan(CAMERA_FOV / 2)) * zoom * (1 + (1 - ease) * C.intro.dist), pitch = CAMERA_PITCH + (1 - ease) * C.intro.pitch;
   return out.set(Math.sin(y) * Math.cos(pitch), Math.sin(pitch), Math.cos(y) * Math.cos(pitch)).multiplyScalar(dist).add(look);
 }
 /** A tall thing stands at least this far from the stage centre, no further forward than `front`, and at least

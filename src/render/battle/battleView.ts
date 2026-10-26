@@ -26,7 +26,7 @@ import type { RGB } from '../kit/palette';
 import { BattleArena } from './arena';
 import { arenaKind, ARENA_SETTING, type ArenaInputs, type ArenaKind } from './arenaKind';
 import { decodeBg3, sampleArenaColors, BG_W, BG_H, type ArenaColors } from './bgSample';
-import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE, SUN_OFFSET, SUN_SHADOW } from './stage';
+import { BATTLE_CAMERA, PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE, SUN_OFFSET, SUN_SHADOW } from './stage';
 import { BattleActors, battleRoute, battlerAlphaKey, battlerPaletteKey } from './battleActors';
 import { ARENA_PARTS, ArenaColorLock, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
@@ -493,11 +493,12 @@ export class BattleView {
   }
 
   update(state: BattleViewState, dt: number, input: { yaw: number; pitch: number; zoom: number }, hudSprites: SpriteSnap[]): void {
+    const C = BATTLE_CAMERA;
     this.time += dt;
-    this.intro = Math.min(1, this.intro + dt / 2.2);
+    this.intro = Math.min(1, this.intro + dt / C.intro.seconds);
     this.updateArena(state);
-    this.yaw = THREE.MathUtils.clamp(this.yaw + input.yaw, -0.9, 0.9);
-    if (input.zoom) this.zoom = THREE.MathUtils.clamp(this.zoom * Math.pow(1.1, input.zoom), 0.6, 1.6);
+    this.yaw = THREE.MathUtils.clamp(this.yaw + input.yaw, -C.yaw, C.yaw);
+    if (input.zoom) this.zoom = THREE.MathUtils.clamp(this.zoom * Math.pow(1.1, input.zoom), C.zoom[0], C.zoom[1]);
 
     // Camera: behind the player's side, framing both platforms like the GBA, with a slow
     // breathing sway and an intro sweep.
@@ -515,12 +516,12 @@ export class BattleView {
     const focusPoint = this.focusSide > 0 ? STAGE.enemy : STAGE.player;
     mid.lerp(new THREE.Vector3(focusPoint.x, mid.y, focusPoint.z), this.focus * 0.25);
     const ease = 1 - Math.pow(1 - this.intro, 3);
-    const sway = Math.sin(this.time * 0.25) * 0.04;
-    const yaw = this.yaw + sway + (1 - ease) * 0.5 + this.focus * 0.06 * this.focusSide;
-    const fov = 24;
+    const sway = Math.sin(this.time * 0.25) * C.sway;
+    const yaw = this.yaw + sway + (1 - ease) * C.intro.yaw + this.focus * C.focusYaw * this.focusSide;
+    const fov = C.fov;
     const dist = ((80 / PX) / Math.tan(THREE.MathUtils.degToRad(fov / 2))) * this.zoom *
-      (1 + (1 - ease) * 0.5) * (1 - this.focus * 0.08);
-    const pitch = REF_PITCH - 0.13 + (1 - ease) * 0.06;
+      (1 + (1 - ease) * C.intro.dist) * (1 - this.focus * C.focusPush);
+    const pitch = REF_PITCH - C.pitchDrop + (1 - ease) * C.intro.pitch;
     const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
     this.camera.position.copy(mid).addScaledVector(dir, dist);
     this.camera.fov = fov;
