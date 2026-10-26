@@ -18,7 +18,7 @@ describe('arena flora', () => {
     expect(palms.every((x) => x.style === 'palm')).toBe(true);
     const g = grassPlacements('grass', STAGE, 1, 'medium'), lg = grassPlacements('longGrass', STAGE, 1, 'medium');
     expect(lg.length).toBeGreaterThan(g.length);
-    const mean = (l: { scale: number }[]) => l.reduce((s, c) => s + c.scale, 0) / l.length;
+    const mean = (l: readonly { scale: number }[]) => l.reduce((s, c) => s + c.scale, 0) / l.length;
     expect(mean(lg)).toBeGreaterThan(1.2 * mean(g));
     expect(grassPlacements('grass', STAGE, 1, 'low').length).toBeLessThan(g.length);
   });

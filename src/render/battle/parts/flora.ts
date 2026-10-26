@@ -63,13 +63,14 @@ const salt = (kind: ArenaKind) => SALT[kind] ?? 0x7ee;
  *  shore (r ≥ 17); all on the tall rule. Scale 1.25–1.7 (plain 1.3–1.8; palms 0.95–1.2) — tuned at review from 1.8–2.4:
  *  the camera's frame top passes ≈ 1–2 units over the ground at the treeline's distance, under the larger trees' crowns
  *  (only their dark undersides and trunks showed). */
-export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
+export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): readonly Readonly<ArenaTree>[] {
   return placedOnce(stage, `trees:${kind}:${seed}`, () => makeTrees(kind, stage, seed));
 }
 
 /** Placements are deterministic per (stage, kind, seed, quality) and cost a build most of its time (the sight cap and the
  *  frame top check every camera state at every candidate): made once per process — the battle's second build (in its
- *  sampled colours) and every later battle of the kind reuse them. Never mutate a list handed out. */
+ *  sampled colours) and every later battle of the kind reuse them. Never mutate a list handed out (the getters hand them
+ *  out readonly). */
 const PLACED = new WeakMap<Stage, Map<string, unknown>>();
 function placedOnce<T>(stage: Stage, key: string, make: () => T): T {
   let byStage = PLACED.get(stage);
@@ -116,7 +117,7 @@ const CROWN_SHOWN = 0.4;
  *  the intro sweep's frames, a zoom-in), but there a tree that cannot show enough crown sinks only as far as its crown's
  *  low edge reaching the ground — the frames the battle is composed for decide what stands. A grove's tree (`trunk`)
  *  sinks at least until no more than `trunk` × scale of its trunk shows. */
-export function fitToFrame(t: ArenaTree, groundY: number, top: number, passing = Infinity, trunk?: number): boolean {
+function fitToFrame(t: ArenaTree, groundY: number, top: number, passing = Infinity, trunk?: number): boolean {
   const k = t.scale * (t.style === 'palm' ? PALM.squat : 1), low = CROWN_LOW[t.style] * k;
   // (its crown's low edge over the ground, unsunk)
   const over = low - SINK.tree * t.scale;
@@ -177,7 +178,7 @@ export function arenaClear(stage: Stage): (x: number, z: number) => boolean {
  *  beyond), plain 260 in 6–10 patches (r 5–16), sand 60 dry tufts, pond 300 reeds on its shore band (a reed's scale is
  *  its clump's: drawn REED.tall × taller); outside the platforms × 1.15 and the 1.2-unit strip in front of the player
  *  platform; × 0.6 at low quality. */
-export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
+export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): readonly Readonly<ArenaClump>[] {
   return placedOnce(stage, `grass:${kind}:${seed}:${quality}`, () => makeGrass(kind, stage, seed, quality));
 }
 function makeGrass(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
@@ -237,7 +238,7 @@ function wornOf(stage: Stage): (x: number, z: number) => boolean {
 }
 
 /** grass / plain: 120 flowers, r 3–14, in loose drifts (a noise field), off the platforms; none elsewhere. */
-export function flowerPlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
+export function flowerPlacements(kind: ArenaKind, stage: Stage, seed: number): readonly Readonly<ArenaClump>[] {
   return placedOnce(stage, `flowers:${kind}:${seed}`, () => makeFlowers(kind, stage, seed));
 }
 function makeFlowers(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
@@ -270,7 +271,7 @@ const FLOWER_CENTRE: RGB = [0.98, 0.78, 0.3];
 const CLUMP_BANDS = [{ until: 0.4, blades: 1, spread: 1 }, { until: 0.7, blades: 1, spread: 1 }, { until: 1, blades: 0.5, spread: 1.15 }];
 
 /** `list` sorted by distance from `camera` (x, z), nearest first. */
-function byCameraDistance<T extends { x: number; z: number }>(list: T[], camera: THREE.Vector3): T[] {
+function byCameraDistance<T extends { x: number; z: number }>(list: readonly T[], camera: THREE.Vector3): T[] {
   const d = (p: T) => (p.x - camera.x) ** 2 + (p.z - camera.z) ** 2;
   return list.map((p) => ({ p, d: d(p) })).sort((a, b) => a.d - b.d).map((e) => e.p);
 }

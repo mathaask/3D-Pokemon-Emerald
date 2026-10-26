@@ -283,7 +283,7 @@ describe('arena scenery', () => {
     expect(grass.grass.length).toBe(0);
   });
 
-  it('keeps at Low quality the trees some settled frame shows (|yaw| ≤ 0.9), and only those', () => {
+  it('keeps at Low quality every tree some settled frame shows (|yaw| ≤ 0.9), and drops some', () => {
     // (an oracle through real cameras, 16:9, at the user's yaws: a tree shows where its foot or its crown's top lies in the
     // frame)
     const cams = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12).map((yaw) => {

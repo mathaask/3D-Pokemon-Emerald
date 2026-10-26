@@ -161,9 +161,10 @@ export function sightCap(stage: Stage): (x: number, z: number) => number {
 export const FRAME_ASPECT = { shown: 1.6, widest: 21 / 9 } as const;
 
 /** The frame reaches this far to either side of the view (frameTop): half the horizontal field of view of a 16:9 window
- *  and a crown's width more (0.1) — 0.461 rad, the half-width of a 2.34:1 window's top edge, so a thing standing inside a
- *  21:9 frame (FRAME_ASPECT.widest) is fitted under its top; there a crown standing just outside its side may poke in,
- *  whole or cut by the top, never over a bare trunk. */
+ *  and a crown's width more (0.1) — 0.461 rad, the half-width of a ≈ 2.38:1 window's top edge (the settled camera's,
+ *  pitched 16.55° down: its top edge's rays fan wider than the centre row's, which 0.461 rad spans at 2.34:1), so a thing
+ *  standing inside a 21:9 frame (FRAME_ASPECT.widest) is fitted under its top; there a crown standing just outside its
+ *  side may poke in, whole or cut by the top, never over a bare trunk. */
 const FRAME_SIDE = Math.atan(Math.tan(CAMERA_FOV / 2) * (16 / 9)) + 0.1;
 
 /** A state of the battle camera (battleCamera): the user's yaw, its ease through the intro sweep (1: settled) and the
