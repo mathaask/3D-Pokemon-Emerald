@@ -50,6 +50,18 @@ export function wallRadius(seed: number, band: WallBand, a: number): number {
 const bump = (f: number) => Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, f))), 0.8);
 const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
 
+/** The band's foot at angle `a` (radians off straight behind): `rs` its wandering radius (wallRadius), `bay` the noise
+ *  along the band that stands buttresses out where it is high and sinks alcoves where it is low, `out` and `sunk` their
+ *  shares (0..1) there, and `r` the face's radius at the ground — rs less the buttress (WALL.buttress × out, towards
+ *  the stage) plus the alcove (WALL.alcove × sunk), before the strata's and the relief's few tenths. The band is built
+ *  on it (rockWallGeometry) and its talus piled against it (boulderPlacements). */
+export function wallFoot(seed: number, band: WallBand, a: number): { r: number; rs: number; bay: number; out: number; sunk: number } {
+  const rs = wallRadius(seed, band, a), u = a * band.r, o = (seed % 997) * 1.31;
+  const bay = noise2(u * WALL.bays + o, seed * 0.9, 0xb7e);
+  const out = smooth(0.12, 0.5, bay), sunk = smooth(0.15, 0.55, -bay);
+  return { r: rs - WALL.buttress * out + WALL.alcove * sunk, rs, bay, out, sunk };
+}
+
 /** A band's strata from below its foot to over its top: the boundaries (world y, rising) and each stratum's shade (light
  *  and dark bands alternating, a little jitter; the dark ones a little warmer). */
 function strata(seed: number, y0: number, y1: number): { at: number[]; shade: RGB[] } {
@@ -85,7 +97,9 @@ export function rockWallGeometry(seed: number, stage: Stage, band: WallBand, col
   for (let s = 0; s < cols; s++) {
     const a = -band.arc + (2 * band.arc * s) / segs, u = a * band.r;
     const dx = Math.sin(a), dz = -Math.cos(a);
-    const rs = wallRadius(seed, band, a);
+    // (the buttresses and alcoves: out towards the stage where a noise along the band is high, sunk where it is low —
+    // wallFoot; a buttress spreads at its foot: wider and further out at the ground, as rock fallen from it)
+    const { rs, bay, out, sunk } = wallFoot(seed, band, a);
     const bx = cx + dx * rs, bz = cz + dz * rs;
     const g = ground(bx, bz);
     // the column's height: broad swells along the band and smaller rises on them; falling to the ground at its ends
@@ -93,10 +107,6 @@ export function rockWallGeometry(seed: number, stage: Stage, band: WallBand, col
     const end = 1 - smooth(band.arc * W.end, band.arc, Math.abs(a));
     const h = W.endHeight + (h0 + (h1 - h0) * hn - W.endHeight) * end;
     const lip = Math.min(W.lip, h * 0.4), top = g + h, foot = g - W.foot;
-    // the buttresses and alcoves: out towards the stage where a noise along the band is high, sunk where it is low; a
-    // buttress spreads at its foot (wider and further out at the ground, as rock fallen from it)
-    const bay = noise2(u * W.bays + o, seed * 0.9, 0xb7e);
-    const out = smooth(0.12, 0.5, bay), sunk = smooth(0.15, 0.55, -bay);
     // (the strata slant a little along the band, and step across the buttresses)
     const slant = 0.22 * noise2(u * 0.12 + o, seed * 0.7, 0x5a7) + W.step * bay;
     let li = 0;
@@ -314,8 +324,8 @@ export function stalagmitePlacements(kind: ArenaKind, stage: Stage, seed: number
   return out;
 }
 
-/** A boulder or a scree stone: its place, width and seeds (rocks.ts rockCluster). */
-export interface ArenaBoulder { x: number; z: number; size: number; seeds: number[] }
+/** A boulder or a scree stone: its place, width and seeds (rocks.ts rockCluster); `talus`: one of the band's foot. */
+export interface ArenaBoulder { x: number; z: number; size: number; seeds: number[]; talus?: true }
 
 /** A boulder's top over the ground for its width (rocks.ts boulderGeometry, sunk 0.12 of its width as the part sets
  *  it), and the width from which a boulder is tall (on the tall rule, as rocks.ts TALL_SIZE). */
@@ -353,7 +363,7 @@ export function boulderPlacements(kind: ArenaKind, stage: Stage, seed: number,
     }
   }
   // the talus: rubble piled against the band's foot, in heaps (a noise along the band: dense and coarse in the heaps,
-  // a few stones between them)
+  // a few stones between them) — against its face there (wallFoot: out on a buttress, back in an alcove)
   const band = rule.band, t = rule.talus;
   const m = Math.round(2 * band.arc * band.r * t.per * 1.6);
   for (let i = 0; i < m; i++) {
@@ -361,10 +371,10 @@ export function boulderPlacements(kind: ArenaKind, stage: Stage, seed: number,
     const heap = THREE.MathUtils.clamp(0.5 + 0.7 * noise2(a * band.r * 0.11, seed * 2.3, 0x7a1), 0, 1);
     if (r() > 0.15 + 0.85 * heap) continue;
     const size = t.size[0] + (t.size[1] - t.size[0]) * r() * (0.4 + 0.6 * heap);
-    const rad = wallRadius(WALL_SEED, band, a) - 0.25 - size * 0.45 - 1.4 * r() * r() * heap;
+    const rad = wallFoot(WALL_SEED, band, a).r - 0.25 - size * 0.45 - 1.4 * r() * r() * heap;
     const x = cx + Math.sin(a) * rad, z = cz - Math.cos(a) * rad;
     if ((size >= TALL_SIZE && !ko.tallOk(x, z)) || !lava(x, z)) continue;
-    out.push({ x, z, size, seeds: seeds() });
+    out.push({ x, z, size, seeds: seeds(), talus: true });
   }
   return out;
 }

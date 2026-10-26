@@ -138,14 +138,37 @@ describe('rock arenas: bands, placements, the part', () => {
       expect(rocks.length, kind).toBeGreaterThan(5);
       for (const b of rocks) {
         if (b.size >= TALL_SIZE) expect(ko.tallOk(b.x, b.z), `${kind} tall boulder`).toBe(true);
-        const r = Math.hypot(b.x - STAGE.centre.x, b.z - STAGE.centre.z);
-        // (scree: everything short of the talus — under the sight lines, off the platforms)
-        if (r < ROCK_RULES[kind]!.band.r - 4) {
+        // (scree: everything but the talus — under the sight lines, off the platforms)
+        if (!b.talus) {
           expect(groundHeight(kind, b.x, b.z, STAGE) + b.size * BOULDER_TOP <= cap(b.x, b.z) || b.size >= TALL_SIZE, `${kind} scree cap`).toBe(true);
         }
         for (const p of pools) expect(Math.hypot(p.x - b.x, p.z - b.z), 'off the lava').toBeGreaterThan(p.r * 1.28);
       }
       for (const s of stalagmitePlacements(kind, STAGE, seed, pools)) for (const p of pools) expect(Math.hypot(p.x - s.x, p.z - s.z)).toBeGreaterThan(p.r * 1.28);
+    }
+  });
+
+  it("piles the talus against the band's foot: out on its buttresses, back in its alcoves — never buried in a face nor standing off one", () => {
+    // (each stone's gap to the band's face along its angle, just over the ground: the band's mesh raycast from the stage
+    // centre, less the stone's distance and its half width (0.45 of its size). The talus lies 0.25 off the foot, spread
+    // up to 1.4 out in its heaps; the face's own relief (strata ≤ 0.24, displacement ± 0.35) on top. Before it followed
+    // the buttresses and alcoves (1.3 out, 0.9 back), stones stood buried 1.2–1.4 deep in the buttresses)
+    const cx = STAGE.centre.x, cz = STAGE.centre.z, ray = new THREE.Raycaster();
+    for (const kind of KINDS) {
+      const band = ROCK_RULES[kind]!.band;
+      const ground = kind === 'mountain' ? (x: number, z: number) => groundHeight(kind, x, z, STAGE) : () => GROUND_Y;
+      const wall = new THREE.Mesh(rockWallGeometry(WALL_SEED, STAGE, band, [0.5, 0.5, 0.5], ground), new THREE.MeshBasicMaterial());
+      const talus = boulderPlacements(kind, STAGE, SCENERY_SEED).filter((b) => b.talus);
+      expect(talus.length, kind).toBeGreaterThan(10);
+      for (const b of talus) {
+        const d = Math.hypot(b.x - cx, b.z - cz);
+        ray.set(new THREE.Vector3(cx, ground(b.x, b.z) + 0.15, cz), new THREE.Vector3((b.x - cx) / d, 0, (b.z - cz) / d));
+        const hit = ray.intersectObject(wall)[0];
+        expect(hit, `${kind} talus at (${b.x.toFixed(1)}, ${b.z.toFixed(1)}): the band behind it`).toBeDefined();
+        const gap = hit!.distance - (d + 0.45 * b.size);
+        expect(gap, `${kind} talus at (${b.x.toFixed(1)}, ${b.z.toFixed(1)}) buried`).toBeGreaterThan(-0.5);
+        expect(gap, `${kind} talus at (${b.x.toFixed(1)}, ${b.z.toFixed(1)}) standing off`).toBeLessThan(2.3);
+      }
     }
   });
 
