@@ -361,12 +361,10 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
 - [x] Plan (`docs/superpowers/plans/2026-10-23-phase3-battles.md`, 12 tasks)
 - [x] 1 battle harness entries + p3-base · [x] 2 arena kinds/ROM graphics/colours · [x] 3 static battle preview
 - [x] 4 BattleView split + battle precompile · [x] 5 inflated battlers · [x] 6 arena foundation · [x] 7 outdoor arenas · [x] 7b draw order (inserted; bake = per-kind contingency)
-- [x] 8 water arenas · [x] 9 rock arenas · [ ] 10 indoor halls · [ ] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12 perf/docs
-- Next: Phase 1 follow-up — terrain height solver v2 (mountain ridges), plus boot-time precompile of the kit world
-  programs and a cheaper map crossing (the hitches listed in both phases' gaps). Then Phase 3 (battles): reuse
-  `InflatedActors` + `SpriteField` for battlers (pass `instanceUniformsFit(renderer.capabilities.maxVertexUniforms)`;
-  the battle path may want a smaller `MAX_ACTORS`). Write each plan first (`docs/superpowers/plans/`), then execute
-  subagent-driven (only `opus` subagents work on this deployment); show the user a progress bar in every update.
+- [x] 8 water arenas · [x] 9 rock arenas · [x] 10 indoor halls · [ ] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12 perf/docs
+- Next: Task 11 (stadium rooms + Sky Pillar), Task 12 (perf/robustness/docs + the deferred minors in the SDD ledger),
+  then the final whole-branch review, merge `phase3-battles` → `main` and push. Later: terrain height solver v2
+  (mountain ridges), Phase 4 (interiors). Subagents: `opus` only; progress bar in every update.
 
 ## Phase 2 status
 - [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)
