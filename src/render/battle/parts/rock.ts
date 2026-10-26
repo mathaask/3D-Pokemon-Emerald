@@ -432,8 +432,11 @@ const _v = new THREE.Vector3();
  *  nowhere is tried a quarter smaller, then in any of the three frames (its middle off the battlers' boxes there): the
  *  idle frame, between and round its battlers, holds two; the rest show as the camera swings. Their outlines and banks
  *  (+ LAVA.margin) keep off the platforms × 1.25 (the keep-outs) and the strip in front of the player's, their outlines
- *  off the ground just behind each battler (LAVA.behind); a pool that fits nowhere at all is left out. */
-export function lavaPools(stage: Stage, seed: number): LavaPool[] {
+ *  off the ground just behind each battler (LAVA.behind); a pool that fits nowhere at all is left out. `o.ring`: another
+ *  annulus for the darts (Magma's hideout, parts/stadium.ts: outside its rim); `o.keep`: where the banks may lie besides
+ *  (the same rules otherwise; without options Groudon's pools exactly). */
+export interface LavaPoolOptions { ring?: readonly [number, number]; keep?: (x: number, z: number) => boolean }
+export function lavaPools(stage: Stage, seed: number, o: LavaPoolOptions = {}): LavaPool[] {
   const r = rng(seed * 3371 + 0x1a4a);
   const n = LAVA.count[0] + Math.floor(r() * (LAVA.count[1] - LAVA.count[0] + 1));
   const ko = stageKeepOut(stage), clear = arenaClear(stage), frames = LAVA_YAWS.map((y) => lavaFrame(stage, y));
@@ -446,11 +449,12 @@ export function lavaPools(stage: Stage, seed: number): LavaPool[] {
       const a = (q / 24) * Math.PI * 2, d = poolRadius(p, a), c = Math.cos(a), s = Math.sin(a);
       const bx = p.x + c * (d + LAVA.margin), bz = p.z + s * (d + LAVA.margin);
       if (ko.ellipses.some((e) => insideEllipse(e, bx, bz)) || !clear(bx, bz) || behind(p.x + c * d, p.z + s * d)) return false;
+      if (o.keep && !o.keep(bx, bz)) return false;
     }
     return true;
   };
   const out: LavaPool[] = [];
-  const cx = stage.centre.x, cz = stage.centre.z, [r0, r1] = LAVA.ring;
+  const cx = stage.centre.x, cz = stage.centre.z, [r0, r1] = o.ring ?? LAVA.ring;
   const darts = rng(seed * 3371 + 0x7001);
   const near = (p: LavaPool) => Math.hypot(p.x - cx, p.z - cz);
   for (let k = 0; k < n; k++) {

@@ -44,8 +44,9 @@ export const HALLS: Readonly<Record<HallKind, Hall>> = {
 // ------------------------------------------------------------------------------------------------- geometry writer
 
 /** Triangles (non-indexed) with a normal and a colour per vertex: position, normal, color(3), all Float32 (colours
- *  linear). Quads are wound to face along the direction given (as kit/geom.ts QuadWriter: from the diagonals). */
-class Soup {
+ *  linear). Quads are wound to face along the direction given (as kit/geom.ts QuadWriter: from the diagonals). (The
+ *  stadiums' and the Sky Pillar's geometry writes with it too: parts/stadium.ts, parts/skyPillar.ts.) */
+export class Soup {
   private p: number[] = [];
   private n: number[] = [];
   private c: number[] = [];
@@ -54,6 +55,20 @@ class Soup {
     this.p.push(p[0], p[1], p[2]);
     this.n.push(n[0], n[1], n[2]);
     this.c.push(c[0], c[1], c[2]);
+  }
+
+  /** Triangle a→b→c (wound to face along `face`), corner normals `ns` and colours `cs`. */
+  triN(a: V3, b: V3, c: V3, face: V3, ns: [V3, V3, V3], cs: [RGB, RGB, RGB]): void {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const flip = (uy * vz - uz * vy) * face[0] + (uz * vx - ux * vz) * face[1] + (ux * vy - uy * vx) * face[2] < 0;
+    if (flip) { this.v(a, ns[0], cs[0]); this.v(c, ns[2], cs[2]); this.v(b, ns[1], cs[1]); }
+    else { this.v(a, ns[0], cs[0]); this.v(b, ns[1], cs[1]); this.v(c, ns[2], cs[2]); }
+  }
+
+  /** A flat triangle: one normal (`n`, normalised here), one colour. */
+  tri(a: V3, b: V3, c: V3, n: V3, col: RGB): void {
+    const l = Math.hypot(n[0], n[1], n[2]) || 1, nn: V3 = [n[0] / l, n[1] / l, n[2] / l];
+    this.triN(a, b, c, nn, [nn, nn, nn], [col, col, col]);
   }
 
   /** Quad a→b→c→d (round its edge), corner normals `ns` and colours `cs`, wound to face along `face`. */

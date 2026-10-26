@@ -16,6 +16,20 @@ import { PROP_GLOW } from '../src/render/kit/props';
 import { SOIL_MATERIAL } from '../src/render/kit/soil';
 import { createKitUniforms, kitMaterial, kitMaterialKind, type KitMaterialOptions } from '../src/render/kit/materials';
 import { luma } from '../src/render/kit/palette';
+import { STADIUM_THEME, crystalGeometry, arenaRimGeometry } from '../src/render/battle/parts/stadium';
+import { brokenEdgeGeometry, cloudSeaGeometry } from '../src/render/battle/parts/skyPillar';
+import { RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
+import { EDGE, SKY_PILLAR_PART, stumpPlacements } from '../src/render/battle/parts/skyPillar';
+import { LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
+import { SCENERY_SEED, battleCamera, frameTop, sightCap } from '../src/render/battle/parts/scatter';
+import { arenaClear } from '../src/render/battle/parts/flora';
+import { ARENA_PARTS } from '../src/render/battle/modernArena';
+import { GROUND_RADIUS, GROUND_RENDER_ORDER } from '../src/render/battle/parts/ground';
+import { WATER_RENDER_ORDER, arenaWaterMaterial, opaqueWater } from '../src/render/battle/parts/water';
+import { CLIFF_MATERIAL } from '../src/render/kit/cliffs';
+import { PROP_BODY } from '../src/render/kit/props';
+import { arenaLook } from '../src/render/battle/look';
+import { toLinear } from '../src/render/kit/palette';
 
 describe('indoor halls', () => {
   const ko = stageKeepOut(STAGE);
@@ -300,5 +314,327 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     expect(luma(leader.shell.wainscot)).toBeLessThan(luma(gym.shell.wainscot) - 0.08);
     expect(luma(leader.shell.base)).toBeLessThan(luma(gym.shell.base));
     expect(luma(gym.shell.base)).toBeLessThan(luma(gym.shell.wainscot));
+  });
+});
+
+describe('stadiums and the Sky Pillar', () => {
+  it('themes every stadium kind', () => {
+    expect(Object.keys(STADIUM_THEME).sort()).toEqual(['aqua', 'champion', 'drake', 'glacia', 'magma', 'phoebe', 'sidney']);
+  });
+  it('rings the stage with a low rim outside both platforms', () => {
+    const g = arenaRimGeometry(STAGE, [0.8, 0.8, 0.8]), p = g.getAttribute('position');
+    for (let i = 0; i < p.count; i++) expect(Math.hypot(p.getX(i) - STAGE.centre.x, p.getZ(i) - STAGE.centre.z)).toBeGreaterThanOrEqual(6.0 - 1e-6);
+    g.computeBoundingBox(); expect(g.boundingBox!.max.y).toBeLessThanOrEqual(GROUND_Y + 0.26);
+  });
+  it('drops the Sky Pillar\'s floor at its broken edge into a sea of clouds', () => {
+    const e = brokenEdgeGeometry(1, STAGE, [0.7, 0.7, 0.75]); e.computeBoundingBox();
+    expect(e.boundingBox!.min.y).toBeLessThanOrEqual(GROUND_Y - 2.5);
+    const c = cloudSeaGeometry(1, STAGE); c.computeBoundingBox();
+    expect(c.boundingBox!.max.y).toBeLessThan(GROUND_Y - 2);
+    const x = crystalGeometry(1, 3, [0.7, 0.85, 1]); x.computeBoundingBox();
+    expect(x.boundingBox!.max.y).toBeCloseTo(3, 0);
+  });
+});
+
+// Beyond the brief's tests: the stadiums' parts, walls, props and colours against the frame and the rules; the Sky
+// Pillar's edge, clouds and stumps against the frame.
+describe('stadium rooms: the part, walls, props, colours', () => {
+  const ko = stageKeepOut(STAGE), top0 = frameTop(STAGE, [0]), cap = sightCap(STAGE), clear = arenaClear(STAGE);
+  const cx = STAGE.centre.x, cz = STAGE.centre.z;
+  const KINDS = STADIUM_KINDS;
+  const water = opaqueWater(arenaWaterMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), [0, 0, 0]));
+  const MATERIAL: Record<string, [KitMaterialOptions, boolean, string[]]> = {
+    stadiumRoom: [BUILDING_BODY, true, ['color', 'normal', 'position']],
+    stadiumRock: [CLIFF_MATERIAL, true, ['color', 'normal', 'position']],
+    candleStands: [PROP_BODY, true, ['color', 'normal', 'position']],
+    candleFlames: [PROP_GLOW, false, ['color', 'normal', 'position']],
+    lava: [LAVA_MATERIAL, false, ['normal', 'position']],
+    fountainWater: [water, false, ['normal', 'position']],
+  };
+  const WANT: Record<StadiumKind, string[]> = {
+    magma: ['stadiumRoom', 'stadiumRock', 'lava'], aqua: ['stadiumRoom', 'fountainWater'], sidney: ['stadiumRoom', 'stadiumRock'],
+    phoebe: ['stadiumRoom', 'candleStands', 'candleFlames'], glacia: ['stadiumRoom', 'stadiumRock'], drake: ['stadiumRoom', 'stadiumRock'],
+    champion: ['stadiumRoom', 'fountainWater'],
+  };
+
+  it('builds the seven stadium kinds, the Sky Pillar its own; every kind has one scenery owner at most', () => {
+    expect([...KINDS].sort()).toEqual(Object.keys(STADIUM_THEME).sort());
+    expect(STADIUM_PART.kinds).toEqual(KINDS);
+    expect(SKY_PILLAR_PART.kinds).toEqual(['rayquaza']);
+    const owners = [HALL_PART, ROCK_PART, STADIUM_PART, SKY_PILLAR_PART];
+    for (const p of owners) expect(ARENA_PARTS, p.name).toContain(p);
+    for (const kind of ARENA_KINDS) {
+      const mine = owners.filter((p) => p.kinds === 'all' || p.kinds.includes(kind));
+      expect(mine.length, kind).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('builds each stadium by its theme: its draws, their materials, shadows and attributes', () => {
+    const u = createKitUniforms();
+    for (const kind of KINDS) {
+      const arena = new ModernArena(u);
+      expect(arena.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
+      const meshes = meshesUnder(arena.group.getObjectByName('stadium')!);
+      expect(meshes.map((m) => m.name).sort(), kind).toEqual([...WANT[kind]].sort());
+      for (const m of meshes) {
+        const [options, cast, attrs] = MATERIAL[m.name];
+        expect(kitMaterialKind(m.material as THREE.Material), `${kind} ${m.name}`).toBe(kindOf(options));
+        expect(m.castShadow, `${kind} ${m.name}`).toBe(cast);
+        expect(Object.keys(m.geometry.attributes).sort(), `${kind} ${m.name}`).toEqual(attrs);
+        for (const a of Object.values(m.geometry.attributes)) expect(a.itemSize === 3 && a.array instanceof Float32Array, `${kind} ${m.name}`).toBe(true);
+      }
+      // (the deep water drawn first, as the arena water)
+      const w = meshes.find((m) => m.name === 'fountainWater');
+      if (w) expect(w.renderOrder).toBe(WATER_RENDER_ORDER);
+      arena.dispose();
+    }
+  });
+
+  it("closes the frame's top band with its walls; nothing over 1 unit off the tall rule, nothing standing on the camera's side", () => {
+    const u = createKitUniforms();
+    for (const kind of KINDS) {
+      const arena = new ModernArena(u);
+      expect(arena.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
+      const meshes = meshesUnder(arena.group.getObjectByName('stadium')!);
+      for (const m of meshes) {
+        const p = m.geometry.getAttribute('position');
+        for (let i = 0; i < p.count; i++) {
+          const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+          if (y > GROUND_Y + 0.3 && z > cz + 4) throw new Error(`${kind} ${m.name}: (${x}, ${y}, ${z}) on the camera's side`);
+          if (y > 1 && !ko.tallOk(x, z)) throw new Error(`${kind} ${m.name}: (${x}, ${y}, ${z}) off the tall rule`);
+        }
+      }
+      // the frame's top row, idle and swung, meets the room's walls (or the rock's; a tall crystal or pillar before them)
+      // 9–29 units off the stage centre: never the floor beyond them
+      const walls = meshes.filter((m) => m.name === 'stadiumRoom' || m.name === 'stadiumRock');
+      for (const yaw of [0, -0.9, 0.9]) {
+        const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
+        cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
+        cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+        const ray = new THREE.Raycaster();
+        for (let nx = -0.95; nx <= 0.96; nx += 0.19) {
+          ray.setFromCamera(new THREE.Vector2(nx, 0.97), cam);
+          const hit = ray.intersectObjects(walls)[0];
+          expect(hit, `${kind} yaw ${yaw}: the top row at ${nx.toFixed(2)} meets a wall`).toBeDefined();
+          const r = Math.hypot(hit!.point.x - cx, hit!.point.z - cz);
+          expect(r, `${kind} yaw ${yaw}: at ${nx.toFixed(2)}`).toBeGreaterThan(9);
+          expect(r, `${kind} yaw ${yaw}: at ${nx.toFixed(2)}`).toBeLessThan(29);
+        }
+      }
+      arena.dispose();
+    }
+  });
+
+  it('stands the props in the idle frame, never over a battler there', () => {
+    const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
+    const rect = (pts: [number, number, number][]) => {
+      const r = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const [x, y, z] of pts) {
+        project(x, y, z, v);
+        r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
+      }
+      return r;
+    };
+    const boxes = [STAGE.player, STAGE.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
+      [0, 2].map((y) => [p.x + dx, y, p.z + dz] as [number, number, number])))));
+    const overlaps = (r: number[]) => boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]);
+    const framed = (r: number[]) => r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1;
+    for (const kind of KINDS) {
+      const items = stadiumItems(kind, STAGE);
+      const props = STADIUM_THEME[kind].props.filter((p) => ['pillars', 'fountains', 'candles', 'crystals'].includes(p));
+      // (Phoebe's and the Champion's pillars stand against their walls: the props stand free)
+      if (kind === 'drake' || kind === 'aqua' || kind === 'champion' || kind === 'phoebe' || kind === 'glacia') expect(items.length, kind).toBeGreaterThan(0);
+      if (!props.length) expect(items, kind).toEqual([]);
+      let shown = 0;
+      for (const it of items) {
+        const h = Math.min(it.height, top0(it.x, it.z) - GROUND_Y);
+        const r = rect([[it.x - it.half, GROUND_Y, it.z], [it.x + it.half, GROUND_Y, it.z], [it.x - it.half, GROUND_Y + h, it.z], [it.x + it.half, GROUND_Y + h, it.z]]);
+        expect(overlaps(r), `${kind} ${it.kind} at (${it.x.toFixed(2)}, ${it.z.toFixed(2)})`).toBe(false);
+        if (framed(r)) shown++;
+        if (it.height > 1) expect(ko.tallOk(it.x, it.z), `${kind} ${it.kind} tall`).toBe(true);
+        else expect(clear(it.x, it.z) && GROUND_Y + it.height <= cap(it.x, it.z) + 1e-9, `${kind} ${it.kind} small`).toBe(true);
+        // (off the rim: they stand outside it)
+        expect(Math.hypot(it.x - cx, it.z - cz) - it.half, `${kind} ${it.kind} off the rim`).toBeGreaterThanOrEqual(RIM.outer);
+      }
+      if (items.length) expect(shown, `${kind}: props in the idle frame`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("stands Sidney's and Drake's spikes on the rules: tall ones on the tall rule with their tips in the frame, small ones under the sight lines", () => {
+    for (const kind of ['sidney', 'drake'] as StadiumKind[]) {
+      const spikes = spikePlacements(kind, STAGE, SCENERY_SEED);
+      expect(spikes.filter((s) => s.height > 1).length, kind).toBeGreaterThanOrEqual(kind === 'sidney' ? 10 : 5);
+      for (const s of spikes) {
+        expect(Math.hypot(s.x - cx, s.z - cz), `${kind} off the rim`).toBeGreaterThan(RIM.outer + 0.3);
+        if (s.height > 1) {
+          expect(GROUND_Y + s.height, `${kind} tip`).toBeLessThanOrEqual(frameTop(STAGE)(s.x, s.z) - TIP_SHOWN + 1e-9);
+          for (const c of clusterSpires(s.seeds, s.height)) if (c.height > 1) expect(ko.tallOk(s.x + c.dx, s.z + c.dz), `${kind} tall`).toBe(true);
+        } else {
+          expect(clear(s.x, s.z), `${kind} small`).toBe(true);
+          expect(GROUND_Y + s.height, `${kind} small cap`).toBeLessThanOrEqual(cap(s.x, s.z) + 1e-9);
+        }
+      }
+    }
+    expect(spikePlacements('glacia', STAGE, SCENERY_SEED)).toEqual([]);
+  });
+
+  it("pools Magma's lava outside the rim, off the platforms, two of them in the idle frame", () => {
+    const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
+    for (const seed of [SCENERY_SEED, 2, 3]) {
+      const pools = stadiumLava(STAGE, seed);
+      expect(pools.length, `seed ${seed}`).toBeGreaterThanOrEqual(3);
+      const p = lavaGeometry(seed, STAGE, pools).getAttribute('position');
+      for (let i = 0; i < p.count; i++) {
+        expect(clear(p.getX(i), p.getZ(i)), 'off the strip').toBe(true);
+        // (its outline and bank outside the rim)
+        expect(Math.hypot(p.getX(i) - cx, p.getZ(i) - cz), 'outside the rim').toBeGreaterThan(RIM.outer + 0.3);
+      }
+      const shows = (pool: LavaPool) => Array.from({ length: 25 }, (_, q) => {
+        const a = (q / 24) * Math.PI * 2, d = q === 24 ? 0 : poolRadius(pool, a) * 0.5;
+        return project(pool.x + Math.cos(a) * d, GROUND_Y, pool.z + Math.sin(a) * d, v).clone();
+      }).every((n) => n.z < 1 && Math.abs(n.x) <= 0.9 && n.y <= 0.85 && n.y >= -0.35);
+      // (the arena's seed: two between and beside the battlers; any seed: one at least — the rest show as the camera swings)
+      expect(pools.filter(shows).length, `seed ${seed} idle`).toBeGreaterThanOrEqual(seed === SCENERY_SEED ? 2 : 1);
+    }
+    // (the default ring is Groudon's, unchanged)
+    expect(lavaPools(STAGE, SCENERY_SEED)).toEqual(lavaPools(STAGE, SCENERY_SEED, {}));
+  });
+
+  it("lights Phoebe's candle flames for their own draw only, on a material no other mesh draws with", () => {
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('phoebe', defaultArenaColors('phoebe'), 'medium')).toBe(true);
+    const flames = arena.group.getObjectByName('candleFlames') as THREE.Mesh;
+    const m = flames.material as THREE.MeshStandardMaterial;
+    expect(meshesUnder(arena.group).filter((x) => x.material === m)).toEqual([flames]);
+    expect(m.emissive.getHex()).toBe(0);
+    const call = (f: unknown) => (f as (...a: unknown[]) => void)(null, null, null, null, m, null);
+    call(flames.onBeforeRender);
+    const e = m.emissive.toArray() as number[];
+    expect(Math.max(...e)).toBeGreaterThan(0.5);
+    expect(e[0]).toBeGreaterThan(e[2]);   // (warm candlelight)
+    call(flames.onAfterRender);
+    expect(m.emissive.getHex()).toBe(0);
+    arena.dispose();
+  });
+
+  it('floors the stadiums with the hall tiles and paints each in its GBA colours (the fog is its walls\')', () => {
+    for (const kind of KINDS) expect(FLOOR_STYLE[kind], kind).toBe('tiles');
+    const p = (k: StadiumKind) => arenaPalette(k, defaultArenaColors(k));
+    const hue = (c: [number, number, number]) => c;
+    // Magma's volcanic rock dark and warm; Aqua's metal blue; Sidney's dark; Phoebe's deep purple; Glacia's pale ice;
+    // Drake's warm stone; the Champion's pale marble
+    const magma = p('magma').wall, aqua = p('aqua').wall, sidney = p('sidney').wall, phoebe = hue(p('phoebe').wall);
+    const glacia = p('glacia').wall, drake = p('drake').wall, champion = p('champion').wall;
+    expect(luma(magma)).toBeLessThan(0.3); expect(magma[0]).toBeGreaterThan(magma[2]);
+    expect(aqua[2]).toBeGreaterThan(aqua[0] + 0.15);
+    expect(luma(sidney)).toBeLessThan(0.25);
+    expect(luma(phoebe)).toBeLessThan(0.3); expect(phoebe[2]).toBeGreaterThan(phoebe[1]); expect(phoebe[0]).toBeGreaterThan(phoebe[1]);
+    expect(luma(glacia)).toBeGreaterThan(0.6); expect(glacia[2]).toBeGreaterThanOrEqual(glacia[0]);
+    expect(drake[0]).toBeGreaterThan(drake[2] + 0.08);
+    expect(luma(champion)).toBeGreaterThan(0.65);
+    for (const kind of KINDS) {
+      const look = arenaLook(kind, p(kind), 12), w = toLinear(p(kind).wall);
+      expect([look.fog.r, look.fog.g, look.fog.b].map((x, i) => x - w[i] * 0.6).every((d) => Math.abs(d) < 1e-6), kind).toBe(true);
+    }
+  });
+});
+
+describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
+  const ko = stageKeepOut(STAGE);
+  const cx = STAGE.centre.x, cz = STAGE.centre.z;
+
+  it("lays the broken edge over the floor's rim: a jagged lip from inside r 14 to beyond it, over the floor where they meet", () => {
+    const g = brokenEdgeGeometry(SCENERY_SEED, STAGE, [0.8, 0.8, 0.82]), p = g.getAttribute('position');
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.hypot(p.getX(i) - cx, p.getZ(i) - cz);
+      expect(r).toBeGreaterThanOrEqual(EDGE.inner[0] - 1e-4); expect(r).toBeLessThanOrEqual(EDGE.outer[1] + 1e-4);
+      expect(p.getY(i)).toBeLessThanOrEqual(GROUND_Y + EDGE.lift[1] + EDGE.heave[1] + 1e-6);
+    }
+    // straight down onto r 14 at 360 angles: the lip covers the floor's round rim (its cracks may let a few through)
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    const ray = new THREE.Raycaster();
+    let covered = 0;
+    for (let k = 0; k < 360; k++) {
+      const a = (k / 360) * Math.PI * 2;
+      ray.set(new THREE.Vector3(cx + Math.cos(a) * GROUND_RADIUS.rayquaza!, 5, cz + Math.sin(a) * GROUND_RADIUS.rayquaza!), new THREE.Vector3(0, -1, 0));
+      const hit = ray.intersectObject(mesh)[0];
+      if (hit && hit.point.y >= GROUND_Y + 0.005) covered++;
+    }
+    expect(covered).toBeGreaterThanOrEqual(335);
+  });
+
+  it('shows the sea of clouds over the edge in the idle frame and swung', () => {
+    const clouds = new THREE.Mesh(cloudSeaGeometry(SCENERY_SEED, STAGE), new THREE.MeshBasicMaterial());
+    const edge = new THREE.Mesh(brokenEdgeGeometry(SCENERY_SEED, STAGE, [0.8, 0.8, 0.82]), new THREE.MeshBasicMaterial());
+    const floorAt = (o: THREE.Vector3, d: THREE.Vector3) => {
+      // (the ray meets the floor's plane inside the disc: the floor hides what lies beyond)
+      const t = (GROUND_Y - o.y) / d.y;
+      return t > 0 && Math.hypot(o.x + d.x * t - cx, o.z + d.z * t - cz) <= GROUND_RADIUS.rayquaza!;
+    };
+    for (const yaw of [0, -0.9, 0.9]) {
+      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
+      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
+      cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+      const ray = new THREE.Raycaster();
+      let rays = 0, hits = 0;
+      for (let nx = -0.85; nx <= 0.86; nx += 0.34) {
+        for (let ny = 0.98; ny > 0; ny -= 0.04) {
+          ray.setFromCamera(new THREE.Vector2(nx, ny), cam);
+          // (the band over the edge, up to 0.85: over it the fog has the far clouds)
+          if (floorAt(ray.ray.origin, ray.ray.direction) || ray.intersectObject(edge).length) break;
+          if (ny > 0.85) continue;
+          rays++;
+          if (ray.intersectObject(clouds).length) hits++;
+        }
+      }
+      expect(rays, `yaw ${yaw}: a band over the edge`).toBeGreaterThan(20);
+      expect(hits / rays, `yaw ${yaw}: clouds in it`).toBeGreaterThan(0.6);
+    }
+  });
+
+  it('stands broken pillar stumps on the floor inside the edge, on the tall rule, off the battlers in the idle frame', () => {
+    const project = frameProjector(STAGE, 0), v = new THREE.Vector3(), top0 = frameTop(STAGE, [0]);
+    const rect = (pts: [number, number, number][]) => {
+      const r = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const [x, y, z] of pts) {
+        project(x, y, z, v);
+        r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
+      }
+      return r;
+    };
+    const boxes = [STAGE.player, STAGE.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
+      [0, 2].map((y) => [p.x + dx, y, p.z + dz] as [number, number, number])))));
+    const stumps = stumpPlacements(STAGE);
+    expect(stumps.length).toBeGreaterThanOrEqual(5);
+    let shown = 0;
+    for (const s of stumps) {
+      const half = s.radius * 1.5;
+      expect(Math.hypot(s.x - cx, s.z - cz) + half, 'on the floor').toBeLessThanOrEqual(EDGE.inner[0]);
+      if (s.height > 1) expect(ko.tallOk(s.x, s.z), 'tall').toBe(true);
+      const h = Math.min(s.height, top0(s.x, s.z) - GROUND_Y);
+      const r = rect([[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
+      expect(boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(false);
+      if (r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1) shown++;
+    }
+    expect(shown).toBeGreaterThanOrEqual(2);
+  });
+
+  it('builds the Sky Pillar: its stone (cliff, casting) and its clouds (soil, no shadow, after the floor)', () => {
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('rayquaza', defaultArenaColors('rayquaza'), 'medium')).toBe(true);
+    const meshes = meshesUnder(arena.group.getObjectByName('skyPillar')!);
+    expect(meshes.map((m) => m.name)).toEqual(['skyPillarStone', 'cloudSea']);
+    const [stone, clouds] = meshes;
+    expect(kitMaterialKind(stone.material as THREE.Material)).toBe(kindOf(CLIFF_MATERIAL));
+    expect(stone.castShadow && stone.receiveShadow).toBe(true);
+    expect(kitMaterialKind(clouds.material as THREE.Material)).toBe(kindOf(SOIL_MATERIAL));
+    expect(clouds.castShadow).toBe(false);
+    expect(clouds.renderOrder).toBeGreaterThan(GROUND_RENDER_ORDER);
+    expect(clouds.renderOrder).toBeLessThan(10);
+    for (const m of meshes) {
+      expect(Object.keys(m.geometry.attributes).sort()).toEqual(['color', 'normal', 'position']);
+      for (const a of Object.values(m.geometry.attributes)) expect(a.itemSize === 3 && a.array instanceof Float32Array).toBe(true);
+    }
+    arena.dispose();
   });
 });

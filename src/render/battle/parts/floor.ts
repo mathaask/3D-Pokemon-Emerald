@@ -18,9 +18,11 @@ import { PLATFORM_FOOTPRINT, STAGE, type Stage } from '../stage';
 export type FloorStyle = 'boards' | 'tiles' | 'stage';
 
 /** The kinds whose ground is a hall floor (the arena ground's disc drawn with hallFloorMaterial) and whose platform tops
- *  are 'stage' tops; any other kind keeps the terrain shader. */
+ *  are 'stage' tops: the halls (Task 10) and the Stadium rooms (Task 11: the hideouts, the Elite Four, the Champion —
+ *  tiled as the GBA's platforms); any other kind keeps the terrain shader. */
 export const FLOOR_STYLE: Readonly<Partial<Record<ArenaKind, Exclude<FloorStyle, 'stage'>>>> = {
   building: 'boards', gym: 'tiles', leader: 'tiles', frontier: 'tiles',
+  magma: 'tiles', aqua: 'tiles', sidney: 'tiles', phoebe: 'tiles', glacia: 'tiles', drake: 'tiles', champion: 'tiles',
 };
 
 /** A pattern's parameters: `size` the board's width / the tile's side (units), `seam` how much the seams darken (0..1),

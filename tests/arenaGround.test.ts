@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   groundCells, groundHeight, POND, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER,
-  GROUND_NIGHT, groundNightScale, moonlitAsGround,
+  GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS,
 } from '../src/render/battle/parts/ground';
+import type { ArenaContext } from '../src/render/battle/modernArena';
+import { arenaLook } from '../src/render/battle/look';
 import type { RGB } from '../src/render/kit/palette';
 import { arenaPalette } from '../src/render/battle/palette';
 import { STAGE, GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
@@ -34,6 +36,24 @@ describe('arena ground', () => {
   });
   it('digs the pond under the water', () => {
     expect(groundHeight('pond', STAGE.centre.x, STAGE.centre.z + POND.dz - 6, STAGE)).toBeLessThan(WATER_Y - 0.3);
+  });
+  it("ends the Sky Pillar's floor at its broken edge (r 14); every other kind's runs on to 64", () => {
+    expect(groundHeight('rayquaza', STAGE.centre.x, STAGE.centre.z - 13, STAGE)).toBe(GROUND_Y);
+    /** The ground mesh GROUND_PART builds for `kind`: its furthest vertex from the stage centre. */
+    const reach = (kind: ArenaKind) => {
+      const palette = arenaPalette(kind, defaultArenaColors(kind)), cells = groundCells(kind, palette, STAGE);
+      const tex = new THREE.DataTexture(cells.data, cells.w, cells.h);
+      const ctx: ArenaContext = { uniforms: createKitUniforms(), quality: 'medium', disposables: [tex], kind, colors: defaultArenaColors(kind),
+        stage: STAGE, palette, ground: { tex, min: new THREE.Vector2(cells.min[0], cells.min[1]), size: new THREE.Vector2(cells.w, cells.h) },
+        look: arenaLook(kind, palette, 12) };
+      const mesh = GROUND_PART.build(ctx) as THREE.Mesh, p = mesh.geometry.getAttribute('position');
+      let r = 0;
+      for (let i = 0; i < p.count; i++) r = Math.max(r, Math.hypot(p.getX(i) - STAGE.centre.x, p.getZ(i) - STAGE.centre.z));
+      return r;
+    };
+    expect(reach('rayquaza')).toBeLessThanOrEqual(14.5);
+    expect(reach('rayquaza')).toBeGreaterThanOrEqual(GROUND_RADIUS.rayquaza! - 1e-4);
+    for (const kind of ['grass', 'magma', 'gym', 'cave'] as ArenaKind[]) expect(reach(kind), kind).toBeCloseTo(GROUND_RADIUS.default, 3);
   });
 });
 

@@ -72,8 +72,14 @@ const WARP_R = 30;
 /** The pond bed's muddy sand (its cells' tint: Sand). */
 const POND_BED: RGB = [0.6, 0.56, 0.42];
 
-/** The disc: radius, segments, rings (densest near the stage: ring k at radius DISC_R · (k / DISC_RINGS)^DISC_POW). */
-const DISC_R = 64, DISC_SEGMENTS = 96, DISC_RINGS = 48, DISC_POW = 1.35;
+/** The disc's radius (units from the stage centre): 64 (`default`) — beyond the battle camera's sight of the ground —,
+ *  but the Sky Pillar's floor ends at its broken edge (parts/skyPillar.ts: the edge's lip covers the disc's rim). */
+export const GROUND_RADIUS: { readonly default: number } & Readonly<Partial<Record<ArenaKind, number>>> = { default: 64, rayquaza: 14 };
+/** A kind's ground radius (GROUND_RADIUS). */
+export const groundRadius = (kind: ArenaKind): number => GROUND_RADIUS[kind] ?? GROUND_RADIUS.default;
+/** The disc: segments, rings (densest near the stage: ring k at radius groundRadius · (k / DISC_RINGS)^DISC_POW). */
+export const DISC_SEGMENTS = 96;
+const DISC_RINGS = 48, DISC_POW = 1.35;
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
  *  noise2; pond kinds: the pond ellipse → Sand (its bed). The field runs on under the platforms (their tops paint
@@ -247,16 +253,16 @@ export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size
   };
 }
 
-/** The disc's geometry: DISC_RINGS rings of DISC_SEGMENTS vertices around (cx, cz) plus the centre, at groundHeight;
- *  position + normal (smooth). */
+/** The disc's geometry: DISC_RINGS rings of DISC_SEGMENTS vertices around (cx, cz) out to the kind's groundRadius, plus
+ *  the centre, at groundHeight; position + normal (smooth). */
 export function groundDisc(kind: ArenaKind, stage: Stage): THREE.BufferGeometry {
-  const cx = stage.centre.x, cz = stage.centre.z;
+  const cx = stage.centre.x, cz = stage.centre.z, R = groundRadius(kind);
   const n = 1 + DISC_RINGS * DISC_SEGMENTS;
   const pos = new Float32Array(n * 3);
   pos.set([cx, groundHeight(kind, cx, cz, stage), cz]);
   let o = 3;
   for (let k = 1; k <= DISC_RINGS; k++) {
-    const r = DISC_R * Math.pow(k / DISC_RINGS, DISC_POW);
+    const r = R * Math.pow(k / DISC_RINGS, DISC_POW);
     for (let s = 0; s < DISC_SEGMENTS; s++) {
       const a = (s / DISC_SEGMENTS) * Math.PI * 2;
       const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;

@@ -26,8 +26,33 @@ const CAVE_TAN: RGB = [0.76, 0.65, 0.48];
 const SOIL: RGB = [0.5, 0.36, 0.22];
 /** The ground scale of the grass kinds: long grass is the darker field. */
 const GRASS_SCALE: Partial<Record<ArenaKind, number>> = { longGrass: 0.78, grass: 0.9, plain: 1.0 };
-/** The Stadium backgrounds (gBattleEnvironmentTiles_Stadium): their walls are the dark top band's colour. */
-const STADIUM: ReadonlySet<ArenaKind> = new Set(['magma', 'aqua', 'sidney', 'phoebe', 'glacia', 'drake', 'champion']);
+/** The Stadium backgrounds (gBattleEnvironmentTiles_Stadium): one picture for seven rooms — a pale striped wall under a
+ *  dark top band (teal for the Elite Four, blue for Aqua and the Champion, grey for Magma), the platforms in each room's
+ *  colour. Their 3D rooms (Task 11, parts/stadium.ts) have walls of their own theme, coloured from the picture towards it
+ *  (sRGB): Magma's volcanic rock (the grey band darkened, warmed), Aqua's blue metal (the band and the platform's blue),
+ *  Sidney's dark rock (the teal band near charcoal), Phoebe's deep purple stone (her lilac platform, deepened), Glacia's
+ *  pale ice (her platform's rim, paler), Drake's warm stone (a sandstone towards his orange platform), the Champion's
+ *  pale marble (the pale backdrop, whiter). The look's fog follows the wall (look.ts: indoor fog = the wall × 0.6). */
+const STADIUM_WALL: Readonly<Partial<Record<ArenaKind, (c: ArenaColors) => RGB>>> = {
+  magma: (c) => mix(scale(c.top, 0.5), [0.36, 0.25, 0.22], 0.6),
+  aqua: (c) => scale(mix(c.top, c.platform, 0.5), 0.75),
+  sidney: (c) => mix(scale(c.top, 0.35), [0.2, 0.19, 0.23], 0.6),
+  phoebe: (c) => scale(mix(c.platform, [0.45, 0.25, 0.55], 0.5), 0.5),
+  glacia: (c) => mix(c.rim, [0.86, 0.95, 1.0], 0.45),
+  drake: (c) => mix([0.6, 0.48, 0.4], c.platform, 0.3),
+  champion: (c) => mix(c.backdrop, [0.96, 0.96, 0.94], 0.5),
+};
+/** Their floors (sRGB; `wall` STADIUM_WALL's): Magma's dark basalt, Sidney's dark slate, Phoebe's deep purple, Drake's
+ *  sandstone, the Champion's pale marble with a hint of his teal — their walls' stone paler; Aqua's and Glacia's keep the
+ *  pale floor of the halls (the platform half way to the pale backdrop: blue metal, pale ice). The vivid platforms stand
+ *  out on them as the GBA's on its pale room. */
+const STADIUM_FLOOR: Readonly<Partial<Record<ArenaKind, (c: ArenaColors, wall: RGB) => RGB>>> = {
+  magma: (_c, wall) => mix(wall, [0.42, 0.38, 0.36], 0.45),
+  sidney: (_c, wall) => mix(wall, [0.46, 0.46, 0.48], 0.45),
+  phoebe: (c, wall) => mix(wall, c.platform, 0.3),
+  drake: (_c, wall) => mix(wall, [0.82, 0.74, 0.62], 0.45),
+  champion: (c, wall) => mix(wall, c.platform, 0.12),
+};
 
 const clamp01 = (c: RGB): RGB => [0, 1, 2].map((i) => Math.min(1, Math.max(0, c[i]))) as RGB;
 const copy = (c: RGB): RGB => [c[0], c[1], c[2]];
@@ -42,7 +67,7 @@ const copy = (c: RGB): RGB => [c[0], c[1], c[2]];
  * pale stone cliff; cave:
  * a smooth warm tan Dirt floor from the backdrop, its rock the backdrop towards the top band's brown, Rock tops from the
  * platform fill; groudon: a cracked volcanic Rock floor, red-brown volcanic rock, its lava the top band; building: Deck floor, Paving tops; gym … champion: Paving floor and tops (the
- * Stadium kinds' walls from the dark top band); rayquaza: pale Paving. Unlisted fields: path = ground, skirt = blade and
+ * Stadium kinds' walls by their theme: STADIUM_WALL); rayquaza: pale Paving. Unlisted fields: path = ground, skirt = blade and
  * the kit's defaults (trunk, rock, water), wall = c.backdrop, accent = c.top. Every channel stays in 0..1.
  */
 export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): ArenaPalette {
@@ -166,13 +191,14 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
     default: {
       // gym, leader, frontier and the Stadium kinds (magma, aqua, the Elite Four, the Champion)
       // (the floor: the platform colour more than half way to the pale backdrop — tuned from 0.3, which floored the Stadium
-      // rooms wall to wall in their vivid platform colours, where the GBA's platforms stand out on a pale room)
-      const ground = soften(mix(c.platform, c.backdrop, 0.55));
+      // rooms wall to wall in their vivid platform colours, where the GBA's platforms stand out on a pale room; the Stadium
+      // rooms' walls and floors by their theme: STADIUM_WALL, STADIUM_FLOOR)
+      const wall = STADIUM_WALL[kind]?.(c) ?? soften(c.backdrop);
+      const ground = STADIUM_FLOOR[kind]?.(c, wall) ?? soften(mix(c.platform, c.backdrop, 0.55));
       p = {
         groundMat: GroundMat.Paving, ground, pathMat: GroundMat.Paving, path: ground,
         platformMat: GroundMat.Paving, platformTop: soften(c.platform), platformSide: scale(soften(c.rim), 0.8), skirt: blade,
-        leaf, trunk: TRUNK, blade, rock: ROCK, water: WATER,
-        wall: STADIUM.has(kind) ? scale(soften(c.top), 0.6) : soften(c.backdrop), accent: copy(c.top),
+        leaf, trunk: TRUNK, blade, rock: ROCK, water: WATER, wall, accent: copy(c.top),
       };
     }
   }
