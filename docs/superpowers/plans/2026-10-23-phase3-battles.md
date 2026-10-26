@@ -1699,3 +1699,13 @@ describe('stadiums and the Sky Pillar', () => {
 **Placeholder scan:** every step names its files, functions and commands; frame counts and tuning constants are given as starting values with the rule that ends their tuning (as Phase 2).
 
 **Interfaces used across tasks:** `ArenaKind`, `ARENA_KINDS`, `arenaKind`, `arenaInputsFor`, `ARENA_SETTING` (T2 → T3–T12); `decodeBg3`, `sampleArenaColors`, `defaultArenaColors`, `colorsKey` (T2 → T3, T4, T6); `readBattleBackground`, `installBattleBackground`, `readMonPic`, `battlerScreenPos`, `readEnemyShadow` (T2 → T3); `previewBattleSprites`, `BattlePreviewApp.setStyle` / `measureArenaBuild` (T3 → T4, T6, T12); `STAGE`, `GROUND_Y`, `WATER_Y`, `PLATFORM_FOOTPRINT`, `Footprint` (T4 → T5–T11); `battleRoute`, `battleCardSpec`, `battleDecalSpec`, `BattleActors` (T4 → T5); `ArenaPart`, `CatalogueEntry`, `ArenaContext` (+ `palette`, `ground`, `look` from T6), `ARENA_PARTS`, `ModernArena`, `ArenaColorLock` (T4/T6 → T7–T11); `battleCatalogue`, `legacyArenaMeshes` (T4 → T7); `BATTLE_INFLATE`, `BATTLE_VARIANT`, `instanceUniformsFailed(programs, tag)` (T5); `arenaPalette`, `arenaLook`, `timeOfDay`, `nightFactor`, `CLOUD_GLSL`, `arenaGroundMaterial`, `groundHeight`, `POND`, `CAVE_POND`, `PLATFORM_STYLE` (T6 → T7–T11); `scatter`, `stageKeepOut`, `boulderGeometry`, `treeGeometry`, `flowerGeometry`, `BattleSky` (T7 → T8–T11); `arenaWaterMaterial` (T8 → T11); `rockWallGeometry`, `stalagmiteGeometry`, `lavaGeometry`, `LAVA_MATERIAL` (T9 → T11); `roomShell`, `pillarGeometry` (T10 → T11).
+
+---
+
+### Task 7b (inserted by the controller after Task 7's review, 2026-10-26): Arena ground bake
+
+GPU headroom before the water arenas: bake the static arena terrain colour into texture(s) at build and shade the ground
+with one fetch plus the live terms (lighting, shadows, fog, per-vertex clouds, analytic worn ring, night, caustics).
+Goal ≥ 1.0 ms saving on battle_grass / b_grass / b_double, ≤ 16 MB new GPU memory, ≤ 20 ms per bake, no visible loss at
+the default camera, precompiled + catalogued, procedural fallback. Full brief: the SDD workspace's `task-7b-brief.md`
+(rationale and numbers in the Task 6/7 review rulings of `docs/superpowers/progress/phase3-sdd-ledger.md` once copied).
