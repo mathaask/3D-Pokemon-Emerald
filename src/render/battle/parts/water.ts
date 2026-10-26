@@ -455,7 +455,8 @@ export function isletPlacements(stage: Stage, seed: number): Islet[] {
     const n = ISLET.palms[0] + Math.floor(r() * (ISLET.palms[1] - ISLET.palms[0] + 1));
     const palms: Islet['palms'] = [];
     for (let k = 0; k < n; k++) {
-      // (spread over the near half, +z: from 0.1π to 0.9π round)
+      // (over the near half, +z: palm k in its 1/n share of 0.1π–0.9π, from its start up to 0.4 of the share on — 0.1π–0.66π
+      // with 2 palms, to 0.74π with 3: they lean to +x)
       const a = Math.PI * (0.1 + 0.8 * ((k + r() * 0.4) / n)), e = PALM_E[0] + (PALM_E[1] - PALM_E[0]) * r();
       const px = x + Math.cos(a) * e * size / 2, pz = z + Math.sin(a) * e * (size / 2) * ISLET_DEPTH;
       const y = WATER_Y + isletProfile(height, e) - 0.05;

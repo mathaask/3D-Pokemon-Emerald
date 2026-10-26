@@ -84,7 +84,9 @@ const WARP_R = 30;
 const POND_BED: RGB = [0.6, 0.56, 0.42], POND_BEACH: RGB = [0.86, 0.78, 0.56];
 
 /** The disc's radius (units from the stage centre): 64 (`default`) — beyond the battle camera's sight of the ground —,
- *  but the Sky Pillar's floor ends at its broken edge (parts/skyPillar.ts: the edge's lip covers the disc's rim). */
+ *  but the Sky Pillar's floor ends at its broken edge (parts/skyPillar.ts: the edge's lip covers the disc's rim). (The
+ *  pond's disc follows its shore instead — pondDisc: its last ring POND_DISC.reach past the POND ellipse, 66–71 from the
+ *  pond's centre — and reaches past 64 everywhere.) */
 export const GROUND_RADIUS: { readonly default: number } & Readonly<Partial<Record<ArenaKind, number>>> = { default: 64, rayquaza: 14 };
 /** A kind's ground radius (GROUND_RADIUS). */
 export const groundRadius = (kind: ArenaKind): number => GROUND_RADIUS[kind] ?? GROUND_RADIUS.default;
@@ -94,10 +96,10 @@ const DISC_RINGS = 48, DISC_POW = 1.35;
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
  *  noise2; pond kinds → Sand: the cave pond's ellipse (its bed), the pond's bed, beach and lip (pondCellShore). The field
- *  runs on under the platforms (their tops paint
- *  themselves: platforms.ts, uniformCells — platform cells here reached out past the slabs' plinths and, shifted 0.28
- *  towards −z in cell space, past the sand mounds' far side, where the worn ring's tint turned them near white); the worn
- *  ring is the shader's (WORN_RING). (The grid is in the terrain shader's cell space, (x, z − y): the field at GROUND_Y.) */
+ *  runs on under the platforms (their tops paint themselves: platforms.ts, uniformCells — platform cells here reached out
+ *  past the slabs' plinths and, shifted 0.28 towards −z in cell space, past the sand mounds' far side, where the worn
+ *  ring's tint turned them near white); the worn ring is the shader's (WORN_RING). (The grid is in the terrain shader's
+ *  cell space, (x, z − y): the field at GROUND_Y.) */
 export function groundCells(kind: ArenaKind, p: ArenaPalette, stage: Stage): { data: Uint8Array; w: number; h: number; min: [number, number] } {
   const w = GROUND_GRID, h = GROUND_GRID;
   const min: [number, number] = [Math.floor(stage.centre.x) - w / 2, Math.floor(stage.centre.z) - h / 2];

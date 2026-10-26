@@ -7,7 +7,7 @@ import {
   WATER_LOOK, WATER_RENDER_ORDER, arenaWaterMaterial, isletPlacements, kelpPlacements, padPlacements, shaftGeometry,
   waterRocks, waterSheets,
 } from '../src/render/battle/parts/water';
-import { CAVE_POND, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER, groundHeight, pondShore } from '../src/render/battle/parts/ground';
+import { CAVE_POND, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER, groundHeight } from '../src/render/battle/parts/ground';
 import { CLUMP_TOP, PALM, REED, arenaClear, grassPlacements } from '../src/render/battle/parts/flora';
 import { battleCamera, frameProjector, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
 import { arenaPalette } from '../src/render/battle/palette';
@@ -34,16 +34,23 @@ describe('arena water', () => {
     expect(at(c, STAGE.centre.x, ccz, 0)).toBeGreaterThanOrEqual(Math.round((5 / 15) * 255));
     expect(at(c, STAGE.centre.x + CAVE_POND.rx - 0.5, ccz, 0)).toBe(Math.round((1 / 15) * 255));
     expect(at(c, STAGE.centre.x + CAVE_POND.rx + 3, ccz, 0)).toBe(0);
-    // (the pond's: analytic — 0.5 on its waterline (pondShore 0: the shader's sheet runs out there, the bank rising over
-    // it), half a cell more per unit into the water, every cell at its centre; the polygonal shore of the land cells is gone)
-    const f = waterField('pond', STAGE, []), cz = STAGE.centre.z + POND.dz;
+    // (the pond's, against its ground — the sheet shows exactly where the ground lies under the water: every cell whose
+    // centre's ground stands over WATER_Y (the beach, the lip, the bank) under 0.5, where the shader's sheet is clear; every
+    // cell inside the POND ellipse over water 0.1 deep or more at 0.5 and over; over 0.5 deep, past the shallows' 2.6
+    // (opaque); beyond the lip the field lies low again, dry: no water there)
+    const f = waterField('pond', STAGE, []), cz = STAGE.centre.z + POND.dz, sd = (v: number) => (v / 255) * 15;
     expect(at(f, STAGE.centre.x, cz, 0)).toBeGreaterThanOrEqual(Math.round((5 / 15) * 255));
     expect(at(f, STAGE.centre.x + POND.rx + 3, cz, 0)).toBe(0);
+    let bank = 0, wet = 0;
     for (let j = 0; j < f.h; j++) for (let i = 0; i < f.w; i++) {
-      const x = f.min[0] + i + 0.5, z = f.min[1] + j + 0.5 + WATER_Y;
-      const sd = Math.min(15, Math.max(0, 0.5 - pondShore(x, z, STAGE)));
-      expect(f.data[(j * f.w + i) * 4], `cell (${i}, ${j})`).toBe(Math.round((sd / 15) * 255));
+      const x = f.min[0] + i + 0.5, z = f.min[1] + j + 0.5 + WATER_Y, depth = WATER_Y - groundHeight('pond', x, z, STAGE);
+      const inside = Math.hypot((x - STAGE.centre.x) / POND.rx, (z - cz) / POND.rz) < 1;
+      const v = sd(f.data[(j * f.w + i) * 4]);
+      if (depth < 0) { bank++; expect(v, `cell (${i}, ${j}) on the bank`).toBeLessThan(0.5); }
+      if (inside && depth >= 0.1) { wet++; expect(v, `cell (${i}, ${j}) in the water`).toBeGreaterThanOrEqual(0.5); }
+      if (inside && depth >= 0.5) expect(v, `cell (${i}, ${j}) in deep water`).toBeGreaterThan(WATER_LOOK.shallow[1]);
     }
+    expect(bank).toBeGreaterThan(500); expect(wet).toBeGreaterThan(300);
   });
   it('builds pads that float and kelp that stands tall', () => {
     const pad = lilyPadGeometry(1, 0.6, [0.4, 0.7, 0.3]); pad.computeBoundingBox();
