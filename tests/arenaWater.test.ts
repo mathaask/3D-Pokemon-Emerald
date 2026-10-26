@@ -8,8 +8,8 @@ import {
   waterRocks, waterSheets,
 } from '../src/render/battle/parts/water';
 import { CAVE_POND, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER, groundHeight, pondShore } from '../src/render/battle/parts/ground';
-import { CLUMP_TOP, REED, arenaClear, grassPlacements } from '../src/render/battle/parts/flora';
-import { battleCamera, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
+import { CLUMP_TOP, PALM, REED, arenaClear, grassPlacements } from '../src/render/battle/parts/flora';
+import { battleCamera, frameProjector, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
 import { arenaPalette } from '../src/render/battle/palette';
 import { arenaLook } from '../src/render/battle/look';
 import { ModernArena } from '../src/render/battle/modernArena';
@@ -141,7 +141,8 @@ describe('arena water: sheets, order, placements', () => {
     for (const i of islets) {
       expect(ko.tallOk(i.x, i.z)).toBe(true);
       expect(i.palms.length).toBeGreaterThanOrEqual(1);
-      // each palm's crown (its fronds 2.0 × scale × the squat 0.68 over its foot) shows 0.4 under the frame's top edge
+      // each palm's crown (its fronds 2.0 × scale × the squat 0.68 over its foot) shows 0.4 under the frame's top edge (and
+      // more: its fronds' tips clear of it, below)
       for (const p of i.palms) expect(p.y - p.sink + 2.0 * p.scale * 0.68 + 0.4).toBeLessThanOrEqual(top(p.x, p.z) + 1e-9);
     }
   });
@@ -155,6 +156,40 @@ describe('arena water: sheets, order, placements', () => {
       expect(Math.hypot((p.x - STAGE.centre.x) / POND.rx, (p.z - STAGE.centre.z - POND.dz) / POND.rz)).toBeLessThan(0.8);
       for (const [c, f] of [[STAGE.player, fp.player], [STAGE.enemy, fp.enemy]] as const) {
         expect(insideEllipse({ x: c.x, z: c.z, rx: f.rx * 1.7, rz: f.rz * 1.7 }, p.x, p.z)).toBe(false);
+      }
+    }
+  });
+
+  it("shows the islet palms' crowns whole in the idle frame, clear of its top, each over a trunk", () => {
+    // (the built palms — the instanced kit palm, as drawn — through the idle camera at 1280 × 800: every frond tip of a
+    // palm in the frame at least 32 px under its top (they stood from 21 px under it, the crowns hugging the edge); at every
+    // settled yaw the tips 0.45 under the frame's top (frameTop); some trunk shows over the dome (0.2 at least))
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('water', defaultArenaColors('water'), 'medium')).toBe(true);
+    const palms = arena.group.getObjectByName('isletPalms') as THREE.InstancedMesh;
+    expect(palms.count).toBeGreaterThanOrEqual(3);
+    const project = frameProjector(STAGE, 0), pos = palms.geometry.getAttribute('position'), m = new THREE.Matrix4(), v = new THREE.Vector3();
+    let shown = 0;
+    for (let i = 0; i < palms.count; i++) {
+      palms.getMatrixAt(i, m);
+      let high = -Infinity, inside = false;
+      for (let k = 0; k < pos.count; k++) {
+        if (pos.getY(k) < 1.9) continue;
+        project(...v.fromBufferAttribute(pos, k).applyMatrix4(m).toArray(), v);
+        high = Math.max(high, v.y);
+        if (Math.abs(v.x) <= 1 && v.y <= 1) inside = true;
+      }
+      if (!inside) continue;
+      shown++;
+      expect((1 - high) * 400, `palm ${i}: its crown under the frame's top (px)`).toBeGreaterThanOrEqual(32);
+    }
+    expect(shown, 'palms in the idle frame').toBeGreaterThanOrEqual(3);
+    arena.dispose();
+    const top = frameTop(STAGE);
+    for (const k of isletPlacements(STAGE, 1)) {
+      for (const p of k.palms) {
+        expect(p.y - p.sink + 2.26 * p.scale * PALM.squat + 0.45).toBeLessThanOrEqual(top(p.x, p.z) + 1e-9);
+        expect(2.0 * p.scale * PALM.squat - p.sink, 'trunk over the dome').toBeGreaterThanOrEqual(0.2);
       }
     }
   });

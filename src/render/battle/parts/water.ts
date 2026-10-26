@@ -424,16 +424,19 @@ const ISLET = { size: [4, 5.5] as const, height: [0.5, 0.65] as const, r: [15, 2
   palms: [2, 3] as const, scale: [0.62, 0.82] as const };
 /** An islet's footprint is this much narrower front to back. */
 const ISLET_DEPTH = 0.75;
-/** A palm's crown starts this high over its foot at scale 1 (kit/trees.ts palmGeo: the fronds at the trunk's top, 2.0);
- *  at least this much of it shows under the frame's top. */
-const PALM_CROWN = 2.0, CROWN_SHOWN = 0.4;
+/** A palm's crown starts this high over its foot at scale 1 and its fronds' tips reach this high (kit/trees.ts palmGeo:
+ *  the fronds at the trunk's top, 2.0, rising to 2.26); the tips stand at least CROWN_CLEAR under the frame's top (the
+ *  crown whole, clear of the edge: with only its foot 0.4 under it, the tips stood 21–28 px from the idle frame's top). */
+const PALM_CROWN = 2.0, PALM_TOP = 2.26, CROWN_CLEAR = 0.45;
+/** Palms stand on an islet's near half (towards the camera: lower on the dome and in the frame), `e` of its radius out. */
+const PALM_E = [0.2, 0.5] as const;
 
 /** An islet's dome over the water at elliptical radius e (0 centre .. 1 its waterline; below the water beyond). */
 const isletProfile = (height: number, e: number) => height * Math.pow(Math.max(0, 1 - e * e), 1.3) - 0.12 * Math.max(0, e - 0.9) * 10;
 
 /** The sea's islets: one each side of straight behind the stage (r 15–20, 0.35–0.8 rad off), on the tall rule, out from
- *  behind the battlers (BEHIND_REACH); 2–3 palms on each, near its crown, sunk where the frame's top would cut their
- *  crowns (a palm that would have to sink its whole trunk is left out). */
+ *  behind the battlers (BEHIND_REACH); 2–3 palms on each, on its near half (PALM_E), sunk until their fronds' tips stand
+ *  CROWN_CLEAR under the frame's top at every settled yaw (a palm that would have to sink its whole trunk is left out). */
 export function isletPlacements(stage: Stage, seed: number): Islet[] {
   const r = rng(seed * 4513 + 0x15e7);
   const ko = stageKeepOut(stage), top = frameTop(stage);
@@ -452,14 +455,14 @@ export function isletPlacements(stage: Stage, seed: number): Islet[] {
     const n = ISLET.palms[0] + Math.floor(r() * (ISLET.palms[1] - ISLET.palms[0] + 1));
     const palms: Islet['palms'] = [];
     for (let k = 0; k < n; k++) {
-      const a = (k / n) * Math.PI * 2 + r() * 1.2, e = 0.12 + 0.3 * r();
+      // (spread over the near half, +z: from 0.1π to 0.9π round)
+      const a = Math.PI * (0.1 + 0.8 * ((k + r() * 0.4) / n)), e = PALM_E[0] + (PALM_E[1] - PALM_E[0]) * r();
       const px = x + Math.cos(a) * e * size / 2, pz = z + Math.sin(a) * e * (size / 2) * ISLET_DEPTH;
       const y = WATER_Y + isletProfile(height, e) - 0.05;
-      const scale = ISLET.scale[0] + (ISLET.scale[1] - ISLET.scale[0]) * r();
-      const low = y + PALM_CROWN * scale * PALM.squat;
-      const sink = Math.max(0, low + CROWN_SHOWN - top(px, pz));
+      const scale = ISLET.scale[0] + (ISLET.scale[1] - ISLET.scale[0]) * r(), yaw = r() * Math.PI * 2, shade = 0.9 + 0.2 * r();
+      const sink = Math.max(0, y + PALM_TOP * scale * PALM.squat + CROWN_CLEAR - top(px, pz));
       if (sink > PALM_CROWN * scale * PALM.squat) continue;
-      palms.push({ x: px, y, z: pz, scale, yaw: r() * Math.PI * 2, sink, shade: 0.9 + 0.2 * r() });
+      palms.push({ x: px, y, z: pz, scale, yaw, sink, shade });
     }
     // (its foam collar: the field corners well inside its waterline)
     out.push({ x, z, size, height, seed: Math.floor(r() * 1e6), palms, corners: cornersWithin(cx, cz, size * 0.32) });

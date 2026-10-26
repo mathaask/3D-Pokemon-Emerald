@@ -93,7 +93,7 @@ export const DISC_SEGMENTS = 96;
 const DISC_RINGS = 48, DISC_POW = 1.35;
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
- *  noise2; pond kinds → Sand: the cave pond's ellipse (its bed), the pond's bed, beach and lip (pondSand). The field
+ *  noise2; pond kinds → Sand: the cave pond's ellipse (its bed), the pond's bed, beach and lip (pondCellShore). The field
  *  runs on under the platforms (their tops paint
  *  themselves: platforms.ts, uniformCells — platform cells here reached out past the slabs' plinths and, shifted 0.28
  *  towards −z in cell space, past the sand mounds' far side, where the worn ring's tint turned them near white); the worn
