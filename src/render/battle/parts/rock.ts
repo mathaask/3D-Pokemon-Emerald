@@ -13,6 +13,7 @@ import { noise2, noise3, rng } from '../../kit/geom';
 import { kitMaterial, type KitMaterialOptions } from '../../kit/materials';
 import { mix, scale, toLinear, type RGB } from '../../kit/palette';
 import { CLIFF_MATERIAL } from '../../kit/cliffs';
+import { glslFloat } from '../../actors/glsl';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaContext, ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, WATER_Y, type Stage } from '../stage';
@@ -561,20 +562,30 @@ const LAVA_COLOR = /* glsl */ `
   diffuseColor.rgb = mix(uLava * 0.6, vec3(0.07, 0.045, 0.04), crust);
 }
 `;
-const LAVA_EMISSIVE = /* glsl */ `
+/** The glow's emissive, × `glow` (a GLSL float literal). */
+const lavaEmissive = (glow: number) => /* glsl */ `
 {
   float pulse = 0.88 + 0.12 * sin(uTime * 1.1 + vKitWorld.x * 0.7 + vKitWorld.z * 0.5);
-  totalEmissiveRadiance += mix(uLava, vec3(1.0, 0.62, 0.12), lavaHeat * lavaHeat) * lavaHeat * 1.7 * pulse;
+  totalEmissiveRadiance += mix(uLava, vec3(1.0, 0.62, 0.12), lavaHeat * lavaHeat) * lavaHeat * ${glslFloat(glow)} * pulse;
 }
 `;
 
-/** Emissive flowing lava: kitFbm2 crust over a hot core, slow flow with uTime; hookKey 'lava'. Its glow colour is the
- *  uniform uLava (linear: a build sets the background's accent colour). */
-export const LAVA_MATERIAL: KitMaterialOptions = {
-  roughness: 0.7,
-  uniforms: { uLava: { value: new THREE.Color(1, 0.4, 0.1) } },
-  fragHead: LAVA_HEAD, fragColor: LAVA_COLOR, fragEmissive: LAVA_EMISSIVE, hookKey: 'lava',
-};
+/** Groudon's lava glow: its hottest parts well over the bloom's threshold. */
+export const LAVA_GLOW = 1.7;
+
+/** Emissive flowing lava: kitFbm2 crust over a hot core, slow flow with uTime, its glow × `glow` (a build-time constant
+ *  in its shader: each glow its own program, under its own `hookKey`). Its glow colour is the uniform uLava (linear: a
+ *  build sets the background's accent colour). */
+export function lavaMaterial(glow: number, hookKey: string): KitMaterialOptions {
+  return {
+    roughness: 0.7,
+    uniforms: { uLava: { value: new THREE.Color(1, 0.4, 0.1) } },
+    fragHead: LAVA_HEAD, fragColor: LAVA_COLOR, fragEmissive: lavaEmissive(glow), hookKey,
+  };
+}
+
+/** Groudon's lava (lavaMaterial at LAVA_GLOW, hookKey 'lava'). */
+export const LAVA_MATERIAL: KitMaterialOptions = lavaMaterial(LAVA_GLOW, 'lava');
 
 // ------------------------------------------------------------------------------------------------- the part
 

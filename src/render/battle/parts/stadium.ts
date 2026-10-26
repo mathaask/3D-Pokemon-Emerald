@@ -26,7 +26,7 @@ import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, type Stage } from '../stage';
 import {
-  LAVA_MATERIAL, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaPools, rockWallGeometry, stalagmiteGeometry,
+  LAVA_GLOW, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaMaterial, lavaPools, rockWallGeometry, stalagmiteGeometry,
   type ArenaSpire, type LavaPool, type WallBand,
 } from './rock';
 import { SHELL, Soup, pillarGeometry, roomShell, wallFrame, type RoomSpec, type ShellColors, type Wall } from './rooms';
@@ -542,16 +542,13 @@ const WALL_PILLAR = { r: 0.5, off: 0.62, at: [['back', -16], ['back', -7.5], ['b
  *  user): bright, just under the bloom's threshold (post.ts: 1.05) — over it they bloomed, and any bloom in the frame cost
  *  ≈ 1.2 ms on the dev iGPU (same-session A/B: 2.16 → 1.01 at 0.35; the lava's glow pays it too). */
 const FLAME_GLOW: RGB = [1.0, 0.56, 0.2], FLAME_STRENGTH = 0.5;
-/** Magma's lava: Groudon's (rock.ts LAVA_MATERIAL: flowing crust over a hot core), its glow kept under the bloom's
+/** Magma's lava: Groudon's (rock.ts lavaMaterial: flowing crust over a hot core), its glow kept under the bloom's
  *  threshold (its emissive × LAVA_DIM of Groudon's): Groudon's lava blooms, and a bloom in the frame cost Magma's room
  *  ≈ 1 ms on the dev iGPU (same-session A/B: +1.95 → +0.90 without its lava) — Magma's walls, pipes and floor left too
- *  little room for it. Its own program (hookKey 'lavaDim'), compiled at boot as every battle program. */
+ *  little room for it. Its own program (rock.ts lavaMaterial: hookKey 'lavaDim'), compiled at boot as every battle
+ *  program. */
 const LAVA_DIM = 0.55;
-export const MAGMA_LAVA: KitMaterialOptions = (() => {
-  const e = LAVA_MATERIAL.fragEmissive!, from = 'lavaHeat * 1.7 * pulse';
-  if (!e.includes(from)) throw new Error('stadium: rock.ts LAVA_EMISSIVE no longer scales its glow as MAGMA_LAVA expects');
-  return { ...LAVA_MATERIAL, fragEmissive: e.replace(from, `lavaHeat * ${(1.7 * LAVA_DIM).toFixed(3)} * pulse`), hookKey: 'lavaDim' };
-})();
+export const MAGMA_LAVA: KitMaterialOptions = lavaMaterial(Math.round(LAVA_GLOW * LAVA_DIM * 1000) / 1000, 'lavaDim');
 
 /** One cell of field for the fountains' water (kit/water.ts: r = shore distance / 15): three cells from any shore — a
  *  pool's clear blue-green, no foam, no sand. */

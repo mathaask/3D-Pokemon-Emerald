@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { previewBattleSprites } from '../src/render/battlePreview';
+import { previewBattleSprites, restoreFieldOnContextRestored } from '../src/render/battlePreview';
 import { SYM } from '../src/game/symbols';
 import type { MonPic } from '../src/game/rom/battleGraphics';
 
@@ -27,5 +27,18 @@ describe('previewBattleSprites', () => {
       [SYM.gSpriteTemplate_EnemyShadow, 200 - 16, 40 + 29 - 4, 256, 4, 1],
       [SYM.gSpriteTemplate_EnemyShadow, 152 - 16, 32 + 29 - 4, 256, 4, 3],
     ]);
+  });
+});
+
+describe('the battle preview after a lost WebGL context', () => {
+  it("recomputes the battlers' field once the context is restored (its targets lost their pixels), as live play does", () => {
+    const canvas = new EventTarget();
+    let invalidated = 0;
+    restoreFieldOnContextRestored(canvas, { invalidateField: () => { invalidated++; } });
+    expect(invalidated).toBe(0);
+    canvas.dispatchEvent(new Event('webglcontextlost'));
+    expect(invalidated).toBe(0);
+    canvas.dispatchEvent(new Event('webglcontextrestored'));
+    expect(invalidated).toBe(1);
   });
 });

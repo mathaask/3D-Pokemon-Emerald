@@ -104,6 +104,12 @@ function species(params: URLSearchParams, key: keyof typeof DEFAULT_SPECIES): nu
   return v !== null && /^\d+$/.test(v) ? Number(v) : DEFAULT_SPECIES[key];
 }
 
+/** A restored WebGL context has lost every render target's pixels: the battlers' field is recomputed at the next frame
+ *  (BattleView.invalidateField), as live play's Renderer does. */
+export function restoreFieldOnContextRestored(canvas: EventTarget, battle: Pick<BattleView, 'invalidateField'>): void {
+  canvas.addEventListener('webglcontextrestored', () => battle.invalidateField());
+}
+
 /** The hour of the URL (0 ≤ h < 24), else 11 — as &quality / &yaw fall back. */
 function hourOf(params: URLSearchParams): number {
   const h = parseFloat(params.get('hour') ?? '');
@@ -210,6 +216,7 @@ export class BattlePreviewApp {
     });
     canvas.addEventListener('wheel', (e) => { this.input.zoom += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
     window.addEventListener('resize', () => this.resize());
+    restoreFieldOnContextRestored(canvas, this.battle);
     this.resize();
     // every battle program compiled before the first frame, as live play's boot does (the precompile frame blocks until
     // they are ready: deterministic program counts)

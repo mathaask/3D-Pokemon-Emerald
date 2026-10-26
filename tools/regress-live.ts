@@ -37,7 +37,8 @@
 // Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax) px with the field's own inflateMax (the
 // result's: selfTestTol — half-float rounding grows with the field's height). The same call checks the HD sprite-edge
 // shader (XBR_GLSL) against its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL), and its baked path (XbrBake +
-// xbrSampleBaked, the battlers') likewise: xbr.bakedMaxErr ≤ 2/255.
+// xbrSampleBaked, the battlers') likewise: xbr.bakedMaxErr ≤ 2/255 — and byte for byte the live shader's inside the
+// fixture's rectangle: xbr.bakedVsLive = 0 (XBR_BAKED_VS_LIVE).
 // --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
 // same build with them off (every sprite a card, the pre-Task-5 path; the inflation field's passes run in both): after
 // the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
@@ -335,6 +336,9 @@ const CROP_H = 400;
 const selfTestTol = (max: number) => Math.max(0.02, 0.003 * max);
 /** xBR self-test parity tolerance (RGBA 0..1: the RGBA8 target's rounding plus float differences). */
 const XBR_TOL = 2 / 255;
+/** The baked xBR path (the battlers' HD edges) against the live shader, RGBA8 bytes: the same decisions, the same
+ *  blend — identical. */
+const XBR_BAKED_VS_LIVE = 0;
 const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
@@ -372,7 +376,8 @@ const AB_FEATURES: Record<string, AbFeature> = {
   },
 };
 
-interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; inflateMax: number; xbr: { maxErr: number; bakedMaxErr: number } }
+interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; inflateMax: number;
+  xbr: { maxErr: number; bakedMaxErr: number; bakedVsLive: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 /** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. `maskMismatch`:
  *  the share of the frame, away from the actors, where a mask re-render differs from its shot (the worse style);
@@ -707,7 +712,8 @@ async function buildReview(page: Page, dir: string, entries: Entry[], beforeDir:
 /**
  * One self-test point: `api`.selfTest() and the field dump (_field_<dump>.png). ok: some slots were
  * compared and both parity errors are finite and within selfTestTol of the field's inflateMax (NaN arrives as null; a
- * result without a finite inflateMax fails), and the xBR shader's within XBR_TOL.
+ * result without a finite inflateMax fails), the xBR shader's within XBR_TOL, and its baked path byte-equal to it
+ * (XBR_BAKED_VS_LIVE).
  */
 async function selfTestPoint(page: Page, api: string, outDir: string, dump: string): Promise<{ result: SelfTest; ok: boolean; text: string }> {
   const result = await page.evaluate(`${api}.selfTest()`) as SelfTest;
@@ -715,10 +721,11 @@ async function selfTestPoint(page: Page, api: string, outDir: string, dump: stri
   fs.writeFileSync(path.join(outDir, `_field_${dump}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
   const tol = selfTestTol(result.inflateMax);
   const within = (v: number) => Number.isFinite(v) && v <= tol;
-  const xbrOk = [result.xbr?.maxErr, result.xbr?.bakedMaxErr].every((v) => Number.isFinite(v) && v <= XBR_TOL);
+  const xbrOk = [result.xbr?.maxErr, result.xbr?.bakedMaxErr].every((v) => Number.isFinite(v) && v <= XBR_TOL)
+    && Number.isFinite(result.xbr?.bakedVsLive) && result.xbr.bakedVsLive <= XBR_BAKED_VS_LIVE;
   const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr) && xbrOk;
   let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} (tol ${round(tol, 4)})`
-    + ` gpu ${round(result.gpuMs, 3)} ms xbr maxErr ${result.xbr?.maxErr} baked ${result.xbr?.bakedMaxErr}`;
+    + ` gpu ${round(result.gpuMs, 3)} ms xbr maxErr ${result.xbr?.maxErr} baked ${result.xbr?.bakedMaxErr} baked vs live ${result.xbr?.bakedVsLive}`;
   if (!(result.gpuMs <= FIELD_GPU_MS)) text += ` (> ${FIELD_GPU_MS} ms target)`;
   return { result, ok, text };
 }
@@ -1213,7 +1220,10 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
-  if (selftestFailures.length) console.log(`self-test failed (no slots, field parity > max(0.02, 0.003·inflateMax) px or xbr > ${XBR_TOL.toFixed(4)}) in: ${selftestFailures.join(', ')}`);
+  if (selftestFailures.length) {
+    console.log(`self-test failed (no slots, field parity > max(0.02, 0.003·inflateMax) px, xbr > ${XBR_TOL.toFixed(4)} or baked xbr `
+      + `> ${XBR_BAKED_VS_LIVE} bytes off the live one) in: ${selftestFailures.join(', ')}`);
+  }
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || selftestFailures.length || walkFailures.length) process.exitCode = 1;
 }

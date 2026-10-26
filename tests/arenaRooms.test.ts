@@ -20,7 +20,7 @@ import { STADIUM_THEME, crystalGeometry, arenaRimGeometry } from '../src/render/
 import { brokenEdgeGeometry, cloudSeaGeometry } from '../src/render/battle/parts/skyPillar';
 import { MAGMA_LAVA, RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
 import { EDGE, SKY_PILLAR_PART, stumpPlacements } from '../src/render/battle/parts/skyPillar';
-import { LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
+import { LAVA_GLOW, LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaMaterial, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
 import { SCENERY_SEED, battleCamera, frameTop, sightCap } from '../src/render/battle/parts/scatter';
 import { arenaClear } from '../src/render/battle/parts/flora';
 import { ARENA_PARTS } from '../src/render/battle/modernArena';
@@ -531,6 +531,16 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     expect(MAGMA_LAVA.fragEmissive).not.toBe(LAVA_MATERIAL.fragEmissive);
     expect(MAGMA_LAVA.fragEmissive).toMatch(/lavaHeat \* 0\.\d+ \* pulse/);
     expect(kindOf(MAGMA_LAVA)).not.toBe(kindOf(LAVA_MATERIAL));
+  });
+
+  it("makes Groudon's and Magma's lava with one factory, the glow its parameter (no surgery on rock.ts' shader text)", () => {
+    // (Groudon's: the factory at LAVA_GLOW, the shader text it always had; Magma's: the same at LAVA_GLOW × 0.55)
+    expect(lavaMaterial(LAVA_GLOW, 'lava')).toEqual(LAVA_MATERIAL);
+    expect(LAVA_MATERIAL.fragEmissive).toContain(`lavaHeat * ${LAVA_GLOW} * pulse`);
+    expect(MAGMA_LAVA).toEqual(lavaMaterial(0.935, 'lavaDim'));
+    expect(MAGMA_LAVA.fragEmissive).toContain('lavaHeat * 0.935 * pulse');
+    // (a whole glow is still a GLSL float)
+    expect(lavaMaterial(2, 'x').fragEmissive).toContain('lavaHeat * 2.0 * pulse');
   });
 
   it("lights Phoebe's candle flames for their own draw only, on a material no other mesh draws with", () => {

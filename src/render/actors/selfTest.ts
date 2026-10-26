@@ -137,8 +137,12 @@ export interface XbrSelfTest {
   /** Max |GPU − CPU| (RGBA, 0..1) over the fixture's sample points. */
   maxErr: number;
   /** The same with the decisions baked (XbrBake + xbrSampleBaked: the battlers'), over the points whose texel lies in
-   *  the fixture's rectangle (the bake covers it; a fragment exactly on its far edge reads transparent). */
+   *  the fixture's rectangle (XBR_FIX_RECT: the bake covers only a slot's rectangle, as the battlers' — outside it, in
+   *  the opaque neighbour columns, the baked path reads no decisions; the live one sees the rectangle's edge there). */
   bakedMaxErr: number;
+  /** Max |live − baked| (RGBA8 bytes) over those points: the baked decisions are the live shader's own (Phase 3 Task 5:
+   *  "line by line"), so the battlers' HD edges are byte for byte the live xBR's — the harness gates it at 0. */
+  bakedVsLive: number;
 }
 
 /** The actors' whole self-test: the field's, and the xBR shader's (`xbr`). */
@@ -148,7 +152,7 @@ export interface ActorSelfTest extends FieldSelfTest {
 
 /** The xBR fixture's size (texels), the sample grid over it (points per side) and the fixed blend half-width. */
 const XBR_FIX = 16;
-const XBR_POINTS = 64;
+export const XBR_POINTS = 64;
 const XBR_DELTA = 0.1;
 /** The fixture's sprite rectangle [x0, y0, x1, y1): columns 14-15 are an opaque neighbour no read may reach. */
 export const XBR_FIX_RECT: [number, number, number, number] = [0, 0, 14, XBR_FIX];
@@ -251,21 +255,7 @@ export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
     const gpu = draw(XBR_FRAG, { tFix: { value: tex }, uRect: { value: rect } });
     bake.update(renderer, tex, slots, 1);
     const baked = draw(XBR_BAKED_FRAG, { tFix: { value: tex }, tBake: { value: bake.texture }, uRect: { value: rect } });
-    let maxErr = 0, bakedMaxErr = 0;
-    const k = XBR_FIX / XBR_POINTS;
-    for (let j = 0; j < XBR_POINTS; j++) {
-      for (let i = 0; i < XBR_POINTS; i++) {
-        const x = (i + 0.5) * k, y = (j + 0.5) * k;
-        const want = xbrSample(src, XBR_FIX, XBR_FIX, x, y, XBR_DELTA, XBR_FIX_RECT);
-        const inside = x >= XBR_FIX_RECT[0] && x < XBR_FIX_RECT[2] && y >= XBR_FIX_RECT[1] && y < XBR_FIX_RECT[3];
-        for (let c = 0; c < 4; c++) {
-          const o = (j * XBR_POINTS + i) * 4 + c;
-          maxErr = Math.max(maxErr, Math.abs(gpu[o] / 255 - want[c]));
-          if (inside) bakedMaxErr = Math.max(bakedMaxErr, Math.abs(baked[o] / 255 - want[c]));
-        }
-      }
-    }
-    return { maxErr, bakedMaxErr };
+    return xbrErrors(src, gpu, baked);
   } finally {
     renderer.setRenderTarget(prev);
     target.dispose();
@@ -274,6 +264,32 @@ export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
     bake.dispose(true);
     tex.dispose();
   }
+}
+
+/**
+ * The xBR self-test's errors from its two read-backs (`gpu`: the live shader, `baked`: the baked path; RGBA8, the
+ * XBR_POINTS² sample grid over the fixture `src`): each against the CPU reference xbrSample at the same points (the baked
+ * one inside XBR_FIX_RECT only), and the two against each other there, in bytes (NaN-sticky maxima).
+ */
+export function xbrErrors(src: Uint32Array, gpu: Uint8Array, baked: Uint8Array): XbrSelfTest {
+  let maxErr = 0, bakedMaxErr = 0, bakedVsLive = 0;
+  const k = XBR_FIX / XBR_POINTS;
+  for (let j = 0; j < XBR_POINTS; j++) {
+    for (let i = 0; i < XBR_POINTS; i++) {
+      const x = (i + 0.5) * k, y = (j + 0.5) * k;
+      const want = xbrSample(src, XBR_FIX, XBR_FIX, x, y, XBR_DELTA, XBR_FIX_RECT);
+      const inside = x >= XBR_FIX_RECT[0] && x < XBR_FIX_RECT[2] && y >= XBR_FIX_RECT[1] && y < XBR_FIX_RECT[3];
+      for (let c = 0; c < 4; c++) {
+        const o = (j * XBR_POINTS + i) * 4 + c;
+        maxErr = Math.max(maxErr, Math.abs(gpu[o] / 255 - want[c]));
+        if (inside) {
+          bakedMaxErr = Math.max(bakedMaxErr, Math.abs(baked[o] / 255 - want[c]));
+          bakedVsLive = Math.max(bakedVsLive, Math.abs(baked[o] - gpu[o]));
+        }
+      }
+    }
+  }
+  return { maxErr, bakedMaxErr, bakedVsLive };
 }
 
 /** Both self-tests: the field's (as fieldSelfTest, over `slots`) and the xBR shader's. */
