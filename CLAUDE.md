@@ -41,6 +41,16 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   cards (frame-interleaved; `--ab-aa` = noise floor, `--ab-feature npcfade`); budgets are judged this way, never
   against stored gpuMs (the Intel iGPU drifts 6–14 ms between sessions). Also `--only a,b`, `--styles modern`,
   `--query quality=high`, `--query actorUniforms=0` (inflated actors' attribute fallback, see inflatedActors.ts), `--dpr 2`
+- `npm run regress:live -- --label x --battles [--review --review-before <label>]` — battle entries only (live
+  `battle*` + static `b_*`, one preview per arena kind; with `--static` every entry), each with the GBA's picture
+  (`gba_`/`ref_<entry>.png`, diffed by `--compare`); `--review` → `_review_battle.png` (GBA | before | Modern | Retro
+  per entry). Phase 3 gate: `--static --compare p3-base` → Retro 0.00 % everywhere, Modern overworld + `transition`
+  0.00 %. Battle A/B: `--ab --only <battle entries> --ab-feature battle|battlers` — `battle` = Modern vs Retro battle
+  (≤ +3.0 ms GPU / +0.5 ms CPU), `battlers` = inflated vs cards (≤ +1.0 / +0.5); judged by same-session A/B only
+- Battle preview `/?battle=<kind>&player=<species>&enemy=<species>` (kinds = `ARENA_KINDS`; internal species ids;
+  `&double=1&player2=&enemy2=`, `&hour=`, `&style=`, `&quality=`, `&yaw=`, `&spriteFilter=`, `&actorUniforms=`,
+  `&arenaFail=<part>`, `&manual=1`; header of `src/render/battlePreview.ts`). Page API: `preview.measureArenaBuild()`
+  (warm median, ≤ 60 ms), `preview.setStyle()`, `selfTest()`, `referencePng()`. shot3d: `--query "battle=gym&…"`
 - `npx tsx tools/shot3d.ts --query "map=0.9&hour=11" --name x` — screenshot a static map preview → `out/3d/x_0.png`
   (`&actors=1` adds the map's object events, `&focusGfx=<id>` / `&focusObj=<n>` aims at one, `&focus=1` puts a
   stand-in player at the camera target for the occlusion fade, `&style=retro`, `&spriteFilter=pixel`, `&yaw=`)
@@ -54,4 +64,16 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - World mapping: grid (x, y) at height h → world (X=x, Y=h, Z=y+h) ("un-projection").
 - Live baselines: `out/regress-live/p2-base` = before Phase 2 (both styles; entries added later got their reference
   at their task's base, noted beside them in `STATIC`). Never overwrite it; a new phase captures its own base label.
+  `out/regress-live/p3-base` = before Phase 3 (both styles, live + static incl. the `b_*` battle previews and their
+  `gba_`/`ref_` pictures; `b_grass_fail` and `b_sand_night`, added later, have references rendered from Task 4's
+  pre-arena code). Never overwrite it either.
 - Keep context lean: store findings/decisions in the progress log instead of re-deriving them.
+
+## Battle arenas (Phase 3, Modern; Retro = today's `battle/arena.ts`, untouched)
+- `src/render/battle/`: `battleView.ts` (style split, camera, precompile), `stage.ts` (reference projection,
+  `BATTLE_CAMERA`), `battleActors.ts` (sprite routing hud/card/inflated/decal/skip), `modernArena.ts` (`ArenaPart`,
+  `ARENA_PARTS`, per-part try/catch → today's arena) + `parts/`, `palette.ts` / `look.ts` (colours from the BG3
+  sample; lights/fog/night per kind and hour), `sky.ts`, `bgSample.ts`. Kinds: `src/game/battle/arenaKind.ts` (24).
+- `catalogue.ts`: every battle program, compiled at boot; drift guard `tests/battleCatalogue.test.ts` (a part's new
+  material/variant must be in its catalogue entries). Render orders (`tests/battleRenderOrder.test.ts`): deep water −1,
+  scenery and battlers ≤ 2, platform tops 2.5, ground 3 (late, for early-z), Sky Pillar clouds 3.5, sky 10.
