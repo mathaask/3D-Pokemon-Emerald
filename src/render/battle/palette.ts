@@ -99,9 +99,11 @@ export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): Arena
       break;
     }
     case 'underwater': {
-      const kelp = mix(lush(c.rim), [0.35, 0.4, 0.2], 0.5), rock = scale(c.platform, 0.8);
+      // (the sea floor's sand 0.75 of the way to the seabed's: tuned at Task 8's review from 0.45, a lilac grey that read as
+      // no sand under the blue light)
+      const kelp = mix(lush(c.rim), [0.35, 0.4, 0.2], 0.5), rock = scale(c.platform, 0.8), floor = mix(c.platform, SEABED, 0.75);
       p = {
-        groundMat: GroundMat.Sand, ground: mix(c.platform, SEABED, 0.45), pathMat: GroundMat.Sand, path: mix(c.platform, SEABED, 0.45),
+        groundMat: GroundMat.Sand, ground: floor, pathMat: GroundMat.Sand, path: floor,
         platformMat: GroundMat.Rock, platformTop: rock, platformSide: rock, skirt: kelp,
         leaf, trunk: TRUNK, blade: kelp, rock, water: copy(c.backdrop), wall: copy(c.backdrop), accent: copy(c.top),
       };

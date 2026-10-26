@@ -1,6 +1,6 @@
 // The outdoor arenas' flora: a treeline round the back and sides of the stage (the kit's round and bushy trees; palms on
 // sand), grass clumps around the platforms (the kit's blades: dense and tall in long grass, patchy on the plain, dry
-// tufts on sand, a shore band round the pond) and flowers as small colour accents on grass and plain. Everything tall
+// tufts on sand, reeds round the pond) and flowers as small colour accents on grass and plain. Everything tall
 // keeps to the tall rule (scatter.ts: behind and beside the stage, out of the camera's way); grass keeps off the
 // platforms and the strip in front of the player's, and to the ground the camera frames. The kit's own shapes and
 // materials, instanced in the arena palette's colours.
@@ -107,19 +107,24 @@ function fitToFrame(t: ArenaTree, groundY: number, top: number, trunk?: number):
 const GROVE_FREQ = 0.09;
 
 /** A kind's grass: clumps, annulus, spacing, size; long grass is taller near the stage (LONG_SCALE × 1.0–1.25 within
- *  r < 9, × 0.85–1.0 beyond). */
-interface GrassRule { count: number; r: [number, number]; gap: number; scale(r: number, u: number): number }
+ *  r < 9, × 0.85–1.0 beyond); `reed`: the clumps are reeds (REED: taller, narrower). */
+interface GrassRule { count: number; r: [number, number]; gap: number; scale(r: number, u: number): number; reed?: boolean }
 const GRASS: Partial<Record<ArenaKind, GrassRule>> = {
   grass: { count: 900, r: [2.3, 15], gap: 0.45, scale: (_r, u) => 0.85 + 0.25 * u },
   longGrass: { count: 1500, r: [2, 16], gap: 0.4, scale: (r, u) => LONG_SCALE * (r < 9 ? 1.0 + 0.25 * u : 0.85 + 0.15 * u) },
   plain: { count: 260, r: [5, 16], gap: 0.45, scale: (_r, u) => 0.85 + 0.25 * u },
   sand: { count: 60, r: [3, 16], gap: 1.1, scale: (_r, u) => 0.45 + 0.3 * u },
-  pond: { count: 300, r: [9, 24], gap: 0.5, scale: (_r, u) => 0.85 + 0.25 * u },
+  pond: { count: 300, r: [9, 24], gap: 0.5, scale: (_r, u) => 0.85 + 0.25 * u, reed: true },
 };
 /** The plain's grass grows in 6–10 patches of these radii. */
 const PATCH = { min: 6, max: 10, r: [1.6, 2.8] as const };
-/** The pond's shore band (elliptical radius of its POND ellipse). */
-const SHORE: [number, number] = [1.05, 1.5];
+/** The pond's shore band (elliptical radius of its POND ellipse: the water's edge at 1): reeds from the water's edge up
+ *  the bank (the shallows before them show the pond's sandy basin: parts/water.ts). */
+const SHORE: [number, number] = [1.0, 1.4];
+/** The pond's clumps are reeds: a clump drawn `tall` × taller and `narrow` × narrower (the sight cap holds their full
+ *  height), in the leaves' green turned `mix` of the way to a dry reed brown; in stands where a noise field (`stands` per
+ *  unit) passes `gaps`. */
+export const REED = { tall: 2.2, narrow: 0.55, brown: [0.56, 0.5, 0.3] as RGB, mix: 0.4, stands: 0.3, gaps: -0.2 };
 /** Grass keeps this far off the platforms (× their footprint) and leaves this strip clear in front of the player's. */
 const CLEAR = { footprint: 1.15, strip: 1.2 };
 /** The ground the camera frames ends this far in front of the stage centre (its frame's bottom edge, the intro sweep's
@@ -142,8 +147,9 @@ export function arenaClear(stage: Stage): (x: number, z: number) => boolean {
 }
 
 /** grass 900 (r 2.3–15, scale 0.85–1.1), longGrass 1500 (r 2–16; scale LONG_SCALE × 1.0–1.25 within r < 9, × 0.85–1.0
- *  beyond), plain 260 in 6–10 patches (r 5–16), sand 60 dry tufts, pond 300 on its shore band; outside the platforms ×
- *  1.15 and the 1.2-unit strip in front of the player platform; × 0.6 at low quality. */
+ *  beyond), plain 260 in 6–10 patches (r 5–16), sand 60 dry tufts, pond 300 reeds on its shore band (a reed's scale is
+ *  its clump's: drawn REED.tall × taller); outside the platforms × 1.15 and the 1.2-unit strip in front of the player
+ *  platform; × 0.6 at low quality. */
 export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
   const rule = GRASS[kind];
   if (!rule) return [];
@@ -161,7 +167,8 @@ export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, qua
   } else if (kind === 'pond') {
     accept = (x, z) => {
       const e = Math.hypot((x - cx) / POND.rx, (z - cz - POND.dz) / POND.rz);
-      return clear(x, z) && e >= SHORE[0] && e <= SHORE[1];
+      // (in stands, gaps between them: a broad noise field)
+      return clear(x, z) && e >= SHORE[0] && e <= SHORE[1] && noise2(x * REED.stands, z * REED.stands, 0x2eed) > REED.gaps;
     };
   }
   const count = Math.round(rule.count * (quality === 'low' ? LOW_SHARE : 1));
@@ -172,9 +179,9 @@ export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, qua
   const out: ArenaClump[] = [];
   for (const { x, z } of pts) {
     // broad lighter and darker patches across the field (and taller and shorter ones), each clump its own shade; no
-    // taller than the camera's sight lines to the platform tops allow
+    // taller than the camera's sight lines to the platform tops allow (a reed at its full height)
     const broad = noise2(x * 0.3, z * 0.3, 7), tall = 1 + 0.12 * noise2(x * 0.21, z * 0.21, 0x7a1);
-    const fit = (cap(x, z) - groundHeight(kind, x, z, stage)) / CLUMP_TOP;
+    const fit = (cap(x, z) - groundHeight(kind, x, z, stage)) / (CLUMP_TOP * (rule.reed ? REED.tall : 1));
     const scale = Math.min(rule.scale(Math.hypot(x - cx, z - cz), r()) * tall, fit);
     const yaw = r() * Math.PI * 2, shade = (0.9 + 0.1 * broad) * (0.82 + 0.18 * r());
     if (scale >= MIN_CLUMP) out.push({ x, z, scale, yaw, shade });
@@ -237,8 +244,9 @@ function byCameraDistance<T extends { x: number; z: number }>(list: T[], camera:
 /** Trees and clumps sink this far into the rolling ground (no root floats over a slope). */
 const SINK = { tree: 0.15, clump: 0.03 };
 /** Palms are drawn squat and wide: the battle camera sees no higher than ≈ 2 units at their distance, where the kit
- *  palm's crown is — shorter trunks bring the crowns into view, wider ones make chunky palms with full fronds. */
-const PALM = { squat: 0.68, wide: 1.45 };
+ *  palm's crown is — shorter trunks bring the crowns into view, wider ones make chunky palms with full fronds. (The sea's
+ *  islets' palms too: parts/water.ts.) */
+export const PALM = { squat: 0.68, wide: 1.45 };
 /** The desert's dry tufts: the blade colour this far towards straw. */
 const DRY: { straw: RGB; mix: number } = { straw: [0.78, 0.7, 0.44], mix: 0.45 };
 
@@ -337,7 +345,10 @@ export const FLORA_PART: ArenaPart = {
     const clumps = byCameraDistance(grassPlacements(kind, stage, SCENERY_SEED, ctx.quality), camera);
     if (clumps.length) {
       const km = kitMaterial(ctx.uniforms, GRASS_MATERIAL);
-      const blade = toLinear(kind === 'sand' ? mix(palette.blade, DRY.straw, DRY.mix) : palette.blade);
+      // (the pond's are reeds: tall and narrow, in the leaves' green turned towards reed brown)
+      const reed = GRASS[kind]?.reed === true, ky = reed ? REED.tall : 1, kxz = reed ? REED.narrow : 1;
+      const blade = toLinear(kind === 'sand' ? mix(palette.blade, DRY.straw, DRY.mix)
+        : reed ? mix(palette.leaf, REED.brown, REED.mix) : palette.blade);
       let from = 0;
       for (let v = 0; v < CLUMP_BANDS.length; v++) {
         const band = CLUMP_BANDS[v], to = v === CLUMP_BANDS.length - 1 ? clumps.length : Math.round(clumps.length * band.until);
@@ -349,7 +360,8 @@ export const FLORA_PART: ArenaPart = {
         applyKitMaterial(inst, km);
         mine.forEach((c, i) => {
           _q.setFromAxisAngle(_up, c.yaw);
-          _m.compose(_p.set(c.x, ground(c.x, c.z) - SINK.clump, c.z), _q, _s.set(c.scale * band.spread, c.scale, c.scale * band.spread));
+          _m.compose(_p.set(c.x, ground(c.x, c.z) - SINK.clump, c.z), _q,
+            _s.set(c.scale * band.spread * kxz, c.scale * ky, c.scale * band.spread * kxz));
           inst.setMatrixAt(i, _m);
           inst.setColorAt(i, _c.setRGB(blade[0] * c.shade, blade[1] * c.shade, blade[2] * c.shade));
         });

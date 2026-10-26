@@ -215,8 +215,9 @@ function rockPlatform(f: Footprint, seed: number, p: ArenaPalette): PlatformMesh
 /** One lily pad (non-indexed into the arrays): a disc of radius (rx, rz) at PAD.y around (cx, cz), its notch of PAD.notch
  *  centred on angle `notchAt` (measured from −z towards +x), its rim raised, an edge band down to the water, and an
  *  underside facing down (the shadow pass draws a FrontSide material's back faces: an upward sheet alone cast no shadow;
- *  the pooled SOIL material keeps its sides); radial veins and a lighter heart in the vertex colours (linear `leaf`). */
-function addPad(out: { pos: number[]; col: number[] }, cx: number, cz: number, rx: number, rz: number, notchAt: number, leaf: RGB,
+ *  the pooled SOIL material keeps its sides); radial veins and a lighter heart in the vertex colours (linear `leaf`).
+ *  (Also the pond's small floating pads: parts/water.ts lilyPadGeometry.) */
+export function addPad(out: { pos: number[]; col: number[] }, cx: number, cz: number, rx: number, rz: number, notchAt: number, leaf: RGB,
   rings: number, segments: number): void {
   const { pos, col } = out;
   const half = PAD.notch / 2;
