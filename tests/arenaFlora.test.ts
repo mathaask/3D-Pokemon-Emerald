@@ -22,6 +22,16 @@ describe('arena flora', () => {
     expect(mean(lg)).toBeGreaterThan(1.2 * mean(g));
     expect(grassPlacements('grass', STAGE, 1, 'low').length).toBeLessThan(g.length);
   });
+  it("makes a kind's placements once: a rebuild (the battle's sampled colours) and every later battle of the kind reuse them", () => {
+    for (const kind of ['grass', 'longGrass', 'plain', 'pond', 'sand'] as const) {
+      expect(treePlacements(kind, STAGE, 1), kind).toBe(treePlacements(kind, STAGE, 1));
+      expect(grassPlacements(kind, STAGE, 1, 'medium'), kind).toBe(grassPlacements(kind, STAGE, 1, 'medium'));
+      expect(flowerPlacements(kind, STAGE, 1), kind).toBe(flowerPlacements(kind, STAGE, 1));
+    }
+    // (per quality and seed their own)
+    expect(grassPlacements('grass', STAGE, 1, 'low')).not.toBe(grassPlacements('grass', STAGE, 1, 'medium'));
+    expect(treePlacements('grass', STAGE, 2)).not.toBe(treePlacements('grass', STAGE, 1));
+  });
   it('keeps grass off the platforms and flowers to grass and plain', () => {
     for (const c of grassPlacements('longGrass', STAGE, 2, 'high'))
       for (const e of ko.ellipses) expect(((c.x - e.x) / (e.rx / 1.25 * 1.15)) ** 2 + ((c.z - e.z) / (e.rz / 1.25 * 1.15)) ** 2).toBeGreaterThanOrEqual(1);

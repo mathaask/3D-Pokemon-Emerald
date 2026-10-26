@@ -64,6 +64,21 @@ const salt = (kind: ArenaKind) => SALT[kind] ?? 0x7ee;
  *  the camera's frame top passes ≈ 1–2 units over the ground at the treeline's distance, under the larger trees' crowns
  *  (only their dark undersides and trunks showed). */
 export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
+  return placedOnce(stage, `trees:${kind}:${seed}`, () => makeTrees(kind, stage, seed));
+}
+
+/** Placements are deterministic per (stage, kind, seed, quality) and cost a build most of its time (the sight cap and the
+ *  frame top check every camera state at every candidate): made once per process — the battle's second build (in its
+ *  sampled colours) and every later battle of the kind reuse them. Never mutate a list handed out. */
+const PLACED = new WeakMap<Stage, Map<string, unknown>>();
+function placedOnce<T>(stage: Stage, key: string, make: () => T): T {
+  let byStage = PLACED.get(stage);
+  if (!byStage) PLACED.set(stage, (byStage = new Map()));
+  if (!byStage.has(key)) byStage.set(key, make());
+  return byStage.get(key) as T;
+}
+
+function makeTrees(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
   const rule = TREES[kind];
   if (!rule) return [];
   const ko = stageKeepOut(stage), where = rule.where?.(stage, seed);
@@ -163,6 +178,9 @@ export function arenaClear(stage: Stage): (x: number, z: number) => boolean {
  *  its clump's: drawn REED.tall × taller); outside the platforms × 1.15 and the 1.2-unit strip in front of the player
  *  platform; × 0.6 at low quality. */
 export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
+  return placedOnce(stage, `grass:${kind}:${seed}:${quality}`, () => makeGrass(kind, stage, seed, quality));
+}
+function makeGrass(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
   const rule = GRASS[kind];
   if (!rule) return [];
   const s = seed * 7919 + salt(kind) + 0x6a55;
@@ -220,6 +238,9 @@ function wornOf(stage: Stage): (x: number, z: number) => boolean {
 
 /** grass / plain: 120 flowers, r 3–14, in loose drifts (a noise field), off the platforms; none elsewhere. */
 export function flowerPlacements(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
+  return placedOnce(stage, `flowers:${kind}:${seed}`, () => makeFlowers(kind, stage, seed));
+}
+function makeFlowers(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
   if (kind !== 'grass' && kind !== 'plain') return [];
   const s = seed * 7919 + salt(kind) + 0xf10;
   const clear = arenaClear(stage), worn = wornOf(stage), cap = sightCap(stage);
