@@ -488,6 +488,42 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
   });
 
+  it("shows the fountains' water over their basins' lips in the idle frame (Aqua's, the Champion's)", () => {
+    // (the frame at 1280 × 800: down the basin's middle, the rows whose first hit is the basin's water — its lower disc —
+    // at the best of three columns; every fountain whose basin stands in the frame. With the water 0.12 under the lip's
+    // crest, Aqua's showed 11 rows; brim-full, 16–17)
+    const u = createKitUniforms();
+    for (const kind of ['aqua', 'champion'] as StadiumKind[]) {
+      const arena = new ModernArena(u);
+      expect(arena.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
+      const meshes = meshesUnder(arena.group.getObjectByName('stadium')!), water = meshes.find((m) => m.name === 'fountainWater')!;
+      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
+      cam.position.copy(battleCamera(STAGE, 0, new THREE.Vector3(), look));
+      cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+      const ray = new THREE.Raycaster(), c = new THREE.Vector3();
+      const rows: number[] = [];
+      for (const it of stadiumItems(kind, STAGE).filter((i) => i.kind === 'fountain')) {
+        c.set(it.x, GROUND_Y + 0.5, it.z).project(cam);
+        if (c.z >= 1 || Math.abs(c.x) > 0.9 || Math.abs(c.y) > 0.9) continue;
+        let best = 0;
+        for (const dx of [-0.35, 0, 0.35]) {
+          c.set(it.x + dx, GROUND_Y + 0.5, it.z).project(cam);
+          let n = 0;
+          for (let py = -40; py <= 40; py++) {
+            ray.setFromCamera(new THREE.Vector2(c.x, c.y + (py * 2) / 800), cam);
+            const hit = ray.intersectObjects(meshes)[0];
+            if (hit && hit.object === water && hit.point.y < GROUND_Y + 0.8) n++;
+          }
+          best = Math.max(best, n);
+        }
+        rows.push(best);
+      }
+      expect(rows.length, `${kind}: fountains in the idle frame`).toBeGreaterThanOrEqual(1);
+      for (const n of rows) expect(n, `${kind}: rows of water`).toBeGreaterThanOrEqual(14);
+      arena.dispose();
+    }
+  });
+
   it("stands Sidney's and Drake's spikes on the rules: tall ones on the tall rule with their tips in the frame, small ones under the sight lines", () => {
     for (const kind of ['sidney', 'drake'] as StadiumKind[]) {
       const spikes = spikePlacements(kind, STAGE, SCENERY_SEED);

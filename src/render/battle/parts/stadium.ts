@@ -320,7 +320,9 @@ export function battlerOverlap(stage: Stage): (x: number, z: number, half: numbe
 }
 
 /** A fountain at `at`: a round basin (a plinth, its wall with a rolled lip), a pedestal rising from its floor to a
- *  shallow upper bowl and a finial; its water's two discs (`water`: centre, height, radius). */
+ *  shallow upper bowl and a finial; its water's two discs (`water`: centre, height, radius). The basin's water stands
+ *  brim-full, level with the top of the lip's inner face (0.5; the lip's crest 0.56): the battle camera sees the
+ *  fountains from 5–8° above, and at 0.44 the near lip hid all but a sliver of it. */
 function fountain(s: Soup, at: V3, stone: RGB, water: { at: V3; r: number }[]): void {
   const c = lin(stone), light = lin(scale(stone, 1.08)), dark = lin(scale(stone, 0.72)), mid = lin(scale(stone, 0.9));
   const F = ITEM.fountain.r;
@@ -330,7 +332,7 @@ function fountain(s: Soup, at: V3, stone: RGB, water: { at: V3; r: number }[]): 
     [0.12, 1.3], [0.1, 1.37], [0, ITEM.fountain.height]];
   const cols = [mid, mid, c, light, light, light, light, dark, dark, dark, dark, c, c, mid, light, light, light, dark, dark, c, c, light, light, light];
   lathe(s, at, prof, cols, 20);
-  water.push({ at: [at[0], at[1] + 0.44, at[2]], r: F - 0.24 }, { at: [at[0], at[1] + 1.07, at[2]], r: 0.48 });
+  water.push({ at: [at[0], at[1] + 0.5, at[2]], r: F - 0.24 }, { at: [at[0], at[1] + 1.07, at[2]], r: 0.48 });
 }
 
 /** A water disc (position, normal up): the fountains' water. */
