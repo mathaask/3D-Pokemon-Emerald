@@ -19,7 +19,7 @@ import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, type Stage } from '../stage';
 import { GROUND_RENDER_ORDER } from './ground';
 import { Soup } from './rooms';
-import { SCENERY_SEED } from './scatter';
+import { SCENERY_SEED, battleCamera } from './scatter';
 
 const lin = (c: RGB): RGB => toLinear([Math.min(1, Math.max(0, c[0])), Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2]))]);
 
@@ -197,24 +197,27 @@ const DRUMS: readonly [number, number, number, number][] = [[0.02, 11.7, 0.5, 0.
 
 /** The cloud sea: rows of cloud puffs every `spacing` units (jittered) from `r[0]` to `r[1]` round the stage centre,
  *  ± `arc` rad from straight behind (the camera never looks the other way), centred `depth` units under the floor; each a
- *  blobCrown of `blobs` blobs (radii `blob`, ≤ 1.5) squashed to `squash` of its height; the nearer ones (inside `near`)
- *  rounder (detail 1). The brief's r 16–40 lies under the floor's edge in every frame (rays over the edge meet the clouds
- *  at r ≥ 40: .scratch/t11/sky.ts): the sea reaches from under the edge to the haze. */
-export const CLOUD_SEA = { r: [24, 86] as const, arc: 1.85, depth: [4, 7] as const, spacing: 3.1, blobs: 5, blob: [0.85, 1.45] as const,
-  spread: 1.5, squash: 0.62, near: 46 };
+ *  blobCrown (radii `blob`, ≤ 1.5) squashed to `squash` of its height — by its distance (`lod`: up to r, blobs, icosphere
+ *  detail) five round blobs near the edge, four and three lumpier ones further out. The brief's r 16–40 lies under the
+ *  floor's edge in every frame (rays over the edge meet the clouds at r ≥ 40, the intro sweep's from r ≈ 30:
+ *  .scratch/t11/sky.ts), and past r 76 the look's fog (25..90) has all but swallowed them (the sky dome's horizon is the
+ *  fog's colour): the sea reaches from under the edge into the haze, and only the puffs some battle frame shows are built
+ *  (cloudShown). */
+export const CLOUD_SEA = { r: [30, 76] as const, arc: 1.85, depth: [4, 7] as const, spacing: 3.1, blob: [0.85, 1.45] as const,
+  spread: 1.5, squash: 0.62, lod: [[40, 5, 1], [58, 4, 0], [Infinity, 3, 0]] as const };
 
 /** A cloud puff's template (blobCrown at the origin, its colours turned white with a cool underside, RGB): cached per
- *  variant and detail (deterministic: the same for every build). */
+ *  variant, blob count and detail (deterministic: the same for every build). */
 interface Puff { pos: Float32Array; nor: Float32Array; col: Float32Array; index: ArrayLike<number> }
 const PUFFS = new Map<string, Puff>();
 const PUFF_VARIANTS = 6;
 const UNDERSIDE: RGB = [0.66, 0.73, 0.88];
-function puff(variant: number, detail: number): Puff {
-  const key = `${variant}:${detail}`;
+function puff(variant: number, blobs: number, detail: number): Puff {
+  const key = `${variant}:${blobs}:${detail}`;
   let p = PUFFS.get(key);
   if (!p) {
     const C = CLOUD_SEA;
-    const g = blobCrown(0xc10d + variant * 131, C.blobs, C.spread, C.blob[0], C.blob[1], 0, 0.25, detail);
+    const g = blobCrown(0xc10d + variant * 131, blobs, C.spread, C.blob[0], C.blob[1], 0, 0.25, detail);
     const pos = g.getAttribute('position'), c4 = g.getAttribute('color');
     g.computeBoundingBox();
     const y0 = g.boundingBox!.min.y, y1 = g.boundingBox!.max.y;
@@ -233,27 +236,71 @@ function puff(variant: number, detail: number): Puff {
   return p;
 }
 
-/** Soft cloud puffs (blobCrown blobs ≤ 1.5 radius, white with a cool underside) centred 4–7 units below the floor, r
- *  24–86 (CLOUD_SEA), nearest first (the floor's and the near puffs' depth rejects the far ones behind them).
- *  position, normal, color(3), indexed. */
-export function cloudSeaGeometry(seed: number, stage: Stage): THREE.BufferGeometry {
-  const C = CLOUD_SEA, r = rng(seed * 9173 + 0xc10d);
+/** A puff of the sea: where (its centre), its yaw, scale, template variant, blob count and detail. */
+interface Placed { x: number; y: number; z: number; yaw: number; s: number; v: number; blobs: number; d: number }
+
+/** Whether a battle frame can show a puff whose top stands at (x, y, z): the settled camera at yaw 0 and ±0.45, ±0.9, and
+ *  the intro sweep's first frames (ease 0) from yaw 0 and ±0.9 (a 16:9 frame: the widest) — the top, or a point 1.5 to
+ *  its side, inside the frame (a little margin) and the ray to it passing over the floor's edge (crossing the floor's
+ *  plane beyond r 14.5: the floor hides it otherwise). */
+export function cloudShown(stage: Stage): (x: number, y: number, z: number) => boolean {
+  const cams = [[1, 0], [1, -0.45], [1, 0.45], [1, -0.9], [1, 0.9], [0, 0], [0, -0.9], [0, 0.9]].map(([ease, yaw]) => {
+    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
+    cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look, ease));
+    cam.lookAt(look);
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    return cam;
+  });
+  const cx = stage.centre.x, cz = stage.centre.z, v = new THREE.Vector3();
+  const SIDE = [[0, 0], [1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]];
+  return (x, y, z) => cams.some((cam) => SIDE.some(([dx, dz]) => {
+    const px = x + dx, pz = z + dz;
+    v.set(px, y, pz).project(cam);
+    if (v.z >= 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) return false;
+    const o = cam.position, t = (GROUND_Y - o.y) / (y - o.y);
+    return !(t > 0 && t < 1 && Math.hypot(o.x + (px - o.x) * t - cx, o.z + (pz - o.z) * t - cz) <= 14.5);
+  }));
+}
+
+/** The puffs of a seed (CLOUD_SEA, those some frame shows: cloudShown), nearest first; cached per seed and stage centre
+ *  (the same for every build: the frames' check runs once). */
+const SEAS = new Map<string, Placed[]>();
+function cloudPuffs(seed: number, stage: Stage): Placed[] {
+  const key = `${seed}:${stage.centre.x}:${stage.centre.z}`;
+  let placed = SEAS.get(key);
+  if (placed) return placed;
+  const C = CLOUD_SEA, r = rng(seed * 9173 + 0xc10d), shown = cloudShown(stage);
   const cx = stage.centre.x, cz = stage.centre.z;
-  const placed: { x: number; y: number; z: number; yaw: number; s: number; v: number; d: number }[] = [];
+  placed = [];
   for (let rad = C.r[0]; rad <= C.r[1]; rad += C.spacing * (0.85 + 0.3 * r())) {
     const n = Math.ceil((2 * C.arc * rad) / C.spacing);
     for (let i = 0; i < n; i++) {
       const a = -C.arc + (2 * C.arc * (i + 0.2 + 0.6 * r())) / n, rr = rad + (r() - 0.5) * C.spacing * 0.6;
-      placed.push({ x: cx + Math.sin(a) * rr, z: cz - Math.cos(a) * rr, y: GROUND_Y - C.depth[0] - (C.depth[1] - C.depth[0]) * r() * r(),
-        yaw: r() * Math.PI * 2, s: 0.85 + 0.15 * r(), v: Math.floor(r() * PUFF_VARIANTS), d: rr < C.near ? 1 : 0 });
+      const p: Placed = { x: cx + Math.sin(a) * rr, z: cz - Math.cos(a) * rr, y: GROUND_Y - C.depth[0] - (C.depth[1] - C.depth[0]) * r() * r(),
+        yaw: r() * Math.PI * 2, s: 0.85 + 0.15 * r(), v: Math.floor(r() * PUFF_VARIANTS), blobs: 0, d: 0 };
+      const [, blobs, d] = C.lod.find(([upTo]) => rr < upTo)!;
+      p.blobs = blobs;
+      p.d = d;
+      // (its top: the blobs' tallest over its centre, squashed)
+      if (shown(p.x, p.y + 1.25 * p.s, p.z)) placed.push(p);
     }
   }
+  SEAS.set(key, placed);
+  return placed;
+}
+
+/** Soft cloud puffs (blobCrown blobs ≤ 1.5 radius, white with a cool underside) centred 4–7 units below the floor, r
+ *  30–76 (CLOUD_SEA; those some frame shows), nearest first (the floor's and the near puffs' depth rejects the far ones
+ *  behind them). position, normal, color(3), indexed. */
+export function cloudSeaGeometry(seed: number, stage: Stage): THREE.BufferGeometry {
+  const C = CLOUD_SEA, placed = cloudPuffs(seed, stage);
   let nv = 0, ni = 0;
-  for (const p of placed) { const t = puff(p.v, p.d); nv += t.pos.length / 3; ni += t.index.length; }
+  for (const p of placed) { const t = puff(p.v, p.blobs, p.d); nv += t.pos.length / 3; ni += t.index.length; }
   const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3), index = new Uint32Array(ni);
   let ov = 0, oi = 0;
   for (const p of placed) {
-    const t = puff(p.v, p.d), c = Math.cos(p.yaw), sn = Math.sin(p.yaw), k = t.pos.length / 3;
+    const t = puff(p.v, p.blobs, p.d), c = Math.cos(p.yaw), sn = Math.sin(p.yaw), k = t.pos.length / 3;
     for (let i = 0; i < k; i++) {
       const x = t.pos[i * 3] * p.s, y = t.pos[i * 3 + 1] * p.s * C.squash, z = t.pos[i * 3 + 2] * p.s;
       const o = (ov + i) * 3;

@@ -18,7 +18,7 @@ import { createKitUniforms, kitMaterial, kitMaterialKind, type KitMaterialOption
 import { luma } from '../src/render/kit/palette';
 import { STADIUM_THEME, crystalGeometry, arenaRimGeometry } from '../src/render/battle/parts/stadium';
 import { brokenEdgeGeometry, cloudSeaGeometry } from '../src/render/battle/parts/skyPillar';
-import { RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
+import { MAGMA_LAVA, RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
 import { EDGE, SKY_PILLAR_PART, stumpPlacements } from '../src/render/battle/parts/skyPillar';
 import { LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
 import { SCENERY_SEED, battleCamera, frameTop, sightCap } from '../src/render/battle/parts/scatter';
@@ -348,7 +348,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     stadiumRock: [CLIFF_MATERIAL, true, ['color', 'normal', 'position']],
     candleStands: [PROP_BODY, true, ['color', 'normal', 'position']],
     candleFlames: [PROP_GLOW, false, ['color', 'normal', 'position']],
-    lava: [LAVA_MATERIAL, false, ['normal', 'position']],
+    lava: [MAGMA_LAVA, false, ['normal', 'position']],
     fountainWater: [water, false, ['normal', 'position']],
   };
   const WANT: Record<StadiumKind, string[]> = {
@@ -498,6 +498,11 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
     // (the default ring is Groudon's, unchanged)
     expect(lavaPools(STAGE, SCENERY_SEED)).toEqual(lavaPools(STAGE, SCENERY_SEED, {}));
+    // (Magma's lava is Groudon's flowing lava with its glow dimmed under the bloom's threshold: its own program)
+    expect(MAGMA_LAVA.fragColor).toBe(LAVA_MATERIAL.fragColor);
+    expect(MAGMA_LAVA.fragEmissive).not.toBe(LAVA_MATERIAL.fragEmissive);
+    expect(MAGMA_LAVA.fragEmissive).toMatch(/lavaHeat \* 0\.\d+ \* pulse/);
+    expect(kindOf(MAGMA_LAVA)).not.toBe(kindOf(LAVA_MATERIAL));
   });
 
   it("lights Phoebe's candle flames for their own draw only, on a material no other mesh draws with", () => {
@@ -510,8 +515,10 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     const call = (f: unknown) => (f as (...a: unknown[]) => void)(null, null, null, null, m, null);
     call(flames.onBeforeRender);
     const e = m.emissive.toArray() as number[];
-    expect(Math.max(...e)).toBeGreaterThan(0.5);
-    expect(e[0]).toBeGreaterThan(e[2]);   // (warm candlelight)
+    // (bright, warm candlelight; under the bloom's threshold: a bloom in the frame cost ≈ 1.2 ms on the dev iGPU)
+    expect(Math.max(...e)).toBeGreaterThan(0.3);
+    expect(Math.max(...e)).toBeLessThanOrEqual(0.6);
+    expect(e[0]).toBeGreaterThan(e[2]);
     call(flames.onAfterRender);
     expect(m.emissive.getHex()).toBe(0);
     arena.dispose();

@@ -8,14 +8,15 @@
 // (scatter.ts frameTop) and the props before them, which stand where the idle frame shows them, never over a battler there
 // (battlerOverlap). Draws: the room (BUILDING_BODY: the metal ring, the marble room and its pillars, the rim, pipes,
 // basins, Drake's pillars), the rock (CLIFF_MATERIAL, faceted: rock bands, the ice band, crystals, spikes, the lava's
-// banks), Magma's lava (LAVA_MATERIAL), the fountains' water (the arena water, opaque, drawn first), Phoebe's candle stands
-// (PROP_BODY) and their flames (PROP_GLOW, glowing for their own draw: the battle's light set is fixed, so nothing lights
-// the room but the flames' bloom).
+// banks), Magma's lava (MAGMA_LAVA: Groudon's flowing lava, rock.ts), the fountains' water (the arena water, opaque, drawn
+// first), Phoebe's candle stands (PROP_BODY) and their flames (PROP_GLOW, glowing for their own draw: the battle's light
+// set is fixed, nothing lights the room). The lava and the flames glow just under the bloom's threshold: on the dev iGPU
+// any bloom in the frame cost ≈ 1–1.2 ms (same-session A/B), which these rooms could not afford.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { noise2, rng, type V3 } from '../../kit/geom';
-import { kitMaterial } from '../../kit/materials';
+import { kitMaterial, type KitMaterialOptions } from '../../kit/materials';
 import { mix, scale, toLinear, type RGB } from '../../kit/palette';
 import { BUILDING_BODY } from '../../kit/buildings';
 import { PROP_BODY, PROP_GLOW } from '../../kit/props';
@@ -410,11 +411,11 @@ function pipes(s: Soup, stage: Stage, r: number, arc: number, runs: readonly [nu
   const angles = Array.from({ length: n + 1 }, (_, i) => -arc + (2 * arc * i) / n);
   runs.forEach(([y, rad], ri) => {
     const rr = r - ri * 0.08;
-    tube(s, angles.map((a) => P(a, rr, y)), rad, metal, 12);
+    tube(s, angles.map((a) => P(a, rr, y)), rad, metal, 8);
     angles.forEach((a, i) => {
-      if (i % 3 !== 1) return;
+      if (i % 4 !== 1) return;
       const t: V3 = [Math.cos(a) * 0.05, 0, Math.sin(a) * 0.05], p = P(a, rr, y);
-      collar(s, sub(p, t), [p[0] + t[0], p[1], p[2] + t[2]], rad * 1.4, rad * 0.9, flange, 12);
+      collar(s, sub(p, t), [p[0] + t[0], p[1], p[2] + t[2]], rad * 1.4, rad * 0.9, flange, 8);
     });
   });
   // posts under the runs, with a saddle round the lower one
@@ -427,9 +428,9 @@ function pipes(s: Soup, stage: Stage, r: number, arc: number, runs: readonly [nu
   });
   risers.forEach((a, i) => {
     const rr = r + 0.45, foot = P(a, rr, 0);
-    lathe(s, foot, [[0.32, -0.02], [0.32, 0.12], [0.22, 0.12]], [flange, flange], 12);
-    tube(s, [P(a, rr, 0.1), P(a, rr, 9)], 0.2, metal, 12);
-    for (const y of [1.65, 4.5]) collar(s, P(a, rr, y - 0.05), P(a, rr, y + 0.05), 0.28, 0.18, flange, 12);
+    lathe(s, foot, [[0.32, -0.02], [0.32, 0.12], [0.22, 0.12]], [flange, flange], 10);
+    tube(s, [P(a, rr, 0.1), P(a, rr, 9)], 0.2, metal, 10);
+    for (const y of [1.65, 4.5]) collar(s, P(a, rr, y - 0.05), P(a, rr, y + 0.05), 0.28, 0.18, flange, 10);
     if (i === 0) {
       // a valve wheel facing the stage (in the plane along the arc and up), on a stem
       const hub = P(a, rr - 0.42, 1.05);
@@ -538,8 +539,19 @@ const PN = { position: 3, normal: 3 }, PNC = { position: 3, normal: 3, color: 3 
 /** The marble rooms' pillars against their walls (as the gyms': rooms.ts) — radius, off the wall, where. */
 const WALL_PILLAR = { r: 0.5, off: 0.62, at: [['back', -16], ['back', -7.5], ['back', 7.5], ['back', 16], ['left', 8], ['right', -8]] as [Wall, number][] };
 /** Phoebe's candle flames' glow (linear emissive, set for their draw only: the pooled material keeps black for any other
- *  user) — over the bloom's threshold: they glow. */
-const FLAME_GLOW: RGB = [1.0, 0.56, 0.2], FLAME_STRENGTH = 1.6;
+ *  user): bright, just under the bloom's threshold (post.ts: 1.05) — over it they bloomed, and any bloom in the frame cost
+ *  ≈ 1.2 ms on the dev iGPU (same-session A/B: 2.16 → 1.01 at 0.35; the lava's glow pays it too). */
+const FLAME_GLOW: RGB = [1.0, 0.56, 0.2], FLAME_STRENGTH = 0.5;
+/** Magma's lava: Groudon's (rock.ts LAVA_MATERIAL: flowing crust over a hot core), its glow kept under the bloom's
+ *  threshold (its emissive × LAVA_DIM of Groudon's): Groudon's lava blooms, and a bloom in the frame cost Magma's room
+ *  ≈ 1 ms on the dev iGPU (same-session A/B: +1.95 → +0.90 without its lava) — Magma's walls, pipes and floor left too
+ *  little room for it. Its own program (hookKey 'lavaDim'), compiled at boot as every battle program. */
+const LAVA_DIM = 0.55;
+export const MAGMA_LAVA: KitMaterialOptions = (() => {
+  const e = LAVA_MATERIAL.fragEmissive!, from = 'lavaHeat * 1.7 * pulse';
+  if (!e.includes(from)) throw new Error('stadium: rock.ts LAVA_EMISSIVE no longer scales its glow as MAGMA_LAVA expects');
+  return { ...LAVA_MATERIAL, fragEmissive: e.replace(from, `lavaHeat * ${(1.7 * LAVA_DIM).toFixed(3)} * pulse`), hookKey: 'lavaDim' };
+})();
 
 /** One cell of field for the fountains' water (kit/water.ts: r = shore distance / 15): three cells from any shore — a
  *  pool's clear blue-green, no foam, no sand. */
@@ -559,7 +571,7 @@ export const STADIUM_PART: ArenaPart = {
     return [
       { material: BUILDING_BODY, mesh: 'mesh', attrs: PNC, castShadow: true },
       { material: CLIFF_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: true },
-      { material: LAVA_MATERIAL, mesh: 'mesh', attrs: PN, castShadow: false },
+      { material: MAGMA_LAVA, mesh: 'mesh', attrs: PN, castShadow: false },
       { material: opaqueWater(arenaWaterMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(1, 1), [0, 0, 0])), mesh: 'mesh', attrs: PN, castShadow: false },
       { material: PROP_BODY, mesh: 'mesh', attrs: PNC, castShadow: true },
       { material: PROP_GLOW, mesh: 'mesh', attrs: PNC, castShadow: false },
@@ -636,7 +648,7 @@ export const STADIUM_PART: ArenaPart = {
     if (rock.length) add('stadiumRock', merged(rock), kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material, true);
     if (pools.length) {
       add('lava', lavaGeometry(SCENERY_SEED, stage, pools),
-        kitMaterial(ctx.uniforms, { ...LAVA_MATERIAL, uniforms: { uLava: { value: new THREE.Color(...toLinear(col.lava!)) } } }).material, false);
+        kitMaterial(ctx.uniforms, { ...MAGMA_LAVA, uniforms: { uLava: { value: new THREE.Color(...toLinear(col.lava!)) } } }).material, false);
     }
     if (discs.length) {
       const tex = fountainField();
