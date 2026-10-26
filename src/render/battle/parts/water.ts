@@ -22,7 +22,7 @@ import { CLOUD_GLSL } from '../clouds.glsl';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaContext, ArenaPart, CatalogueEntry } from '../modernArena';
 import { PLATFORM_FOOTPRINT, WATER_Y, type Stage } from '../stage';
-import { CAVE_POND, POND, groundHeight } from './ground';
+import { CAVE_POND, POND, groundHeight, moonlitAsGround } from './ground';
 import { addPad } from './platforms';
 import { boulderGeometry, rockCluster } from './rocks';
 import { arenaClear, arenaTreeMaterial, PALM } from './flora';
@@ -680,10 +680,13 @@ function buildWater(ctx: ArenaContext, group: THREE.Group): void {
     const g = mergeGeometries(parts)!;
     for (const x of parts) x.dispose();
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material);
+    const material = kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material;
+    const mesh = new THREE.Mesh(g, material);
     mesh.name = 'waterRocks';
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    // (warm stone moonlit at night as the arenas' rocks: rocks.ts)
+    moonlitAsGround(mesh, material, toLinear(palette.rock), ctx.uniforms.uNight);
     group.add(mesh);
   }
   if (islets.length) {
@@ -691,10 +694,13 @@ function buildWater(ctx: ArenaContext, group: THREE.Group): void {
     const g = mergeGeometries(domes)!;
     for (const x of domes) x.dispose();
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(ctx.uniforms, SOIL_MATERIAL).material);
+    const material = kitMaterial(ctx.uniforms, SOIL_MATERIAL).material;
+    const mesh = new THREE.Mesh(g, material);
     mesh.name = 'islets';
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    // (their sand moonlit at night as the arenas' warm ground: its grass crown turns with it, a little bluer)
+    moonlitAsGround(mesh, material, toLinear(ISLET_SAND), ctx.uniforms.uNight);
     group.add(mesh);
   }
   const palms = islets.flatMap((k) => k.palms);

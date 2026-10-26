@@ -40,7 +40,7 @@ function blankLook(): ArenaLook {
 
 /** outdoor and water settings: timeOfDay(hour), night = nightFactor(hour), fog 30..80, clouds 1; sky (rayquaza): the
  *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.85, 0.94, 1.0) × 1.4, sky (0.46,
- *  0.68, 0.88), hemi 1.3, fog (0.07, 0.28, 0.48) 13..46, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
+ *  0.68, 0.88), hemi 1.3, fog (0.12, 0.4, 0.6) 13..46, caustics 1; cave: sun (1.0, 0.85, 0.7) × 0.9, sky (0.55, 0.5, 0.6),
  *  hemi 1.2, fog = new THREE.Color(...toLinear(palette.wall)) × 0.12, 14..40 (groudon: fog (0.18, 0.07, 0.04),
  *  sun (1.0, 0.6, 0.35)); indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
  *  fog = new THREE.Color(...toLinear(palette.wall)) × 0.6, 22..60, night 0.
@@ -78,7 +78,7 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.sunI = 1.4;
       o.sky.setRGB(0.46, 0.68, 0.88);
       o.hemiI = 1.3;
-      o.fog.setRGB(0.07, 0.28, 0.48);
+      o.fog.setRGB(0.12, 0.4, 0.6);
       o.fogNear = 13;
       o.fogFar = 46;
       o.caustics = 1;
