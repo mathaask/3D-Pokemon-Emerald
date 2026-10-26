@@ -361,9 +361,9 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
 - [x] Plan (`docs/superpowers/plans/2026-10-23-phase3-battles.md`, 12 tasks)
 - [x] 1 battle harness entries + p3-base · [x] 2 arena kinds/ROM graphics/colours · [x] 3 static battle preview
 - [x] 4 BattleView split + battle precompile · [x] 5 inflated battlers · [x] 6 arena foundation · [x] 7 outdoor arenas · [x] 7b draw order (inserted; bake = per-kind contingency)
-- [x] 8 water arenas · [x] 9 rock arenas · [x] 10 indoor halls · [ ] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12 perf/docs
-- Next: Task 11 (stadium rooms + Sky Pillar), Task 12 (perf/robustness/docs + the deferred minors in the SDD ledger),
-  then the final whole-branch review, merge `phase3-battles` → `main` and push. Later: terrain height solver v2
+- [x] 8 water arenas · [x] 9 rock arenas · [x] 10 indoor halls · [x] 11 hideouts/E4/Champion/Sky Pillar · [ ] 12a backlog (inserted: robustness, frame defects, hygiene) · [ ] 12 perf/docs
+- Next: Task 12a (the review backlog that is robustness, frame defects or hygiene), Task 12 (verification + docs;
+  the rest of the backlog becomes documented known gaps), then the final whole-branch review, merge `phase3-battles` → `main` and push. Later: terrain height solver v2
   (mountain ridges), Phase 4 (interiors). Subagents: `opus` only; progress bar in every update.
 
 ## Phase 2 status
