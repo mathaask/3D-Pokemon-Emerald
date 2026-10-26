@@ -209,6 +209,31 @@ describe('BattleActors', () => {
     const decal = battleDecalSpec(shadow, slot, STAGE);
     expect(decal.flat).toBe(true); expect(decal.footY).toBeCloseTo(0, 6);
   });
+  it('keeps the cards and the inflated battlers out of override passes on their own programs (no override variant to compile)', () => {
+    const atlas = { slots: new Map([[0, slot]]), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    const meshes: THREE.Mesh[] = [];
+    a.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+    expect(meshes.map((m) => m.name).sort()).toEqual(['battleCards', 'battleInflated']);
+    const r = {} as THREE.WebGLRenderer, cam = new THREE.Camera(), scene = new THREE.Scene();
+    for (const m of meshes) {
+      const own = m.material as THREE.Material, g = m.geometry as THREE.InstancedBufferGeometry;
+      // (three then draws the mesh with its own material in the override pass: the main pass's program)
+      expect(own.allowOverride, m.name).toBe(false);
+      g.instanceCount = 3;
+      scene.overrideMaterial = new THREE.MeshNormalMaterial();
+      m.onBeforeRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+      expect(g.instanceCount, m.name).toBe(0);
+      m.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+      expect(g.instanceCount, m.name).toBe(3);
+      scene.overrideMaterial = null;
+      m.onBeforeRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+      expect(g.instanceCount, m.name).toBe(3);
+      g.instanceCount = 5; // (the next frame's count, set between passes)
+      m.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
+      expect(g.instanceCount, m.name).toBe(5);
+    }
+  });
   it('gives a sprite scaled to nothing (affine growth at send-out) finite card and decal specs', () => {
     const finite = (s: ReturnType<typeof battleCardSpec>) => [s.footX, s.footY, s.footZ, s.width, s.height, s.lift].every(Number.isFinite);
     expect(finite(battleCardSpec({ ...battler(0, 40, 53), scaleX: 0, scaleY: 0 }, slot, STAGE))).toBe(true);

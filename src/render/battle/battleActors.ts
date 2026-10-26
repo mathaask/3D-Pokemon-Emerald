@@ -9,7 +9,7 @@ import type { SpriteSnap } from '../../game/state';
 import { SYM } from '../../game/symbols';
 import { Billboards, type BillboardSpec } from '../overworld/billboards';
 import type { WorldStyle } from '../overworld/world';
-import { skipOverridePasses, type ActorAtlas, type SlotUv, type SpriteFilter } from '../actors/actorLayer';
+import type { ActorAtlas, SlotUv, SpriteFilter } from '../actors/actorLayer';
 import { InflatedActors, BATTLE_VARIANT, instanceUniformsFailed, type ProgramInfo } from '../actors/inflatedActors';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { PX, REF_PITCH, STAGE, type Stage } from './stage';
@@ -214,6 +214,31 @@ export function battleDecalSpec(s: SpriteSnap, slot: SlotUv, stage: Stage, out: 
   return out;
 }
 
+/**
+ * skipOverridePasses (0 instances in a pass that draws the scene with an override material: GTAO's prepass at High),
+ * with the mesh's own material kept there (allowOverride off: its own program, the main pass's, is used) so no override
+ * program is ever chosen for it. Three picks the override material's program for a draw by its full key only when the
+ * previous draw's program fails one of setProgram's checks — vertex normals are not among them —, so which variant a
+ * normal-less mesh (the cards, the inflated battlers) needs depends on the draw order: a Retro High battle compiled one
+ * on its first frame (Task 12), which the precompile frame, drawn in another order, had not. Shadow passes call
+ * onBeforeShadow: the mesh keeps casting.
+ */
+export function skipOverridePassesOwnProgram(mesh: THREE.Mesh): void {
+  (mesh.material as THREE.Material).allowOverride = false;
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  let saved = -1;
+  mesh.onBeforeRender = (_r, scene) => {
+    if (!(scene as THREE.Scene).overrideMaterial) return;
+    saved = geometry.instanceCount;
+    geometry.instanceCount = 0;
+  };
+  mesh.onAfterRender = () => {
+    if (saved < 0) return;
+    geometry.instanceCount = saved;
+    saved = -1;
+  };
+}
+
 /** Inputs of the inflated battlers: the battle's inflation field (none: every battler stays a card), the rim colour (the
  *  battle KitUniforms' uSky, kept by reference) and their instance-data path (instanceUniformsFit: a renderer's caller
  *  passes it; default the uniform array). Cards use none of them. */
@@ -252,7 +277,7 @@ export class BattleActors {
     this.group.name = 'battleActors';
     this.group.add(this.billboards.mesh);
     // (GTAO's override pass at High would draw the bare quads at the origin)
-    skipOverridePasses(this.billboards.mesh);
+    skipOverridePassesOwnProgram(this.billboards.mesh);
     if (opts.field) this.makeInflated(opts.field, opts.instanceUniforms ?? true);
   }
 
@@ -273,7 +298,7 @@ export class BattleActors {
     inflated.mesh.receiveShadow = false;
     (inflated.mesh.material as THREE.MeshStandardMaterial).color.setScalar(this.exposure);
     this.group.add(inflated.mesh);
-    skipOverridePasses(inflated.mesh);
+    skipOverridePassesOwnProgram(inflated.mesh);
   }
 
   /**
