@@ -3,11 +3,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { STAGE, GROUND_Y } from '../src/render/battle/stage';
-import { battleCamera, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
-import { duneGeometry, duneMounds } from '../src/render/battle/parts/dunes';
+import { battleCamera, frameTop, sightCap, stageKeepOut, SCENERY_SEED } from '../src/render/battle/parts/scatter';
+import { duneGeometry, duneMounds, onDune } from '../src/render/battle/parts/dunes';
+import { treeGeometry } from '../src/render/kit/trees';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
 import { boulderGeometry, rockPlacements } from '../src/render/battle/parts/rocks';
-import { arenaClear, CLUMP_TOP, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R } from '../src/render/battle/parts/flora';
+import { arenaClear, CLUMP_TOP, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
 import { groundHeight, CLOUD_SHADOW } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
@@ -123,5 +124,120 @@ describe('arena scenery', () => {
       arena.dispose();
     }
     expect(CLOUD_SHADOW).toBeLessThanOrEqual(0.15);
+  });
+
+  it("keeps the grass under the sight lines of the intro sweep's cameras too (1.5× as far: flatter lines to the player)", () => {
+    // (an oracle: the sight line from each camera of the sweep's first frame and its midpoint, at the user's yaws, over the
+    // horizontal ray to the near edge of each platform top)
+    const tops = [{ p: STAGE.player, rx: 2.1, rz: 2.1 * 0.62 }, { p: STAGE.enemy, rx: 1.9, rz: 1.9 * 0.62 }];
+    const cams = [0, 0.5].flatMap((e) => [-0.9, -0.45, 0, 0.45, 0.9].map((y) => battleCamera(STAGE, y, new THREE.Vector3(), new THREE.Vector3(), e)));
+    const line = (x: number, z: number) => {
+      let cap = Infinity;
+      for (const c of cams) for (const t of tops) {
+        const ux = x - c.x, uz = z - c.z, dq = Math.hypot(ux, uz);
+        const dx = (c.x - t.p.x) / t.rx, dz = (c.z - t.p.z) / t.rz, vx = ux / dq / t.rx, vz = uz / dq / t.rz;
+        const A = vx * vx + vz * vz, B = 2 * (dx * vx + dz * vz), C = dx * dx + dz * dz - 1, disc = B * B - 4 * A * C;
+        if (disc < 0) continue;
+        const near = (-B - Math.sqrt(disc)) / (2 * A);
+        if (near > dq) cap = Math.min(cap, c.y * (1 - dq / near));
+      }
+      return cap;
+    };
+    let capped = 0;
+    for (const g of grassPlacements('longGrass', STAGE, SCENERY_SEED, 'medium')) {
+      const l = line(g.x, g.z);
+      if (l < Infinity) capped++;
+      expect(groundHeight('longGrass', g.x, g.z, STAGE) + CLUMP_TOP * g.scale).toBeLessThanOrEqual(l + 1e-6);
+    }
+    expect(capped).toBeGreaterThan(20);
+  });
+
+  it("shows every framed tree's crown under the frame's top edge (no lollipops, no sticks); the groves' trunks short", () => {
+    // (each kit shape's crown low edge: its crown vertices' 10th percentile, at scale 1)
+    const low = new Map<string, number>();
+    const lowOf = (t: ArenaTree) => {
+      const id = t.style + t.variant;
+      if (!low.has(id)) {
+        const g = treeGeometry(t.style, t.variant, 1), p = g.getAttribute('position'), c = g.getAttribute('color');
+        const ys: number[] = [];
+        for (let i = 0; i < p.count; i++) if (c.getW(i) >= 0.5) ys.push(p.getY(i));
+        ys.sort((a, b) => a - b);
+        low.set(id, ys[Math.floor(0.1 * (ys.length - 1))]);
+      }
+      return low.get(id)!;
+    };
+    const top = frameTop(STAGE);
+    for (const kind of ['grass', 'longGrass', 'plain', 'pond', 'sand'] as const) {
+      for (const t of treePlacements(kind, STAGE, SCENERY_SEED)) {
+        const ky = t.style === 'palm' ? 0.68 : 1;
+        // (its foot sinks 0.15 × scale, and `sink` more)
+        const foot = groundHeight(kind, t.x, t.z, STAGE) - 0.15 * t.scale - (t.sink ?? 0);
+        const crownLow = foot + lowOf(t) * t.scale * ky;
+        const at = top(t.x, t.z);
+        if (at < Infinity) expect(crownLow + 0.3, `${kind} ${t.style} at (${t.x.toFixed(1)}, ${t.z.toFixed(1)})`).toBeLessThanOrEqual(at);
+        // the plain's and the pond's groves: little bare trunk under the crown
+        if (kind === 'plain' || kind === 'pond') expect(crownLow - groundHeight(kind, t.x, t.z, STAGE)).toBeLessThanOrEqual(0.25 * t.scale + 1e-6);
+      }
+    }
+  });
+
+  it('agrees on one scenery seed: the palms stand off the dunes the sand arena builds', () => {
+    const mounds = duneMounds(SCENERY_SEED, STAGE);
+    const palms = treePlacements('sand', STAGE, SCENERY_SEED);
+    expect(palms.length).toBeGreaterThan(0);
+    for (const p of palms) expect(onDune(mounds, p.x, p.z)).toBe(false);
+  });
+
+  it("moonlights the bare kinds' hills, the dunes, dry tufts and warm rocks at night; leafy hills and green grass as they are", () => {
+    const u = createKitUniforms();
+    const dummy = [null, null, null, null, null, null] as unknown as Parameters<THREE.Object3D['onBeforeRender']>;
+    const night = (kind: 'sand' | 'mountain' | 'grass') => {
+      const arena = new ModernArena(u);
+      expect(arena.build(kind, defaultArenaColors(kind), 'medium')).toBe(true);
+      const hooked = (name: string) => {
+        const out: THREE.Mesh[] = [];
+        arena.group.children.find((c) => c.name === name)?.traverse((m) => { if ((m as THREE.Mesh).isMesh) out.push(m as THREE.Mesh); });
+        return out.filter((m) => m.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender);
+      };
+      const res = { hills: hooked('horizon'), dunes: hooked('dunes'), grass: hooked('flora').filter((m) => m.name.startsWith('grass:')) };
+      // (at full night the hooked materials' colour moves off white towards the lifted neutral)
+      u.uNight.value = 1;
+      for (const m of [...res.hills, ...res.dunes, ...res.grass]) {
+        m.onBeforeRender(...dummy);
+        const c = (m.material as THREE.MeshStandardMaterial).color;
+        expect(c.r !== 1 || c.g !== 1 || c.b !== 1, `${kind} ${m.name}`).toBe(true);
+      }
+      u.uNight.value = 0;
+      arena.dispose();
+      return res;
+    };
+    const sand = night('sand'), mountain = night('mountain'), grass = night('grass');
+    expect(sand.hills.length).toBe(1);
+    expect(sand.dunes.length).toBe(1);
+    expect(sand.grass.length).toBeGreaterThan(0);
+    expect(mountain.hills.length).toBe(1);
+    expect(grass.hills.length).toBe(0);
+    expect(grass.grass.length).toBe(0);
+  });
+
+  it('keeps at Low quality only the trees the settled camera frames at yaw 0', () => {
+    const u = createKitUniforms(), idle = frameTop(STAGE, [0]);
+    const arena = new ModernArena(u);
+    expect(arena.build('grass', defaultArenaColors('grass'), 'low')).toBe(true);
+    const at = new THREE.Matrix4(), p = new THREE.Vector3();
+    let n = 0;
+    arena.group.traverse((m) => {
+      if (!(m as THREE.InstancedMesh).isInstancedMesh || !m.name.startsWith('trees:')) return;
+      const im = m as THREE.InstancedMesh;
+      for (let i = 0; i < im.count; i++) {
+        im.getMatrixAt(i, at);
+        p.setFromMatrixPosition(at);
+        expect(idle(p.x, p.z)).toBeLessThan(Infinity);
+        n++;
+      }
+    });
+    expect(n).toBeGreaterThan(10);
+    expect(n).toBeLessThan(treePlacements('grass', STAGE, SCENERY_SEED).length);
+    arena.dispose();
   });
 });

@@ -60,15 +60,26 @@ export function scatter(seed: number, o: ScatterOptions): { x: number; z: number
   return out;
 }
 
-/** The yaw the battle camera reaches: the user's ±0.9, its sway (0.04) and its focus nudge (0.06). */
-const CAMERA_YAW = 1.0;
+/** The seed every arena's scenery is placed with (one arena per kind: always the same). The flora, the dunes and the rocks
+ *  must agree on it — the palms keep off the dunes, the rocks off the trees and onto the dunes. */
+export const SCENERY_SEED = 1;
 
-/** Where the battle camera stands at user yaw `yaw` once its intro is done (BattleView.update's camera, at zoom 1 with no
- *  sway or focus: the lowest it stands — the intro sweep and the zoom only raise it), and the point it looks at. */
-export function battleCamera(stage: Stage, yaw: number, out = new THREE.Vector3(), look = new THREE.Vector3()): THREE.Vector3 {
+/** The yaw the battle camera reaches once its intro is done: the user's ±0.9, its sway (0.04) and its focus nudge (0.06).
+ *  (The intro sweep starts 0.5 further, at yaw + 0.5, 1.5× as far and 0.06 steeper, and eases in over 2.2 s: with the
+ *  user's yaw past +0.4 its first frames stand beyond this wedge, on the +x side, where a tall thing beside the stage may
+ *  pass between it and the stage for a moment. The tall rule keeps to the settled camera.) */
+const CAMERA_YAW = 1.0;
+/** The battle camera's vertical field of view (BattleView: 24°) and its pitch once settled (REF_PITCH − 0.13). */
+const CAMERA_FOV = THREE.MathUtils.degToRad(24), CAMERA_PITCH = REF_PITCH - 0.13;
+
+/** Where the battle camera stands at user yaw `yaw` (BattleView.update's camera at zoom 1, with no sway or focus), at
+ *  `ease` through its intro sweep (default 1: done — the lowest and nearest it stands; at 0, its first frame: yaw + 0.5,
+ *  1.5× as far, 0.06 steeper — the sight lines to the near platform run flatter there), and the point it looks at. */
+export function battleCamera(stage: Stage, yaw: number, out = new THREE.Vector3(), look = new THREE.Vector3(), ease = 1): THREE.Vector3 {
   stage.at(120, 82, (stage.playerDepth + stage.enemyDepth) / 2, look);
-  const dist = (80 / PX) / Math.tan(THREE.MathUtils.degToRad(12)), pitch = REF_PITCH - 0.13;
-  return out.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(look);
+  const y = yaw + (1 - ease) * 0.5;
+  const dist = ((80 / PX) / Math.tan(CAMERA_FOV / 2)) * (1 + (1 - ease) * 0.5), pitch = CAMERA_PITCH + (1 - ease) * 0.06;
+  return out.set(Math.sin(y) * Math.cos(pitch), Math.sin(pitch), Math.cos(y) * Math.cos(pitch)).multiplyScalar(dist).add(look);
 }
 /** A tall thing stands at least this far from the stage centre, no further forward than `front`, and at least
  *  `clearance` from the camera's line of sight to the stage at any yaw (its crown's half width, with room). */
@@ -98,19 +109,22 @@ export function stageKeepOut(stage: Stage): { ellipses: Ellipse[]; tallOk(x: num
   return { ellipses, tallOk };
 }
 
-/** Yaws the sight cap checks the camera at (the user's ±0.9, in steps). */
+/** Yaws the sight cap and the frame top check the camera at (the user's ±0.9, in steps), and the intro sweep's steps
+ *  (ease 1: settled … 0: its first frame). */
 const SIGHT_YAWS = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12);
+const SIGHT_EASES = [1, 0.75, 0.5, 0.25, 0];
 /** The sight cap stays this far under the sight line. */
 const SIGHT_MARGIN = 0.04;
 
 /** The highest a thing standing at (x, z) may reach (world y) without hiding a platform's top from the battle camera at
- *  any yaw in ±0.9 (battleCamera: idle, its lowest): below the sight line from the camera to the nearer edge of each
+ *  any yaw in ±0.9, settled or anywhere in its intro sweep (battleCamera: the sweep stands 1.5× as far, and its sight
+ *  lines to the player's near edge run flatter): below the sight line from the camera to the nearer edge of each
  *  platform top (y = 0) it stands in front of. Infinity where it stands in front of none. (The battlers stand on the tops,
  *  higher and further: under that line they stay whole too.) */
 export function sightCap(stage: Stage): (x: number, z: number) => number {
   const fp = PLATFORM_FOOTPRINT;
   const tops = [{ p: stage.player, rx: fp.player.rx, rz: fp.player.rz }, { p: stage.enemy, rx: fp.enemy.rx, rz: fp.enemy.rz }];
-  const cams = SIGHT_YAWS.map((y) => battleCamera(stage, y));
+  const cams = SIGHT_EASES.flatMap((e) => SIGHT_YAWS.map((y) => battleCamera(stage, y, new THREE.Vector3(), new THREE.Vector3(), e)));
   return (x, z) => {
     let cap = Infinity;
     for (const c of cams) {
@@ -128,5 +142,34 @@ export function sightCap(stage: Stage): (x: number, z: number) => number {
       }
     }
     return cap;
+  };
+}
+
+/** The frame's top edge dips this far below the horizontal (the settled camera's pitch less half its field of view), and
+ *  the frame reaches this far to either side of the view (half the horizontal field of view of a 16:9 window, and a
+ *  crown's width more). */
+const FRAME_DIP = CAMERA_PITCH - CAMERA_FOV / 2;
+const FRAME_SIDE = Math.atan(Math.tan(CAMERA_FOV / 2) * (16 / 9)) + 0.1;
+
+/** The height (world y) of the frame's top edge over (x, z): the lowest over the settled cameras at `yaws` (default the
+ *  user's ±0.9) that frame the point across (its horizontal angle off the view within FRAME_SIDE) — what stands above it
+ *  there never shows, at any of them. Infinity where none frames it. (The intro sweep stands higher: it frames more.) */
+export function frameTop(stage: Stage, yaws: readonly number[] = SIGHT_YAWS): (x: number, z: number) => number {
+  const views = yaws.map((y) => {
+    const look = new THREE.Vector3(), cam = battleCamera(stage, y, new THREE.Vector3(), look);
+    return { cam, dir: Math.atan2(look.x - cam.x, look.z - cam.z) };
+  });
+  const dip = Math.tan(FRAME_DIP);
+  return (x, z) => {
+    let top = Infinity;
+    for (const { cam, dir } of views) {
+      const dx = x - cam.x, dz = z - cam.z;
+      let off = Math.atan2(dx, dz) - dir;
+      off = Math.atan2(Math.sin(off), Math.cos(off));
+      if (Math.abs(off) > FRAME_SIDE) continue;
+      // (the depth along the view: the frame's top edge dips by it)
+      top = Math.min(top, cam.y - Math.hypot(dx, dz) * Math.cos(off) * dip);
+    }
+    return top;
   };
 }

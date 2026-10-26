@@ -2,7 +2,7 @@
 // one), in the palette's darkened leaf green (sand and mountain: their ground), crests lighter. The battle camera never
 // frames the sky (D1): at its top edge it sees the near ring's slopes rise behind the treeline, the fog carrying them
 // into the haze; the far ring shows when the camera stands higher (the intro sweep, zoomed out). One draw, the kit's
-// soil material, no shadows.
+// soil material, no shadows; the bare kinds' hills moonlit at night as their field (moonlitAsGround).
 
 import * as THREE from 'three';
 import { noise2 } from '../../kit/geom';
@@ -12,7 +12,7 @@ import { SOIL_MATERIAL } from '../../kit/soil';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, type Stage } from '../stage';
-import { groundHeight } from './ground';
+import { groundHeight, moonlitAsGround } from './ground';
 
 export interface RidgeOptions {
   /** The crest's radius from the stage centre. */
@@ -105,9 +105,12 @@ export const HORIZON_PART: ArenaPart = {
     near.dispose();
     far.dispose();
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(ctx.uniforms, SOIL_MATERIAL).material);
+    const material = kitMaterial(ctx.uniforms, SOIL_MATERIAL).material;
+    const mesh = new THREE.Mesh(g, material);
     mesh.castShadow = false;
     mesh.receiveShadow = false;
+    // (the bare kinds' hills, in their ground's warm colour, moonlit at night as their field; leafy hills stay as the trees)
+    moonlitAsGround(mesh, material, toLinear(color), ctx.uniforms.uNight);
     return mesh;
   },
 };

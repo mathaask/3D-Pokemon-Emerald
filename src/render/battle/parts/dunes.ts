@@ -10,8 +10,8 @@ import { toLinear, type RGB } from '../../kit/palette';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import type { Stage } from '../stage';
-import { GROUND_NIGHT, groundHeight } from './ground';
-import { stageKeepOut } from './scatter';
+import { groundHeight, moonlitAsGround } from './ground';
+import { SCENERY_SEED, stageKeepOut } from './scatter';
 
 /** A mound: centre, half-extents along its own axes (turned by `yaw`), crest height. */
 export interface DuneMound { x: number; z: number; rx: number; rz: number; h: number; yaw: number; seed: number }
@@ -132,14 +132,6 @@ export function duneGeometry(seed: number, stage: Stage, color: RGB): THREE.Buff
 
 const PNC = { position: 3, normal: 3, color: 3 };
 
-/** The ground's night treatment of warm ground (GROUND_NIGHT: a mix towards a lifted neutral), as a material-colour
- *  factor for a surface coloured `soil` × k (linear): the dunes stay the sand field's colour under the moon. */
-function groundNightScale(soil: RGB, night: number, out: RGB): RGB {
-  const l = (0.2126 * soil[0] + 0.7152 * soil[1] + 0.0722 * soil[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix;
-  for (let i = 0; i < 3; i++) out[i] = soil[i] > 0 ? (soil[i] + (l - soil[i]) * t) / soil[i] : 1;
-  return out;
-}
-
 export const DUNES_PART: ArenaPart = {
   name: 'dunes',
   kinds: ['sand'],
@@ -148,14 +140,10 @@ export const DUNES_PART: ArenaPart = {
   },
   build(ctx) {
     const km = kitMaterial(ctx.uniforms, SOIL_MATERIAL);
-    const mesh = new THREE.Mesh(duneGeometry(1, ctx.stage, ctx.palette.ground), km.material);
+    const mesh = new THREE.Mesh(duneGeometry(SCENERY_SEED, ctx.stage, ctx.palette.ground), km.material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    const sand = toLinear(ctx.palette.ground), night = ctx.uniforms.uNight, k: RGB = [1, 1, 1], material = km.material;
-    mesh.onBeforeRender = () => {
-      groundNightScale(sand, night.value, k);
-      material.color.setRGB(k[0], k[1], k[2]);
-    };
+    moonlitAsGround(mesh, km.material, toLinear(ctx.palette.ground), ctx.uniforms.uNight);
     return mesh;
   },
 };

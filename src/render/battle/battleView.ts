@@ -26,7 +26,7 @@ import type { RGB } from '../kit/palette';
 import { BattleArena } from './arena';
 import { arenaKind, ARENA_SETTING, type ArenaInputs, type ArenaKind } from './arenaKind';
 import { decodeBg3, sampleArenaColors, BG_W, BG_H, type ArenaColors } from './bgSample';
-import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE } from './stage';
+import { PX, REF_PITCH, PLATFORM_ENEMY_SCREEN, STAGE, SUN_OFFSET, SUN_SHADOW } from './stage';
 import { BattleActors, battleRoute, battlerAlphaKey, battlerPaletteKey } from './battleActors';
 import { ARENA_PARTS, ArenaColorLock, ModernArena, withFailingPart, type ArenaPart } from './modernArena';
 import { battleCatalogue, shadowDepthStandIns, type BattleCatalogue } from './catalogue';
@@ -157,7 +157,8 @@ export class BattleView {
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
-    sc.left = -14; sc.right = 14; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 80;
+    sc.left = -SUN_SHADOW.half; sc.right = SUN_SHADOW.half; sc.top = SUN_SHADOW.half; sc.bottom = -SUN_SHADOW.half;
+    sc.near = SUN_SHADOW.near; sc.far = SUN_SHADOW.far;
     this.sun.shadow.bias = -0.0005;
     this.sun.shadow.normalBias = 0.02;
     this.arena.setPlatforms(STAGE.player, STAGE.enemy);
@@ -533,7 +534,7 @@ export class BattleView {
     const hour = state.hours + state.minutes / 60;
     const dayPhase = ((hour - 6) / 12) * Math.PI;
     const night = !indoor && (hour < 5.5 || hour > 19.5);
-    this.sun.position.copy(mid).add(new THREE.Vector3(Math.cos(dayPhase) * 6 - 4, 14, 10));
+    this.sun.position.copy(mid).add(new THREE.Vector3(Math.cos(dayPhase) * SUN_OFFSET.swing + SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z));
     this.sun.target.position.copy(mid);
     this.uniforms.uTime.value = this.time;
     const fog = this.scene.fog as THREE.Fog;

@@ -35,6 +35,30 @@ export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
  *  bodies keep NIGHT_SOIL: with these, their earth went near-black.) */
 export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
 
+/** GROUND_COLOR's moonlit earth (below) as a material-colour factor, for a surface coloured `rgb` × k (linear): per
+ *  channel mix(rgb, luminance(rgb) × lift, night × mix × warmth) / rgb, with the shader's warmth test on `rgb`. Scenery
+ *  in the ground's colours (the dunes, the bare hills, dry tufts, rocks) stays the field's colour under the moon. Into
+ *  `out` (a channel of `rgb` at 0 keeps factor 1). */
+export function groundNightScale(rgb: RGB, night: number, out: RGB): RGB {
+  const s = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
+  const warm = s(0, 0.08, rgb[0] - rgb[2]) * (1 - s(0, 0.08, rgb[1] - rgb[0]));
+  const l = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix * warm;
+  for (let i = 0; i < 3; i++) out[i] = rgb[i] > 0 ? (rgb[i] + (l - rgb[i]) * t) / rgb[i] : 1;
+  return out;
+}
+
+/** Moonlights `mesh` at night as the arena ground does warm earth (groundNightScale of `rgb`, linear, through its
+ *  material's colour, set before each draw from `night`: no program of its own). A cool colour (no warmth) is left as it
+ *  is, with no hook. The material is the mesh's own (a pooled kit material, its colour reset when it is handed out again). */
+export function moonlitAsGround(mesh: THREE.Object3D, material: THREE.MeshStandardMaterial, rgb: RGB, night: { value: number }): void {
+  const k: RGB = [1, 1, 1];
+  if (groundNightScale(rgb, 1, k).every((v) => v === 1)) return;
+  mesh.onBeforeRender = () => {
+    groundNightScale(rgb, night.value, k);
+    material.color.setRGB(k[0], k[1], k[2]);
+  };
+}
+
 /** A cloud's shadow darkens the ground at most this much (soft: arenaClouds' smooth cover, per vertex). */
 export const CLOUD_SHADOW = 0.15;
 

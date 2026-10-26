@@ -17,6 +17,12 @@ export const GROUND_Y = -0.28;
 /** The Modern water surface (Task 8). */
 export const WATER_Y = -0.06;
 
+/** The battle's sun (BattleView, both styles): its offset from the point the camera looks at — x swings by cos(day phase)
+ *  × `swing` about `x` through the day — and its shadow camera's half extent and depth range (orthographic, along the
+ *  sun). The arena's scenery reads them (parts/flora.ts: which trees cast). */
+export const SUN_OFFSET = { swing: 6, x: -4, y: 14, z: 10 } as const;
+export const SUN_SHADOW = { half: 14, near: 1, far: 80 } as const;
+
 /** A platform's half-extents on the ground (world units). */
 export interface Footprint { rx: number; rz: number }
 /** Today's platforms (BattleArena.setPlatforms: radius 2.1 / 1.9, depth scaled by 0.62). */

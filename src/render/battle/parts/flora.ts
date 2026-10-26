@@ -15,12 +15,17 @@ import { flowerGeometry, flowerMaterial } from '../../kit/flowers';
 import type { Quality } from '../../post';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { PLATFORM_FOOTPRINT, type Stage } from '../stage';
-import { groundHeight, POND, WORN_RING } from './ground';
-import { battleCamera, scatter, sightCap, stageKeepOut, insideEllipse, type Ellipse } from './scatter';
+import { PLATFORM_FOOTPRINT, SUN_OFFSET, SUN_SHADOW, type Stage } from '../stage';
+import { groundHeight, moonlitAsGround, POND, WORN_RING } from './ground';
+import { battleCamera, frameTop, scatter, sightCap, stageKeepOut, insideEllipse, SCENERY_SEED, type Ellipse } from './scatter';
 import { duneMounds, duneSurface, onDune } from './dunes';
 
-export interface ArenaTree { style: TreeStyle; variant: number; x: number; z: number; scale: number; yaw: number; shade: number }
+export interface ArenaTree {
+  style: TreeStyle; variant: number; x: number; z: number; scale: number; yaw: number; shade: number;
+  /** How much deeper than usual it stands in the ground (its trunk): far trees, so their crowns come down under the
+   *  frame's top edge (fitToFrame). */
+  sink?: number;
+}
 export interface ArenaClump { x: number; z: number; scale: number; yaw: number; shade: number }
 
 /** A kind's trees: how many, the annulus, their spacing and size, the style of each (u uniform in 0..1) and any extra
@@ -29,16 +34,21 @@ interface TreeRule {
   count: number; r: [number, number]; gap: number; scale: [number, number];
   style(u: number): TreeStyle;
   accept?(x: number, z: number, stage: Stage, seed: number): boolean;
+  /** The open kinds' trees stand in groves (where a broad noise field passes the threshold), close enough for their crowns
+   *  to merge, and show at most `trunk` (× scale) of their trunks: a wood's edge, not single trees on sticks. */
+  grove?: { salt: number; over: number; trunk: number };
 }
 const TREES: Partial<Record<ArenaKind, TreeRule>> = {
   grass: { count: 80, r: [11, 32], gap: 2.4, scale: [1.25, 1.7], style: (u) => (u < 0.6 ? 'round' : 'bushy') },
   longGrass: { count: 100, r: [10, 30], gap: 2.2, scale: [1.25, 1.7], style: (u) => (u < 0.6 ? 'bushy' : 'round') },
   // (the plain's trees stand in groves — a broad noise field — so their crowns still close into canopies)
-  plain: { count: 50, r: [13, 34], gap: 3, scale: [1.3, 1.8], style: () => 'round', accept: (x, z) => noise2(x * 0.09, z * 0.09, 0x9e0) > -0.15 },
+  // (the plain's and the pond's trees stand in groves — tuned from the plain's gap 3 and the pond's spread: their single
+  // trees read as lollipops over the open ground)
+  plain: { count: 50, r: [13, 34], gap: 2.2, scale: [1.3, 1.8], style: () => 'round', grove: { salt: 0x9e0, over: -0.15, trunk: 0.25 } },
   // (palms stand in the hollows between the dunes, not up on them: out of the camera's view there)
   sand: { count: 8, r: [12, 26], gap: 4, scale: [0.95, 1.2], style: () => 'palm',
     accept: (x, z, s, seed) => Math.abs(x - s.centre.x) >= 9 && !onDune(duneMounds(seed, s), x, z, 1.1) },
-  pond: { count: 60, r: [17, 34], gap: 2.4, scale: [1.25, 1.7], style: (u) => (u < 0.5 ? 'round' : 'bushy') },
+  pond: { count: 60, r: [17, 34], gap: 2.0, scale: [1.25, 1.7], style: (u) => (u < 0.5 ? 'round' : 'bushy'), grove: { salt: 0x90e, over: -0.2, trunk: 0.25 } },
 };
 
 /** Per-kind seed salts: each kind's scenery is its own (the same seed gives a grass and a long-grass arena other trees). */
@@ -57,16 +67,44 @@ export function treePlacements(kind: ArenaKind, stage: Stage, seed: number): Are
   const s = seed * 7919 + salt(kind);
   const pts = scatter(s, {
     centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: rule.count, minGap: rule.gap,
-    accept: (x, z) => ko.tallOk(x, z) && (!rule.accept || rule.accept(x, z, stage, seed)),
+    accept: (x, z) => ko.tallOk(x, z) && (!rule.accept || rule.accept(x, z, stage, seed))
+      && (!rule.grove || noise2(x * GROVE_FREQ, z * GROVE_FREQ, rule.grove.salt) > rule.grove.over),
   });
   const r = rng(s ^ 0x5eed);
-  return pts.map(({ x, z }) => {
+  const top = frameTop(stage);
+  const out: ArenaTree[] = [];
+  for (const { x, z } of pts) {
     const style = rule.style(r());
     const variant = style === 'round' || style === 'bushy' ? Math.floor(r() * TREE_VARIANTS) % TREE_VARIANTS : 0;
-    return { style, variant, x, z, scale: rule.scale[0] + (rule.scale[1] - rule.scale[0]) * r(), yaw: r() * Math.PI * 2,
+    const t: ArenaTree = { style, variant, x, z, scale: rule.scale[0] + (rule.scale[1] - rule.scale[0]) * r(), yaw: r() * Math.PI * 2,
       shade: 0.92 + 0.26 * r() };
-  });
+    if (fitToFrame(t, groundHeight(kind, x, z, stage), top(x, z), rule.grove?.trunk)) out.push(t);
+  }
+  return out;
 }
+
+/** A crown's low edge over its tree's foot, at scale 1 (the kit shapes' crown vertices' 10th percentile: round 0.74–0.9,
+ *  bushy 0.66–0.73; the palm's fronds start at its trunk's top, 2.0). */
+const CROWN_LOW: Readonly<Record<TreeStyle, number>> = { round: 0.9, bushy: 0.75, pine: 0.4, palm: 2.0 };
+/** This much of a crown at least shows under the frame's top edge. */
+const CROWN_SHOWN = 0.4;
+
+/** Fits a tree under the frame's top edge (`top`, world y, at its place: frameTop) standing on ground at `groundY`: where
+ *  its crown would show less than CROWN_SHOWN — the frame's top passing under it, its trunk bare below: a lollipop, a
+ *  stick — it sinks (`sink`) until enough shows, as far as its crown's low edge reaching the ground (its trunk buried: a
+ *  far crown on the ground, as the edge of a wood); further than that, it is dropped (false). A grove's tree (`trunk`)
+ *  sinks at least until no more than `trunk` × scale of its trunk shows. */
+function fitToFrame(t: ArenaTree, groundY: number, top: number, trunk?: number): boolean {
+  const k = t.scale * (t.style === 'palm' ? PALM.squat : 1), low = CROWN_LOW[t.style] * k;
+  // (a grove's trees: no more than `trunk` × scale of bare trunk under the crown)
+  let need = trunk === undefined ? 0 : low - trunk * t.scale;
+  if (top < Infinity) need = Math.max(need, groundY - SINK.tree * t.scale + low + CROWN_SHOWN - top);
+  if (need > low + 1e-9) return false;
+  if (need > 0) t.sink = need;
+  return true;
+}
+/** The groves' noise field's frequency (per unit): groves some 10 units across. */
+const GROVE_FREQ = 0.09;
 
 /** A kind's grass: clumps, annulus, spacing, size; long grass is taller near the stage (LONG_SCALE × 1.0–1.25 within
  *  r < 9, × 0.85–1.0 beyond). */
@@ -216,13 +254,17 @@ export function arenaTreeMaterial(style: TreeStyle, trunk: THREE.Color): KitMate
   return { ...treeMaterial(style, trunk), fade: false };
 }
 
-/** Trees this near the stage centre cast shadows: the sun's shadow camera (BattleView: ±14 units around the stage, seen
- *  along the sun) covers the ground to ≈ 19 units behind it; a tree further out casts no shadow the battle shows (0 px
- *  against every tree casting, grass / long grass / plain / pond / doubles, yaw ±0.9, dusk and night). */
-export const TREE_CAST_R = 26;
-
-/** The flora's seed (one arena per kind: always the same). */
-const FLORA_SEED = 1;
+/** The sun's lowest elevation in a battle (BattleView's sun: SUN_OFFSET at the end of its swing, x − swing): 44.7°. */
+const SUN_LOW = Math.atan2(SUN_OFFSET.y, Math.hypot(SUN_OFFSET.x - SUN_OFFSET.swing, SUN_OFFSET.z));
+/** The tallest arena tree's crown top and half width (the round crown, 2.25 × 1.3 units, at the largest scale 1.8). */
+const TREE_TOP = 2.25 * 1.8, TREE_HALF = 1.3 * 1.8;
+/** Trees this near the stage centre cast shadows. The sun's shadow camera (SUN_SHADOW: ±half, orthographic along the sun,
+ *  aimed at the point the battle camera looks at) covers the ground to half / sin(elevation) behind that point — 19.9
+ *  units at the sun's lowest, less higher up; a tree's shadow falls up to its height / tan(elevation) beyond its foot,
+ *  its crown half its width to the side: a tree further out (≈ 26.3) casts no shadow the battle shows (0 px at 26 against
+ *  every tree casting: grass, long grass, plain, pond, doubles, yaw ±0.9, dusk and night). If BattleView's sun or shadow
+ *  camera change, so does this. */
+export const TREE_CAST_R = SUN_SHADOW.half / Math.sin(SUN_LOW) + TREE_TOP / Math.tan(SUN_LOW) + TREE_HALF;
 
 export const FLORA_PART: ArenaPart = {
   name: 'flora',
@@ -240,7 +282,7 @@ export const FLORA_PART: ArenaPart = {
     const { kind, stage, palette } = ctx;
     const group = new THREE.Group();
     // (on sand, over the dunes where they rise)
-    const dunes = kind === 'sand' ? duneMounds(FLORA_SEED, stage) : null;
+    const dunes = kind === 'sand' ? duneMounds(SCENERY_SEED, stage) : null;
     const ground = (x: number, z: number) => {
       const y = groundHeight(kind, x, z, stage);
       return dunes ? Math.max(y, duneSurface(dunes, stage, x, z)) : y;
@@ -250,7 +292,9 @@ export const FLORA_PART: ArenaPart = {
     const camera = battleCamera(stage, 0);
 
     // trees, one draw per (style, variant), one material per style, nearest first
-    const trees = byCameraDistance(treePlacements(kind, stage, FLORA_SEED), camera);
+    // (at Low quality only the trees the settled camera frames at yaw 0: what the idle battle shows)
+    const idle = ctx.quality === 'low' ? frameTop(stage, [0]) : null;
+    const trees = byCameraDistance(treePlacements(kind, stage, SCENERY_SEED).filter((t) => !idle || idle(t.x, t.z) < Infinity), camera);
     const leaf = toLinear(palette.leaf), trunk = toLinear(palette.trunk);
     // (only the trees near enough for their shadows to reach the ground the shadow map covers cast: the rest would only
     // add their shadow-pass draws)
@@ -273,7 +317,7 @@ export const FLORA_PART: ArenaPart = {
         const jitter = rng(hashCell(Math.round(t.x * 64), Math.round(t.z * 64), 0x7ee5));
         _q.setFromAxisAngle(_up, t.yaw);
         const k = t.scale, palm = style === 'palm', ky = palm ? PALM.squat : 1, kxz = palm ? PALM.wide : 1;
-        _m.compose(_p.set(t.x, ground(t.x, t.z) - SINK.tree * k, t.z), _q,
+        _m.compose(_p.set(t.x, ground(t.x, t.z) - SINK.tree * k - (t.sink ?? 0), t.z), _q,
           _s.set(k * kxz * (0.94 + 0.12 * jitter()), k * ky * (0.92 + 0.16 * jitter()), k * kxz * (0.94 + 0.12 * jitter())));
         mesh.setMatrixAt(i, _m);
         // (as the tree family: the leaf colour × the tree's shade, a little warmer or cooler)
@@ -290,7 +334,7 @@ export const FLORA_PART: ArenaPart = {
 
     // grass clumps: nearest the camera first (its blades hide the ones behind them before they are shaded), in distance
     // bands of one clump shape each — one draw per band, three sorts them near to far — the farthest with fewer blades
-    const clumps = byCameraDistance(grassPlacements(kind, stage, FLORA_SEED, ctx.quality), camera);
+    const clumps = byCameraDistance(grassPlacements(kind, stage, SCENERY_SEED, ctx.quality), camera);
     if (clumps.length) {
       const km = kitMaterial(ctx.uniforms, GRASS_MATERIAL);
       const blade = toLinear(kind === 'sand' ? mix(palette.blade, DRY.straw, DRY.mix) : palette.blade);
@@ -310,6 +354,8 @@ export const FLORA_PART: ArenaPart = {
           inst.setColorAt(i, _c.setRGB(blade[0] * c.shade, blade[1] * c.shade, blade[2] * c.shade));
         });
         inst.name = `grass:${v}`;
+        // (dry tufts moonlit at night as the sand they stand in; green blades as they are)
+        moonlitAsGround(inst, km.material, blade, ctx.uniforms.uNight);
         inst.castShadow = false;
         inst.receiveShadow = true;
         inst.computeBoundingSphere();
@@ -318,7 +364,7 @@ export const FLORA_PART: ArenaPart = {
     }
 
     // flowers: one draw, petals per instance
-    const flowers = flowerPlacements(kind, stage, FLORA_SEED);
+    const flowers = flowerPlacements(kind, stage, SCENERY_SEED);
     if (flowers.length) {
       const centre = toLinear(FLOWER_CENTRE), stem = toLinear(palette.blade);
       const km = kitMaterial(ctx.uniforms, flowerMaterial(new THREE.Color(...centre), new THREE.Color(...stem)));

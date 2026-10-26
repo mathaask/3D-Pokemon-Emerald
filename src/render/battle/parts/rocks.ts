@@ -12,8 +12,8 @@ import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import type { Stage } from '../stage';
-import { groundHeight } from './ground';
-import { scatter, stageKeepOut } from './scatter';
+import { groundHeight, moonlitAsGround } from './ground';
+import { SCENERY_SEED, scatter, stageKeepOut } from './scatter';
 import { duneMounds, duneSurface } from './dunes';
 import { arenaClear, treePlacements } from './flora';
 
@@ -119,12 +119,12 @@ export const ROCKS_PART: ArenaPart = {
     return [{ material: CLIFF_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: true }];
   },
   build(ctx) {
-    const rocks = rockPlacements(ctx.kind, ctx.stage, 1);
+    const rocks = rockPlacements(ctx.kind, ctx.stage, SCENERY_SEED);
     if (!rocks.length) return null;
     const rule = ROCKS[ctx.kind]!;
     // (moss a light leaf green: between the leaves' and the blades')
     const moss = rule.moss ? mix(ctx.palette.leaf, ctx.palette.blade, 0.5) : undefined;
-    const dunes = ctx.kind === 'sand' ? duneMounds(1, ctx.stage) : null;
+    const dunes = ctx.kind === 'sand' ? duneMounds(SCENERY_SEED, ctx.stage) : null;
     const parts = rocks.map((k) => {
       const ground = groundHeight(ctx.kind, k.x, k.z, ctx.stage);
       const y = dunes ? Math.max(ground, duneSurface(dunes, ctx.stage, k.x, k.z)) : ground;
@@ -133,9 +133,12 @@ export const ROCKS_PART: ArenaPart = {
     const g = mergeGeometries(parts)!;
     for (const x of parts) x.dispose();
     g.computeBoundingSphere();
-    const mesh = new THREE.Mesh(g, kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material);
+    const material = kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material;
+    const mesh = new THREE.Mesh(g, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    // (warm stone moonlit at night as the field around it)
+    moonlitAsGround(mesh, material, toLinear(ctx.palette.rock), ctx.uniforms.uNight);
     return mesh;
   },
 };

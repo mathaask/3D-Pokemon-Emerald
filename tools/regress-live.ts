@@ -283,6 +283,9 @@ const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/const
   { name: 'b_longgrass', q: 'battle=longGrass&player=277&enemy=286' },  // Treecko vs Poochyena
   { name: 'b_plain', q: 'battle=plain&player=280&enemy=288' },
   { name: 'b_sand', q: 'battle=sand&player=283&enemy=332' },            // Mudkip vs Trapinch
+  // (Task 7 fix round: the desert at night — dunes, hills, tufts and rocks moonlit as the sand field; its p3-base reference
+  // was captured from the base code, Task 4's 1e30bd6, which renders p3-base exactly)
+  { name: 'b_sand_night', q: 'battle=sand&player=283&enemy=332&hour=21' },
   { name: 'b_water', q: 'battle=water&player=283&enemy=72' },           // vs Tentacool
   { name: 'b_water_night', q: 'battle=water&player=283&enemy=309&hour=21' }, // vs Wingull
   { name: 'b_pond', q: 'battle=pond&player=277&enemy=311' },            // vs Surskit
