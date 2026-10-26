@@ -44,7 +44,10 @@ export const FLOOR_COURT: Readonly<Partial<Record<ArenaKind, number>>> = { gym: 
 /** A court's colour (sRGB): the floor turned 0.55 towards the arena's accent, × `shade` (the GBA's tan band). */
 export const courtColor = (p: ArenaPalette, shade: number): RGB => mix(p.ground, p.accent, 0.55).map((v) => v * shade) as RGB;
 
-// The battle's two platforms (world x, z, footprint rx, rz): the 'stage' tops' rings.
+// The battle's two platforms (world x, z, footprint rx, rz): the 'stage' tops' rings. Baked from STAGE into the program
+// (as ground.ts's and platforms.ts's ripple constants), while the court's rectangle comes from the build's stage
+// (hallFloorMaterial's `court.stage`): the two agree because every arena builds on STAGE (ModernArena's ctx.stage) — a
+// build on another stage would need these constants from it.
 const FLOOR_HEAD = /* glsl */ `
 uniform vec4 uFloor;      // style (0 boards, 1 tiles, 2 stage), size, seam darkness, tone spread
 uniform vec3 uFloorAlt;   // tiles: the alternate tiles' factor; stage: the rim inlay's

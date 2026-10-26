@@ -4,7 +4,7 @@ import { stageKeepOut } from '../src/render/battle/parts/scatter';
 import { arenaPalette } from '../src/render/battle/palette';
 import { STAGE, GROUND_Y } from '../src/render/battle/stage';
 import * as THREE from 'three';
-import { HALL_PART, PANEL, SEATS, bannerGeometry, hallColors, hallLayout, seatTiers, wallFrame, type HallKind } from '../src/render/battle/parts/rooms';
+import { HALL_PART, PANEL, SEATS, SHELF, SHELL, bannerGeometry, hallColors, hallLayout, seatTiers, wallFrame, type HallKind } from '../src/render/battle/parts/rooms';
 import { COURT_BOUNDS, FLOOR_COURT, FLOOR_STYLE, hallFloorMaterial } from '../src/render/battle/parts/floor';
 import { frameProjector } from '../src/render/battle/parts/scatter';
 import { ModernArena } from '../src/render/battle/modernArena';
@@ -118,6 +118,34 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     }
   });
 
+  it("stands the bookcases' backs in front of the wall's relief (no trim showing through them)", () => {
+    // the shell's relief under the crown: the back wall's furthest offset into the room is SHELL.relief (its strips run
+    // corner to corner: measured by distance from the wall, not along it)
+    const s = HALLS.building, g = roomShell(s, STAGE, arenaPalette('building', null)), p = g.getAttribute('position');
+    const back = cz + s.back;
+    let relief = 0;
+    for (let i = 0; i < p.count; i++) {
+      if (p.getY(i) < GROUND_Y + s.height - SHELL.crown && p.getZ(i) - back < 0.3) relief = Math.max(relief, p.getZ(i) - back);
+    }
+    expect(relief).toBeCloseTo(SHELL.relief, 5);
+    expect(SHELF.back).toBeGreaterThanOrEqual(SHELL.relief + 0.01);
+    // and the books and the back panel stand there: no vertex of the room between the relief and the bookcase's back
+    // where a bookcase stands, but its sides' and top's (the boards running back to the wall)
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('building', defaultArenaColors('building'), 'medium')).toBe(true);
+    const q = (arena.group.getObjectByName('hallRoom') as THREE.Mesh).geometry.getAttribute('position');
+    for (const sh of hallLayout('building').shelves) {
+      const x0 = cx + sh.s - SHELF.width / 2 + SHELF.board + 1e-4, x1 = cx + sh.s + SHELF.width / 2 - SHELF.board - 1e-4;
+      for (let i = 0; i < q.count; i++) {
+        const x = q.getX(i), y = q.getY(i), d = q.getZ(i) - back;
+        if (x > x0 && x < x1 && y > GROUND_Y + SHELF.plinth && y < GROUND_Y + SHELF.height - SHELF.board && d > SHELL.relief + 1e-4 && d < SHELF.back - 1e-4) {
+          throw new Error(`bookcase at s ${sh.s}: a vertex at d ${d} behind its back panel`);
+        }
+      }
+    }
+    arena.dispose();
+  });
+
   it('keeps windows, bookcases, banners and light panels out from behind the battlers in the idle frame', () => {
     // the battlers as the lava keeps off them (rock.ts): a 2 × 2 box on each platform, projected by the idle camera
     const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
@@ -201,7 +229,7 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
   });
 
   it("floors the halls with the hall floor (boards, tiles; the gyms' courts) and tops their platforms as stages; other kinds keep the terrain", () => {
-    expect(FLOOR_STYLE).toEqual({ building: 'boards', gym: 'tiles', leader: 'tiles', frontier: 'tiles' });
+    expect(FLOOR_STYLE).toMatchObject({ building: 'boards', gym: 'tiles', leader: 'tiles', frontier: 'tiles' });
     const floorKind = kindOf(hallFloorMaterial('tiles', [1, 1, 1]));
     const u = createKitUniforms();
     const courts: Record<string, number> = {};

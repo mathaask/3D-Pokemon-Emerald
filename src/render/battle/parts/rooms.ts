@@ -129,8 +129,10 @@ export interface ShellColors { base: RGB; wainscot: RGB; panel: RGB; trim: RGB; 
  *  the floor — tuned from the brief's 1.8 to 1.15, inside the frame at every hall (the frame top stands 1.55–1.79 over
  *  the floor at the back wall, yaw 0): at 1.8 the idle camera would see a plain band of wainscot, never the rail nor the
  *  wall over it —; the crown `crown` deep under the top; raised panels `width` wide, `gap` apart, from `bottom` over the floor to
- *  `top` under the rail, standing `raise` off the wainscot with bevels `inset` wide. */
-export const SHELL = { thick: 0.4, base: 0.35, wainscot: 1.15, crown: 0.42,
+ *  `top` under the rail, standing `raise` off the wainscot with bevels `inset` wide. Under the crown, its relief stands at
+ *  most `relief` off the inner face (the baseboard's and the rail's faces; the panels 0.05): what stands against a wall
+ *  (a bookcase's back) keeps in front of that, or the trim shows through it. */
+export const SHELL = { thick: 0.4, base: 0.35, wainscot: 1.15, crown: 0.42, relief: 0.075,
   panel: { width: 1.5, gap: 0.4, bottom: 0.5, top: 0.16, raise: 0.03, inset: 0.035 } };
 
 /** The default shell colours of a palette: a darker baseboard (the accent darkened), a lighter wainscot (the wall a
@@ -145,7 +147,7 @@ export function shellColors(p: ArenaPalette): ShellColors {
  *  from the inner face, h over the floor) and each step's colour. */
 function shellProfile(H: number, W: number): { pts: [number, number][]; col: (keyof ShellColors | 'cap')[] } {
   return {
-    pts: [[0.075, -0.04], [0.075, 0.29], [0.035, SHELL.base], [0.02, SHELL.base], [0.02, W - 0.09], [0.075, W - 0.05], [0.075, W + 0.01],
+    pts: [[SHELL.relief, -0.04], [SHELL.relief, 0.29], [0.035, SHELL.base], [0.02, SHELL.base], [0.02, W - 0.09], [SHELL.relief, W - 0.05], [SHELL.relief, W + 0.01],
       [0.03, W + 0.06], [0, W + 0.06], [0, H - SHELL.crown], [0.06, H - SHELL.crown + 0.06], [0.06, H - 0.24], [0.16, H - 0.12], [0.16, H],
       [-SHELL.thick, H], [-SHELL.thick, -0.04]],
     col: ['base', 'base', 'base', 'wainscot', 'trim', 'trim', 'trim', 'trim', 'wall', 'trim', 'trim', 'trim', 'trim', 'cap', 'cap'],
@@ -464,34 +466,37 @@ function addWindow(body: Soup, glass: Soup, F: WallFrame, at: number, trim: RGB)
 }
 
 /** A bookcase against a wall: its carcass (sides, top, back, a plinth, three shelves) in `wood`, books of many colours,
- *  widths, heights and depths on its four shelves (seeded), a few gaps between them. */
-const SHELF = { width: 2.5, height: 2.5, depth: 0.5, board: 0.05, plinth: 0.14 };
+ *  widths, heights and depths on its four shelves (seeded), a few gaps between them. Its back panel, shelves, plinth and
+ *  books stand `back` off the wall — in front of the wall's relief (SHELL.relief: the rail and the baseboard, the raised
+ *  panels; at 0.035 the rail's white stripe crossed the middle shelf and panel edges showed between the books) — `depth`
+ *  its front; its sides and top run back to the wall (the relief ends inside them). */
+export const SHELF = { width: 2.5, height: 2.5, back: SHELL.relief + 0.015, depth: 0.58, board: 0.05, plinth: 0.14 };
 const BOOKS: RGB[] = [[0.78, 0.33, 0.28], [0.3, 0.47, 0.72], [0.38, 0.6, 0.42], [0.9, 0.76, 0.36], [0.62, 0.44, 0.3], [0.92, 0.9, 0.84],
   [0.55, 0.38, 0.62], [0.28, 0.62, 0.66]];
 function addShelf(body: Soup, F: WallFrame, at: number, wood: RGB, seed: number): void {
   const S = SHELF, x0 = at - S.width / 2, x1 = at + S.width / 2, o = F.o, w = lin(wood), inner = lin(scale(wood, 0.72));
   const box = (s0: number, s1: number, h0: number, h1: number, d0: number, d1: number, c: RGB) => body.box(o, F.u, F.w, s0, s1, h0, h1, d0, d1, c);
-  box(x0, x0 + S.board, 0, S.height, 0.03, S.depth, w);
-  box(x1 - S.board, x1, 0, S.height, 0.03, S.depth, w);
-  box(x0, x1, S.height - S.board, S.height, 0.03, S.depth, w);
-  box(x0 + S.board, x1 - S.board, 0, S.plinth, 0.05, S.depth - 0.02, scale(w, 0.85));
-  // the back panel (just off the wall)
-  body.quad(F.at(x0 + S.board, S.plinth, 0.035), F.at(x1 - S.board, S.plinth, 0.035), F.at(x1 - S.board, S.height - S.board, 0.035),
-    F.at(x0 + S.board, S.height - S.board, 0.035), F.w, inner);
+  box(x0, x0 + S.board, 0, S.height, 0.01, S.depth, w);
+  box(x1 - S.board, x1, 0, S.height, 0.01, S.depth, w);
+  box(x0, x1, S.height - S.board, S.height, 0.01, S.depth, w);
+  box(x0 + S.board, x1 - S.board, 0, S.plinth, S.back, S.depth - 0.02, scale(w, 0.85));
+  // the back panel (in front of the wall's relief)
+  body.quad(F.at(x0 + S.board, S.plinth, S.back), F.at(x1 - S.board, S.plinth, S.back), F.at(x1 - S.board, S.height - S.board, S.back),
+    F.at(x0 + S.board, S.height - S.board, S.back), F.w, inner);
   const shelfH = (S.height - S.plinth - S.board) / 4;
   const r = rng(seed * 7121 + 0x5be1);
   for (let i = 0; i < 4; i++) {
     const y = S.plinth + i * shelfH;
-    if (i > 0) box(x0 + S.board, x1 - S.board, y - S.board / 2, y + S.board / 2, 0.04, S.depth, w);
+    if (i > 0) box(x0 + S.board, x1 - S.board, y - S.board / 2, y + S.board / 2, S.back, S.depth, w);
     // books along the shelf, left to right
     let x = x0 + S.board + 0.03;
     while (x < x1 - S.board - 0.1) {
       const bw = 0.07 + 0.08 * r();
       if (r() < 0.08) { x += 0.15 + 0.2 * r(); continue; }
-      const bh = shelfH * (0.62 + 0.28 * r()), depth = S.depth * (0.62 + 0.25 * r());
+      const bh = shelfH * (0.62 + 0.28 * r()), depth = (S.depth - S.back) * (0.62 + 0.25 * r());
       const c = lin(scale(BOOKS[Math.floor(r() * BOOKS.length)], 0.9 + 0.15 * r()));
       if (x + bw > x1 - S.board - 0.02) break;
-      box(x, x + bw, y + S.board / 2, y + S.board / 2 + bh, 0.06, 0.06 + depth, c);
+      box(x, x + bw, y + S.board / 2, y + S.board / 2 + bh, S.back + 0.01, S.back + 0.01 + depth, c);
       x += bw + 0.008;
     }
   }
@@ -622,6 +627,11 @@ export const HALL_PART: ArenaPart = {
       const m = new THREE.Mesh(glow.geometry(), material);
       m.name = 'hallLights';
       const e = lin(colors.glow);
+      // Daytime glow for this draw only (PROP_GLOW's own glow is × uNight: none indoors). This works only because the
+      // mesh is its material's single user: three re-uploads a material's uniforms (emissive among them) only when the
+      // material changes between draws, and the kit pool's configure() never resets `emissive` — the reset after the
+      // draw keeps the pooled material black for the next user (PROP_GLOW shares its pool with BUILDING_GLASS: one
+      // program). Never put this hook on a material another mesh draws with; give that mesh its own kitMaterial().
       m.onBeforeRender = () => { material.emissive.setRGB(e[0] * PANEL_GLOW, e[1] * PANEL_GLOW, e[2] * PANEL_GLOW); };
       m.onAfterRender = () => { material.emissive.setRGB(0, 0, 0); };
       group.add(m);
