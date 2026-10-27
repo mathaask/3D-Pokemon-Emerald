@@ -15,7 +15,8 @@ import * as THREE from 'three';
 import { K, type MapAnalysis } from '../../../overworld/analyze';
 import { CLAIM_OBJECT, CLAIM_SURFACE, type Claims } from '../../../overworld/claims';
 import type { KitMaterialOptions } from '../../materials';
-import type { RGB } from '../../palette';
+import { mix, type RGB } from '../../palette';
+import type { TileInfo } from '../../../overworld/tileInfo';
 import { TERRAIN_CELL_GLSL, TERRAIN_GRID_GLSL } from '../../terrain';
 import { FLOOR_KINDS, type FloorKind, type InteriorId } from '../../tables/building';
 import { floorLook } from '../colors';
@@ -79,18 +80,47 @@ export function roomFloorHeights(a: MapAnalysis, L: RoomLayout): Float32Array {
   return out;
 }
 
-const NEIGHBOURS8 = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const;
+/** A floor's tint (sRGB) from its metatile: the bottom layer's main colour (`floorLook`) a third of the way towards the
+ *  tile's mean (the GBA's floor reads as its colour and its drawn lines together: a board tile's yellow with its brown
+ *  seams), its HSL saturation above FLOOR_SAT_KNEE compressed by FLOOR_SAT_SLOPE (the Modern post grade boosts saturation
+ *  again, as `lush` knows; a soft knee, not a cap, so a vivid orange stays orange next to a tamed yellow board). */
+export const FLOOR_MEAN_MIX = 0.35, FLOOR_SAT_KNEE = 0.35, FLOOR_SAT_SLOPE = 0.45;
+const _hsl = { h: 0, s: 0, l: 0 }, _c = new THREE.Color();
+export function floorTint(info: TileInfo, m: number): RGB {
+  const main = floorLook(info, m).tint;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let p = m * 256, end = p + 256; p < end; p++) {
+    const v = info.bottom[p];
+    if (v & 0x8000) continue;
+    r += (v & 31) / 31; g += ((v >> 5) & 31) / 31; b += ((v >> 10) & 31) / 31; n++;
+  }
+  const c = n ? mix(main, [r / n, g / n, b / n], FLOOR_MEAN_MIX) : main;
+  _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
+  if (_hsl.s <= FLOOR_SAT_KNEE) return c;
+  _c.setHSL(_hsl.h, FLOOR_SAT_KNEE + (_hsl.s - FLOOR_SAT_KNEE) * FLOOR_SAT_SLOPE, _hsl.l, THREE.SRGBColorSpace);
+  const out = { r: 0, g: 0, b: 0 };
+  _c.getRGB(out, THREE.SRGBColorSpace);
+  return [out.r, out.g, out.b];
+}
+
+/** The 8-neighbourhood, with its vote weights (the sides count twice: a chair on a rug's edge has as many board cells
+ *  as rug cells around it, but the rug on two sides). */
+const NEIGHBOURS8 = [[-1, -1, 1], [0, -1, 2], [1, -1, 1], [-1, 0, 2], [1, 0, 2], [-1, 1, 1], [0, 1, 2], [1, 1, 1]] as const;
 const SIDES = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;   // N, E, S, W: edge bits 0..3
+/** How far a cell under furniture looks along its row / column for the floor on both sides of it. */
+const BETWEEN_MAX = 6;
 
 /** Inside + claimed-object + band cells of the rooms. A walkable cell takes its own id's kind (unknown floor ids and
- *  `legacy` stay legacy); a cell under furniture, wall or stairsUp takes the kind and tint most common among the walkable
- *  floor cells of its 8-neighbourhood, else the room's floorTile. A `stairsDown` cell gets no floor (the stairwell's
- *  hole: Task 10's generator draws it).
+ *  `legacy` stay legacy); a cell under furniture, wall or stairsUp takes the kind and tint of the floor on both sides of
+ *  it along its row or column (across other such cells, up to BETWEEN_MAX; a rug's kind before the room's), else the
+ *  most common among the walkable floor cells of its 8-neighbourhood (sides weigh 2, corners 1), else the room's
+ *  floorTile. A `stairsDown` cell gets
+ *  no floor (the stairwell's hole: Task 10's generator draws it).
  *
  *  Also: a metatile-0x3FF block (`real3ff`, Sootopolis; its id null, its kind Void) is floor under the neighbourhood
  *  rule; a blocked cell with a floor id keeps its own kind; a blocked unknown cell (null / `legacy`) in the room that no
  *  family claimed stays legacy; a cell another family claimed CLAIM_SURFACE gets none. Tints: a 4-connected area of one
- *  kind takes its most common metatile tint (`floorLook`), so a rug's border metatiles and a floor's shadow variants do
+ *  kind takes its most common metatile tint (`floorTint`), so a rug's border metatiles and a floor's shadow variants do
  *  not read as patches. Heights: flat per room (`roomFloorHeights`). */
 export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], L: RoomLayout, claims: Claims): FloorCell[] {
   const N = a.N;
@@ -100,7 +130,7 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   const looks = new Map<number, RGB>();
   const lookOf = (m: number) => {
     let t = looks.get(m);
-    if (!t) looks.set(m, t = floorLook(a.info, m).tint);
+    if (!t) looks.set(m, t = floorTint(a.info, m));
     return t;
   };
   const candidate = (i: number) => (L.inside[i] === 1 || L.band[i] === 1 || claims.has(i, CLAIM_OBJECT))
@@ -149,22 +179,44 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   const roomTint = L.floorTile >= 0 ? lookOf(L.floorTile) : NO_FLOOR;
 
   // the rest: under furniture, wall, stairs, 0x3FF blocks
+  const pend = new Uint8Array(N);
   for (let i = 0; i < N; i++) {
     if (kind[i] >= 0 || !candidate(i)) continue;
     const id = ids[i];
     const unknown = a.kind[i] !== K.Void && (id == null || id === 'legacy');
-    if (unknown && (walkable(a, i) || (!claims.has(i, CLAIM_OBJECT) && !L.band[i]))) continue;   // legacy
+    if (!(unknown && (walkable(a, i) || (!claims.has(i, CLAIM_OBJECT) && !L.band[i])))) pend[i] = 1;   // else legacy
+  }
+  /** The own floor cell first met from (x, y) towards (dx, dy) across pending cells (at most BETWEEN_MAX), or −1. */
+  const reach = (x: number, y: number, dx: number, dy: number) => {
+    for (let k = 1; k <= BETWEEN_MAX; k++) {
+      if (!a.inside(x + k * dx, y + k * dy)) return -1;
+      const j = a.idx(x + k * dx, y + k * dy);
+      if (own[j]) return j;
+      if (!pend[j]) return -1;
+    }
+    return -1;
+  };
+  for (let i = 0; i < N; i++) {
+    if (!pend[i]) continue;
     const x = a.cellX(i), y = a.cellY(i);
+    // furniture standing on a rug's edge row (Brendan's table and chairs on the rug's top row): between two cells of one
+    // kind, along a row or a column, it stands on that kind
+    let between = -1;
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      const p = reach(x, y, dx, dy), q = reach(x, y, -dx, -dy);
+      if (p >= 0 && q >= 0 && kind[p] === kind[q]) { between = kind[p] !== roomKind || between < 0 ? p : between; }
+    }
+    if (between >= 0) { kind[i] = kind[between]; tint[i] = tint[between]; continue; }
     const votes = new Map<string, { n: number; mat: FloorMat; tint: RGB }>();
     let best: { n: number; mat: FloorMat; tint: RGB } | null = null;
-    for (const [dx, dy] of NEIGHBOURS8) {
+    for (const [dx, dy, wt] of NEIGHBOURS8) {
       if (!a.inside(x + dx, y + dy)) continue;
       const j = a.idx(x + dx, y + dy);
       if (!own[j]) continue;
       const key = `${kind[j]}:${tint[j]!.join(',')}`;
       let v = votes.get(key);
       if (!v) votes.set(key, v = { n: 0, mat: kind[j] as FloorMat, tint: tint[j]! });
-      v.n++;
+      v.n += wt;
       if (!best || v.n > best.n) best = v;
     }
     kind[i] = best ? best.mat : roomKind;

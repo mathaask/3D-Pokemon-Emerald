@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  encodeFloor, floorCells, floorGeometry, FloorMat, interiorFloorMaterial, roomShaftMaterial, shaftGeometry, SHAFT_SLANT,
+  encodeFloor, floorCells, floorGeometry, FloorMat, floorTint, FLOOR_SAT_KNEE, FLOOR_SAT_SLOPE, interiorFloorMaterial, roomShaftMaterial,
+  shaftGeometry, SHAFT_SLANT,
 } from '../src/render/kit/interior/geom/floorPatterns';
 import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
 import { BOARDS_GLSL, TILES_GLSL } from '../src/render/kit/interior/floorGlsl';
@@ -76,6 +77,32 @@ describe('interior floor cells', () => {
     const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y))!;
     expect(at(3, 3).tint).toEqual(at(2, 3).tint);
     expect(at(3, 3).tint[0]).toBeGreaterThan(at(3, 3).tint[2]);      // the area's most common: red
+  });
+
+  it('gives furniture on a rug edge row the rug (between rug cells), and votes elsewhere with sides weighing twice', () => {
+    // Brendan's 1F: the table and chairs stand on the rug's top rows; the north neighbours are boards
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' ........ ', ' .rcTTcr. ', ' .rcTTcr. ', ' .rrrrrr. ', ' ......c. ', ' ........ ', '          '],
+      { c: { mt: 0x208, blocked: true, id: 'chair' } });
+    const c = new Claims(a.N);
+    ids.forEach((id, i) => { if (id === 'table' || id === 'chair') c.claim(i, CLAIM_OBJECT); });
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), c);
+    const at = (x: number, y: number) => cells.find((q) => q.i === a.idx(x, y))!;
+    for (const [x, y] of [[3, 3], [4, 3], [5, 3], [6, 3], [6, 4]]) expect(at(x, y).mat, `${x},${y}`).toBe(FloorMat.Rug);
+    expect(at(7, 6).mat).toBe(FloorMat.Boards);    // the lone chair below the rug's corner: between boards along its row; N + NW rug (3) vs boards 9
+  });
+
+  it('softens a floor tint towards the tile mean and compresses its saturation', () => {
+    const { a } = fakeInterior(['    ', ' .. ', '    ']);
+    a.info.bottom.fill(0x03ff, 0x205 * 256, 0x205 * 256 + 200);     // saturated yellow …
+    a.info.bottom.fill(0x0010, 0x205 * 256 + 200, 0x206 * 256);     // … with dark red lines
+    const t = floorTint(a.info, 0x205);
+    const hsl = { h: 0, s: 0, l: 0 };
+    new THREE.Color().setRGB(t[0], t[1], t[2], THREE.SRGBColorSpace).getHSL(hsl, THREE.SRGBColorSpace);
+    expect(hsl.s).toBeGreaterThan(FLOOR_SAT_KNEE); expect(hsl.s).toBeLessThanOrEqual(FLOOR_SAT_KNEE + (1 - FLOOR_SAT_KNEE) * FLOOR_SAT_SLOPE + 1e-6);
+    expect(hsl.h).toBeGreaterThan(0.1); expect(hsl.h).toBeLessThan(0.18);   // still yellow
+    a.info.bottom.fill(0x4210, 0x205 * 256, 0x206 * 256);           // a grey tile stays grey
+    const g = floorTint(a.info, 0x205);
+    expect(Math.max(...g) - Math.min(...g)).toBeLessThan(0.05);
   });
 
   it('packs kind and edges in the alpha byte', () => {
