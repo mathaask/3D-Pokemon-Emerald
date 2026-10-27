@@ -405,9 +405,9 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
   (7a4ab85) — all five tables 100 % labelled, 186 pins, legacy ≤ 0.8 % (GenericBuilding)
 - [x] 5 room layout + colours (cb9a42e, fix 8dcb26e: dividing walls → partition runs on 8 maps, 5 invariants, 15 pinned layouts; 0 findings on 138 maps)
 - [x] 6 integration (f197318: families on in-scope maps, cutaway, clock-driven room light — night room 0.61× day, actors 0.94–0.97×; review approved)
-- [ ] 7 shell (eaa7684) · [ ] 8 floors + shafts (11fda55) · [ ] 9 furniture I (0d23314) · [ ] 10 furniture II (36b107c, 0e1142a) — implemented (phase A + B), in review; alcove cutaway follow-up 31e9d86; join f5558cb (furniture catalogue)
-- [ ] 11 legacy HD (d1d6159, in review) · [ ] 12 smoke/coverage/live · [ ] 13 perf/docs
-- Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles.
+- [x] 7 shell (ac2c011, eaa7684) · [x] 8 floors + shafts (466ec2b, 11fda55) · [x] 9 furniture I (0e2940c, 0d23314) · [ ] 10 furniture II (36b107c, 0e1142a; fix round: navy outlines, nurse/clerks visible from the chest up) — alcove cutaway follow-up 31e9d86 + e39299b; join f5558cb (furniture catalogue)
+- [x] 11 legacy HD (d1d6159) · [ ] 12 smoke/coverage/live (running) · [ ] 13 perf/docs
+- Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles. Group C gate (`tC-gate`): Retro and everything out of scope 0.00 %; only in-scope Modern interiors change; night rooms 0.61–0.63× day, actors 0.93–0.97×; door walks 1 build, 0 compiles.
 - Rulings so far: walkable furniture = low seats (≤ 0.45); chairs/plants one per cell; flat indoor floors; dividing
   walls = half-height partitions (Task 7); battles in rooms don't follow the clock (F38); Dept Store rooftop → Task 12.
   Full ledger: `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md` (copied to the repo at merge).
