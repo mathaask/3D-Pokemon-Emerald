@@ -9,8 +9,11 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   `main`; results, numbers and known gaps in the progress log; full rulings in `phase1-sdd-ledger.md` /
   `phase2-sdd-ledger.md` / `phase3-sdd-ledger.md`).
 - **Hitch fix done** (boot-time program catalogue, one build per map load).
-- **Next (not started; ask the user):** terrain height solver v2 (mountain ridges), Phase 4 (interiors, spec §8), or a
-  battle look-polish pass (Phase 3 known gaps). Write the plan first (`docs/superpowers/plans/`), then execute
+- **In progress (2026-10-27):** branch `battle-feet` — user report "battlers sink into the platforms, lower body
+  hidden (big Pokémon worst)"; fix = slide each battler card along its view ray onto the platform top (report
+  `.superpowers/sdd/battle-feet-report.md`). Then **Phase 4 (interiors, spec §8)** — user said "go on"; plan draft
+  `docs/superpowers/plans/2026-10-27-phase4-interiors.md` (needs user approval before execution).
+- Later: terrain height solver v2 (mountain ridges), a battle look-polish pass (Phase 3 known gaps). Write the plan first (`docs/superpowers/plans/`), then execute
   subagent-driven (only `opus` subagents work here; the user wants parallel agents where files don't overlap). Show
   the user a phase progress bar in every update (they write Norwegian; reply in Norwegian). Merge + push to `origin`
   (private account) without asking.

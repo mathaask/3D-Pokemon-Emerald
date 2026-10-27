@@ -105,6 +105,8 @@ export class BattleView {
   private sampled: SampledColors | null = null;
   private lastSample = -1;
   private charLight = new THREE.Color(1, 1, 1);
+  /** OBJ VRAM and its tile mapping for BattleActors.update (`tiles`: the battlers' feet; reused, no allocation). */
+  private tiles = { vram: new Uint8Array(0), map2d: false };
   private cameraRight = new THREE.Vector3(1, 0, 0);
   /** User orbit offsets (from mouse/keys). */
   yaw = 0;
@@ -591,8 +593,12 @@ export class BattleView {
     this.sky.mesh.position.copy(this.camera.position);
     this.battleSky.mesh.position.copy(this.camera.position);
 
+    // (OBJ VRAM and its tile mapping, DISPCNT bit 6: where the opponents' feet are found)
+    const bus = state.mem.bus;
+    this.tiles.vram = bus.vram;
+    this.tiles.map2d = (bus.io16[0] & 0x40) === 0;
     this.actors.update(state.sprites, this.style, this.cameraRight, this.camera.position, this.charLight, hudSprites,
-      state.battlerCopies);
+      state.battlerCopies, this.tiles);
   }
 
   /**
