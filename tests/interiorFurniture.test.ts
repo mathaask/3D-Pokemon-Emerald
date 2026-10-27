@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { lin } from '../src/render/kit/soup';
 import {
-  fitFurniture, isLow, furnitureFamilyWith, FURNITURE_SPEC, WALL_BACK, WALKABLE_SEAT, FURNITURE_LOW, FURNITURE_TALL,
+  componentRects, fitFurniture, isLow, furnitureFamilyWith, FURNITURE_SPEC, WALL_BACK, WALKABLE_SEAT, FURNITURE_LOW, FURNITURE_TALL,
   FURNITURE_GLOW_LOW, type FurniturePiece, type FurnitureOut,
 } from '../src/render/kit/interior/furniture';
 import { RECESS, roomLayout } from '../src/render/kit/interior/room';
@@ -93,6 +93,20 @@ describe('furniture family', () => {
   it('keeps a blocked chair at its real height', () => {
     const { pieces } = extract(['        ', ' WWWWWW ', ' ...... ', ' .cTT.. ', ' ...... ', '        '], { chair: stub });
     expect(pieces[0].foot.height).toBe(FURNITURE_SPEC.chair.height);
+  });
+  // review C M1: a 2×2 bookcase and the small shelf beside it (or a cabinet and a drawer unit) are one
+  // component of one kind, but two objects on the GBA
+  it('splits an L of shelves into its rectangles, keeps a rectangle and an L of tables whole', () => {
+    const L = (rows: string[]) => extract(rows, { bookshelf: stub, table: stub }).pieces.map((p) => p.xy.map(([x, y]) => `${x},${y}`).join(' '));
+    expect(L(['        ', ' WBBWWW ', ' WBBBWW ', ' ...... ', ' ...... ', '        '])).toEqual(['2,1 3,1 2,2 3,2', '4,2']);
+    expect(L(['        ', ' WBBBWW ', ' WBBBWW ', ' ...... ', ' ...... ', '        '])).toEqual(['2,1 3,1 4,1 2,2 3,2 4,2']);
+    expect(L(['        ', ' WWWWWW ', ' ...... ', ' .TT... ', ' .TTT.. ', ' ...... ', '        '])).toHaveLength(1);
+  });
+  it('takes the largest rectangle first, then the southernmost, the westernmost', () => {
+    expect(componentRects([[0, 0], [1, 0], [0, 1], [1, 1], [2, 1]])).toEqual([[0, 1, 2, 3], [4]]);
+    expect(componentRects([[0, 0], [0, 1], [1, 1]])).toEqual([[1, 2], [0]]);     // two 2-cell rectangles: the south row
+    expect(componentRects([[0, 0], [1, 0], [2, 0], [1, 1]])).toEqual([[0, 1, 2], [3]]);
+    expect(componentRects([[5, 5]])).toEqual([[0]]);
   });
   it('splits plants one per column, the walkable leaves north of a pot joining it', () => {
     const { pieces } = extract(

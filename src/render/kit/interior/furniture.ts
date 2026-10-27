@@ -5,8 +5,9 @@
 // with them is composed in index.ts (no import cycle).
 //
 // Pieces: the 4-connected cells of one furniture kind (a component; any other id, unknown included, cuts it), split per
-// the kind's FURNITURE_SPLIT: one piece per component (tables, counters, shelves, beds, machines: furniture that spans
-// cells), one per cell (chairs, crates, vases, trash cans: stacked ones never merge into one long piece), or one per
+// the kind's FURNITURE_SPLIT: one piece per component (tables and counters, whose builders follow an L; beds, machines,
+// stairs, PCs), one per rectangle (shelves, cabinets, TVs, kitchen units: a bookcase and the small shelf beside it stay
+// two), one per cell (chairs, crates, vases, trash cans: stacked ones never merge into one long piece), or one per
 // column object (plants: a pot with the walkable leaves drawn north of it, side-by-side planters apart). What stands
 // on cells the game lets the player walk over is low (at most WALKABLE_SEAT), so it never clips the player: each walkable
 // cell's own footprint (cellFeet: a stool, a bed's head, a plant's leaves), and a whole piece on walkable cells but stairs.
@@ -48,13 +49,16 @@ export const FURNITURE_SPEC: Readonly<Record<FurnitureKind, FurnitureSpec>> = {
 export const isLow = (k: FurnitureKind) => FURNITURE_SPEC[k].height <= 1.2;
 
 /** How a component of one kind becomes pieces: `component` one piece (furniture spanning cells: tables and counters
- *  may merge, as may shelves, beds, cabinets, machines), `cell` one piece per cell (single items: stacked chairs or
- *  crates never merge), `column` one piece per column object (a plant: its pot and the walkable leaves drawn north of
- *  it; a walkable cell after a blocked one starts the next plant). */
-export type FurnitureSplit = 'component' | 'cell' | 'column';
+ *  may merge, an L included, as may beds and machines), `rects` one piece per rectangle (`componentRects`: a
+ *  rectangular component stays one piece; an L — a 2×2 bookcase and the small picture-book shelf beside it, a cabinet
+ *  and a drawer unit — keeps its objects apart, review C M1; a PC stays whole: Brendan's monitor rises over its desk),
+ *  `cell` one piece per cell (single items: stacked chairs or crates never merge), `column` one piece per column object
+ *  (a plant: its pot and the walkable leaves drawn north of it; a walkable cell after a blocked one starts the next
+ *  plant). */
+export type FurnitureSplit = 'component' | 'rects' | 'cell' | 'column';
 export const FURNITURE_SPLIT: Readonly<Record<FurnitureKind, FurnitureSplit>> = {
-  bed: 'component', table: 'component', chair: 'cell', tv: 'component', pc: 'component', bookshelf: 'component',
-  plant: 'column', fridge: 'component', sink: 'component', cabinet: 'component', crate: 'cell', trashCan: 'cell',
+  bed: 'component', table: 'component', chair: 'cell', tv: 'rects', pc: 'component', bookshelf: 'rects',
+  plant: 'column', fridge: 'rects', sink: 'rects', cabinet: 'rects', crate: 'cell', trashCan: 'cell',
   vase: 'cell', counter: 'component', healer: 'component', pcCounter: 'component', martShelf: 'component',
   stairsUp: 'component', stairsDown: 'component',
 };
@@ -141,10 +145,43 @@ function wallZOf(L: RoomLayout, x0: number, x1: number, y0: number, z1: number, 
   return best === -Infinity ? best : best + WALL_BACK;
 }
 
+/** A component's cells (grid x, y) as rectangles: the largest rectangle of cells first (ties: the southernmost, then the
+ *  westernmost, then the widest), then the rest likewise. Each rectangle's cells in the order given. */
+export function componentRects(xy: readonly (readonly [number, number])[]): number[][] {
+  const left = new Map<string, number>();
+  xy.forEach(([x, y], k) => left.set(`${x},${y}`, k));
+  const has = (x: number, y: number) => left.has(`${x},${y}`);
+  const out: number[][] = [];
+  while (left.size) {
+    let best: { x0: number; y0: number; x1: number; y1: number; area: number } | null = null;
+    for (const k of left.values()) {
+      const [x0, y0] = xy[k];
+      // every rectangle with its north-west corner here: per width, as deep as every column of it reaches
+      let depth = Infinity;
+      for (let x1 = x0; has(x1, y0); x1++) {
+        let d = 0;
+        while (d < depth && has(x1, y0 + d)) d++;
+        depth = d;
+        const area = (x1 - x0 + 1) * depth, y1 = y0 + depth - 1;
+        if (!best || area > best.area || (area === best.area && (y1 > best.y1 || (y1 === best.y1 && (x0 < best.x0
+          || (x0 === best.x0 && x1 > best.x1)))))) best = { x0, y0, x1, y1, area };
+      }
+    }
+    const b = best!, rect: number[] = [];
+    for (const [key, k] of left) {
+      const [x, y] = xy[k];
+      if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) { rect.push(k); left.delete(key); }
+    }
+    out.push(rect.sort((p, q) => p - q));
+  }
+  return out;
+}
+
 /** A component's cells (sorted by index) split into pieces per its kind's FURNITURE_SPLIT. */
 function splitComponent(a: MapAnalysis, kind: FurnitureKind, cells: number[]): number[][] {
   const how = FURNITURE_SPLIT[kind];
   if (how === 'component') return [cells];
+  if (how === 'rects') return componentRects(cells.map((c) => [a.cellX(c), a.cellY(c)])).map((r) => r.map((k) => cells[k]));
   if (how === 'cell') return cells.map((c) => [c]);
   const byX = new Map<number, number[]>();
   for (const c of cells) {
