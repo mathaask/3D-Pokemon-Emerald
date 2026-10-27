@@ -307,6 +307,8 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     expect(arena.build('frontier', defaultArenaColors('frontier'), 'medium')).toBe(true);
     const lights = arena.group.getObjectByName('hallLights') as THREE.Mesh;
     const m = lights.material as THREE.MeshStandardMaterial;
+    // (on a material no other mesh draws with: the glow set for its draw would reach that mesh's too)
+    expect(meshesUnder(arena.group).filter((x) => x.material === m)).toEqual([lights]);
     expect(m.emissive.getHex()).toBe(0);
     const call = (f: unknown) => (f as (...a: unknown[]) => void)(null, null, null, null, m, null);
     call(lights.onBeforeRender);

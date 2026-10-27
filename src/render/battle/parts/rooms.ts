@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { kitMaterial } from '../../kit/materials';
+import { kitMaterial, type KitUniforms } from '../../kit/materials';
 import { BUILDING_BODY, BUILDING_GLASS } from '../../kit/buildings';
 import { PROP_GLOW } from '../../kit/props';
 import { SOIL_MATERIAL } from '../../kit/soil';
@@ -500,6 +500,22 @@ export function hallColors(kind: HallKind, p: ArenaPalette): HallColors {
   }
 }
 
+// ------------------------------------------------------------------------------------------------- glowing props
+
+/** A mesh of `geometry` in PROP_GLOW, glowing `emissive` (linear) for its own draw only (PROP_GLOW's own glow is × uNight:
+ *  none indoors): the Frontier's light panels, Phoebe's candle flames (stadium.ts). Its material is made here for it alone
+ *  — the glow is right only for a material's single user: three re-uploads a material's uniforms (emissive among them)
+ *  only when the material changes between draws, and the kit pool's configure() never resets `emissive`; the reset after
+ *  the draw keeps the pooled material black for its next user (PROP_GLOW shares its pool with BUILDING_GLASS: one
+ *  program). Never hand its material to another mesh. */
+export function glowMesh(uniforms: KitUniforms, geometry: THREE.BufferGeometry, emissive: RGB): THREE.Mesh {
+  const material = kitMaterial(uniforms, PROP_GLOW).material;
+  const m = new THREE.Mesh(geometry, material);
+  m.onBeforeRender = () => { material.emissive.setRGB(emissive[0], emissive[1], emissive[2]); };
+  m.onAfterRender = () => { material.emissive.setRGB(0, 0, 0); };
+  return m;
+}
+
 // ------------------------------------------------------------------------------------------------- the part
 
 const PNC = { position: 3, normal: 3, color: 3 };
@@ -559,17 +575,9 @@ export const HALL_PART: ArenaPart = {
       group.add(m);
     }
     if (!glow.empty) {
-      const material = kitMaterial(ctx.uniforms, PROP_GLOW).material;
-      const m = new THREE.Mesh(glow.geometry(), material);
+      // (daytime glow for their draw only)
+      const e = lin(colors.glow), m = glowMesh(ctx.uniforms, glow.geometry(), [e[0] * PANEL_GLOW, e[1] * PANEL_GLOW, e[2] * PANEL_GLOW]);
       m.name = 'hallLights';
-      const e = lin(colors.glow);
-      // Daytime glow for this draw only (PROP_GLOW's own glow is × uNight: none indoors). This works only because the
-      // mesh is its material's single user: three re-uploads a material's uniforms (emissive among them) only when the
-      // material changes between draws, and the kit pool's configure() never resets `emissive` — the reset after the
-      // draw keeps the pooled material black for the next user (PROP_GLOW shares its pool with BUILDING_GLASS: one
-      // program). Never put this hook on a material another mesh draws with; give that mesh its own kitMaterial().
-      m.onBeforeRender = () => { material.emissive.setRGB(e[0] * PANEL_GLOW, e[1] * PANEL_GLOW, e[2] * PANEL_GLOW); };
-      m.onAfterRender = () => { material.emissive.setRGB(0, 0, 0); };
       group.add(m);
     }
     if (kind === 'gym' || kind === 'leader') {

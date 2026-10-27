@@ -29,7 +29,7 @@ import {
   LAVA_GLOW, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaMaterial, lavaPools, rockWallGeometry, stalagmiteGeometry,
   type ArenaSpire, type LavaPool, type WallBand,
 } from './rock';
-import { HALLS, hallLayout, pillarGeometry, roomShell, wallPillars, type RoomSpec, type ShellColors } from './rooms';
+import { HALLS, glowMesh, hallLayout, pillarGeometry, roomShell, wallPillars, type RoomSpec, type ShellColors } from './rooms';
 import { Soup, cross, lathe, lin, norm, sub, tube } from './soup';
 import { WATER_RENDER_ORDER, arenaWaterMaterial, opaqueWater } from './water';
 import { arenaClear } from './flora';
@@ -570,15 +570,15 @@ export const STADIUM_PART: ArenaPart = {
     for (const p of pools) rock.push(lavaBankGeometry(p, scale(col.rock, 0.6), mix(col.lava!, col.rock, 0.35), palette.ground));
 
     if (!extra.empty) room.push(extra.geometry());
-    const add = (name: string, g: THREE.BufferGeometry, material: THREE.Material, cast: boolean) => {
-      g.computeBoundingSphere();
-      const m = new THREE.Mesh(g, material);
+    const place = (m: THREE.Mesh, name: string, cast: boolean) => {
+      m.geometry.computeBoundingSphere();
       m.name = name;
       m.castShadow = cast;
       m.receiveShadow = true;
       group.add(m);
       return m;
     };
+    const add = (name: string, g: THREE.BufferGeometry, material: THREE.Material, cast: boolean) => place(new THREE.Mesh(g, material), name, cast);
     const merged = (gs: THREE.BufferGeometry[]) => { const g = mergeGeometries(gs)!; for (const x of gs) x.dispose(); return g; };
     add('stadiumRoom', merged(room), kitMaterial(ctx.uniforms, BUILDING_BODY).material, true);
     if (rock.length) add('stadiumRock', merged(rock), kitMaterial(ctx.uniforms, CLIFF_MATERIAL).material, true);
@@ -593,17 +593,8 @@ export const STADIUM_PART: ArenaPart = {
       add('fountainWater', waterDiscs(discs), kitMaterial(ctx.uniforms, opaqueWater(options)).material, false).renderOrder = WATER_RENDER_ORDER;
     }
     if (!stands.empty) add('candleStands', stands.geometry(), kitMaterial(ctx.uniforms, PROP_BODY).material, true);
-    if (!glow.empty) {
-      const material = kitMaterial(ctx.uniforms, PROP_GLOW).material;
-      const m = add('candleFlames', glow.geometry(), material, false);
-      const e = toLinear(FLAME_GLOW).map((v) => v * FLAME_STRENGTH);
-      // The flames' glow for this draw only (PROP_GLOW's own is × uNight: none indoors): this mesh is its material's only
-      // user — three re-uploads a material's uniforms (emissive among them) only when the material changes between draws
-      // and the kit pool's configure() never resets `emissive`; the reset after the draw keeps the pooled material black
-      // for its next user (rooms.ts hallLights: the same pattern).
-      m.onBeforeRender = () => { material.emissive.setRGB(e[0], e[1], e[2]); };
-      m.onAfterRender = () => { material.emissive.setRGB(0, 0, 0); };
-    }
+    // (the flames glow for their own draw only: rooms.ts glowMesh)
+    if (!glow.empty) place(glowMesh(ctx.uniforms, glow.geometry(), toLinear(FLAME_GLOW).map((v) => v * FLAME_STRENGTH) as RGB), 'candleFlames', false);
     return group;
   },
 };
