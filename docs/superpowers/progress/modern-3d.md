@@ -388,8 +388,18 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
   Report: `.superpowers/sdd/battle-feet-report.md` (gitignored).
 
 ## Next step
-- **Phase 3 is complete (2026-10-27)** and merged to `main`. Next candidates: terrain height solver v2 (mountain
-  ridges), Phase 4 (interiors, spec §8), or a battle look-polish pass (the Phase 3 known gaps above).
+- **Phase 4 (interiors) in progress (2026-10-27)** on branch `phase4-interiors`: plan
+  `docs/superpowers/plans/2026-10-27-phase4-interiors.md` (13 tasks, Task 4 split 4a–4c; parallel groups A = 2‖3,
+  B = 4a‖4b‖4c‖5, C = 7‖8‖9‖10‖11). User answers: scope = the spec's five secondaries (138 of 307 indoor maps; gyms etc.
+  later "Phase 4b"); **all indoor light follows the clock** (D8 rewritten); real-world furniture heights. SDD ledger
+  `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md`.
+- **Phase 3 is complete (2026-10-27)** and merged to `main`. Later candidates: terrain height solver v2 (mountain
+  ridges), a battle look-polish pass (the Phase 3 known gaps above).
+
+## Phase 4 status
+- [x] Plan (user-approved) · [ ] 1 harness + p4-base · [ ] 2 battle room geometry → kit · [ ] 3 scope/symbols/tables
+- [ ] 4a–4c tables · [ ] 5 room layout + colours · [ ] 6 integration · [ ] 7 shell · [ ] 8 floors + shafts
+- [ ] 9 furniture I · [ ] 10 furniture II · [ ] 11 legacy HD · [ ] 12 smoke/coverage/live · [ ] 13 perf/docs
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
 - **2026-10-23: hitch fix done** (user chose "hitch fix, then Phase 3"; in-chat design approved; branch `hitch-fix`,
   reviewed + 1 fix round + re-review, merged):
