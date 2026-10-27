@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+import { aoPrepassMaterial } from '../src/render/aoPrepass';
 import {
   InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL, MAX_ACTORS, INST_UNIFORM_VECTORS,
   INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed, BATTLE_VARIANT,
@@ -53,6 +54,50 @@ describe('InflatedActors variants (battle)', () => {
     // (set() only copies finite spec numbers: a NaN could only arise in the shader, dividing by the slot's texel width)
     const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
     expect(patched(a).vertexShader).toContain('float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);');
+  });
+});
+
+describe('InflatedActors in GTAO\'s depth/normal prepass (High)', () => {
+  const prepassOf = (a: InflatedActors) => aoPrepassMaterial(a.mesh) as THREE.ShaderMaterial;
+  it('draws its own prepass material there: the relief on the actors\' vertex path, alpha-tested, the relief\'s normal packed', () => {
+    const a = make(), ao = prepassOf(a);
+    expect(ao).toBeInstanceOf(THREE.ShaderMaterial);
+    expect(ao.allowOverride).toBe(false);
+    // the main pass's relief (rising along the ray to the eye), not the shadow twin's push
+    expect(ao.vertexShader).toContain('normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief)');
+    expect(ao.vertexShader).toContain('smoothstep(0.15, 0.55, local.y)');
+    expect(ao.vertexShader).not.toContain('mvPosition.z -=');
+    expect(ao.fragmentShader).toContain('if (actorSample(vAtlasUv, vRect).a < 0.5) discard;');
+    // the relief's own normal (its height's gradient, faded as the relief), view space, as MeshNormalMaterial packs it
+    expect(ao.fragmentShader).toContain(`fieldGrad(vAtlasUv, vRect, ${SHADE_STEP}.0) * vRelief`);
+    expect(ao.fragmentShader).toContain('* 0.5 + 0.5, 1.0);');
+    expect(ao.fragmentShader).not.toContain('shadeSlope(vAtlasUv');
+  });
+  it('shares the actors\' uniforms and faces (the shadow pass of its frame sets the twin\'s side from it)', () => {
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT,
+      new THREE.Texture());
+    const ao = prepassOf(a), depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial, main = a.mesh.material as THREE.Material;
+    for (const k of ['tAtlas', 'tField', 'uRight', 'uEye', 'uAtlasSize', 'uSmooth', 'uInst', 'tXbr']) expect(ao.uniforms[k], k).toBe(depth.uniforms[k]);
+    expect(ao.fragmentShader).toContain('xbrSampleBaked');
+    expect(ao.vertexShader).toContain('float relief = 1.0;');
+    expect([ao.side, ao.shadowSide]).toEqual([main.side, main.shadowSide]);
+  });
+  it('has a program key per variant and instance-data path, and frees it with the actors', () => {
+    expect(prepassOf(make()).customProgramCacheKey()).toBe('actor:inflated-ao:1:uniforms');
+    expect(prepassOf(makeAttributes()).customProgramCacheKey()).toBe('actor:inflated-ao:1:attributes');
+    expect(prepassOf(makeAttributes()).vertexShader).toMatch(/attribute vec3 aFoot;\s*attribute vec4 aSize;\s*attribute vec4 aUv;/);
+    const b = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, false, BATTLE_VARIANT);
+    expect(prepassOf(b).customProgramCacheKey()).toBe('actor:inflated-battle-ao:1:attributes');
+    const a = make(), freed = vi.fn();
+    prepassOf(a).addEventListener('dispose', freed);
+    a.dispose();
+    expect(freed).toHaveBeenCalledOnce();
+  });
+  it('counts a prepass program that did not link as the uniform array\'s failure (the actors then take the attributes)', () => {
+    const p = (key: string) => ({ cacheKey: `shader,1,${key}`, diagnostics: { runnable: false } });
+    expect(instanceUniformsFailed([p('actor:inflated-ao:1:uniforms')])).toBe(true);
+    expect(instanceUniformsFailed([p('actor:inflated-battle-ao:1:uniforms')], 'battle')).toBe(true);
+    expect(instanceUniformsFailed([p('actor:inflated-ao:1:attributes')])).toBe(false);
   });
 });
 

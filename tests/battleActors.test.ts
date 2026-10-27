@@ -8,6 +8,7 @@ import { blankSprite } from '../src/render/previewActors';
 import { SYM } from '../src/game/symbols';
 import type { SpriteSnap } from '../src/game/state';
 import { previewBattleSprites } from '../src/render/battlePreview';
+import { aoPrepassMaterial } from '../src/render/aoPrepass';
 
 const slot = { u0: 0, v0: 0.125, u1: 0.0625, v1: 0 };
 const battler = (index: number, screenX: number, screenY: number) => blankSprite({ index, template: SYM.gMultiuseSpriteTemplate,
@@ -208,6 +209,24 @@ describe('BattleActors', () => {
       m.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
       expect(g.instanceCount, m.name).toBe(5);
     }
+  });
+  it('draws the inflated battlers into GTAO\'s depth/normal prepass with their own prepass material (no AO printed over them)', () => {
+    const atlas = { slots: new Map([[0, slot]]), target: { texture: new THREE.Texture() } };
+    const a = new BattleActors(atlas, { field: { texture: new THREE.Texture() } });
+    const mesh = a.group.getObjectByName('battleInflated') as THREE.Mesh;
+    const prepass = aoPrepassMaterial(mesh) as THREE.ShaderMaterial;
+    expect(prepass).toBeInstanceOf(THREE.ShaderMaterial);
+    expect(prepass.customProgramCacheKey()).toBe('actor:inflated-battle-ao:1:uniforms');
+    // the cards keep drawing nothing there (flat sprites: Retro's look at High is today's)
+    expect(aoPrepassMaterial(a.group.getObjectByName('battleCards')!)).toBeUndefined();
+    const r = {} as THREE.WebGLRenderer, cam = new THREE.Camera(), scene = new THREE.Scene();
+    const g = mesh.geometry as THREE.InstancedBufferGeometry;
+    g.instanceCount = 2;
+    scene.overrideMaterial = new THREE.MeshNormalMaterial();
+    mesh.onBeforeRender(r, scene, cam, g, prepass, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(2);
+    mesh.onAfterRender(r, scene, cam, g, prepass, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(2);
   });
   it('gives a sprite scaled to nothing (affine growth at send-out) finite card and decal specs', () => {
     const finite = (s: ReturnType<typeof battleCardSpec>) => [s.footX, s.footY, s.footZ, s.width, s.height, s.lift].every(Number.isFinite);

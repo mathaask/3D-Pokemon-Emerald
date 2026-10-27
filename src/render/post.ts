@@ -9,6 +9,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
 import type { WorldStyle } from './overworld/world';
+import { withAoPrepassMaterials } from './aoPrepass';
 
 export type Quality = 'low' | 'medium' | 'high';
 
@@ -91,6 +92,15 @@ const GradeShader = {
   `,
 };
 
+/** GTAOPass whose depth/normal prepass draws the meshes with a prepass material of their own (aoPrepass.ts: the inflated
+ *  actors) with it — their depth and normal, so the AO of what lies behind them is not composited over them. */
+class ActorGTAOPass extends GTAOPass {
+  override render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget,
+    deltaTime: number, maskActive: boolean): void {
+    withAoPrepassMaterials(this.scene, () => super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive));
+  }
+}
+
 export class PostFX {
   readonly composer: EffectComposer;
   private renderPass: RenderPass;
@@ -116,7 +126,7 @@ export class PostFX {
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
     if (quality === 'high') {
-      this.ao = new GTAOPass(scene, camera, size.x, size.y);
+      this.ao = new ActorGTAOPass(scene, camera, size.x, size.y);
       this.ao.blendIntensity = 0.75;
       this.ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
       this.composer.addPass(this.ao);

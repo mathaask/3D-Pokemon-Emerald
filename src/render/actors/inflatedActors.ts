@@ -21,6 +21,7 @@ import { INFLATE, BATTLE_INFLATE, type InflateParams } from './inflateMath';
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { XBR_GLSL, XBR_BAKED_GLSL } from './xbr.glsl';
 import { afterChunk, glslFloat, patchChunk } from './glsl';
+import { setAoPrepassMaterial } from '../aoPrepass';
 
 /** Grid segments per actor (spec §6): one per sprite pixel of a 16×32 character. */
 export const ACTOR_GRID = { x: 16, y: 32 };
@@ -55,21 +56,25 @@ export function instanceUniformsFit(maxVertexUniforms: number, override?: string
   return maxVertexUniforms >= INST_UNIFORMS_MIN_VERTEX_VECTORS;
 }
 
-/** The program keys (customProgramCacheKey) of the actors' main material and shadow twin, per instance-data path and
- *  variant (its tag; '' = the overworld's: 'actor:inflated:1:…'). */
-const programKey = (twin: boolean, uniforms: boolean, tag = '') =>
-  `actor:inflated${tag ? '-' + tag : ''}${twin ? '-depth' : ''}:1:${uniforms ? 'uniforms' : 'attributes'}`;
+/** The actors' materials: the main one, the shadow twin, GTAO's prepass material (High). */
+type ActorPass = 'main' | 'depth' | 'ao';
+
+/** The program keys (customProgramCacheKey) of the actors' materials, per instance-data path and variant (its tag;
+ *  '' = the overworld's: 'actor:inflated:1:…'). */
+const programKey = (pass: ActorPass, uniforms: boolean, tag = '') =>
+  `actor:inflated${tag ? '-' + tag : ''}${pass === 'main' ? '' : '-' + pass}:1:${uniforms ? 'uniforms' : 'attributes'}`;
 
 /** A shader program as three lists it (renderer.info.programs): its cache key (ending with the material's
  *  customProgramCacheKey) and, once it was first used with renderer.debug.checkShaderErrors on (three's default), its
  *  link diagnostics (none when it linked without a log). */
 export interface ProgramInfo { cacheKey: string; diagnostics?: { runnable: boolean } }
 
-/** Whether a program of the uniform-array path (main or shadow twin) of the variant tagged `tag` ('' = the overworld's)
- *  failed to link on this device although instanceUniformsFit let it through (a driver counting vectors more coarsely):
- *  those actors then need the attribute path (ActorLayer / BattleActors.checkInstanceUniforms, after the precompile). */
+/** Whether a program of the uniform-array path (main, shadow twin or GTAO prepass) of the variant tagged `tag` ('' = the
+ *  overworld's) failed to link on this device although instanceUniformsFit let it through (a driver counting vectors more
+ *  coarsely): those actors then need the attribute path (ActorLayer / BattleActors.checkInstanceUniforms, after the
+ *  precompile). */
 export function instanceUniformsFailed(programs: readonly ProgramInfo[], tag = ''): boolean {
-  const keys = [programKey(false, true, tag), programKey(true, true, tag)];
+  const keys = (['main', 'depth', 'ao'] as const).map((pass) => programKey(pass, true, tag));
   return programs.some((p) => p.diagnostics?.runnable === false && keys.some((k) => p.cacheKey.endsWith(k)));
 }
 
@@ -342,6 +347,37 @@ void main() {
 }
 `;
 
+// GTAO's depth/normal prepass (High; aoPrepass.ts): the main pass's position (no push) and, per fragment, the relief's own
+// normal — its height's gradient (px per px: the relief rises fieldH × pxWorld over a texel of pxWorld), faded as the
+// relief is — packed as MeshNormalMaterial packs it (view space, × 0.5 + 0.5): the AO sees the actor's true surface. (Not
+// the shading normal: its exaggerated slope would disagree with the depth.)
+const aoVert = (uniforms: boolean, v: InflatedVariant) => /* glsl */ `
+#include <common>
+${vertPrelude(uniforms, v)}
+varying float vRelief;
+void main() {
+${VERT_CARD}
+${vertPosition(v)}
+  vRelief = relief;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
+}
+`;
+
+const aoFrag = (v: InflatedVariant) => /* glsl */ `
+#include <common>
+uniform sampler2D tAtlas;
+varying vec2 vAtlasUv;
+varying vec4 vRect;
+varying float vRelief;
+${fieldGlsl(v)}
+${sampleGlsl(v)}
+void main() {
+  if (actorSample(vAtlasUv, vRect).a < 0.5) discard;
+  vec3 n = actorNormal(normalize(vFacing), fieldGrad(vAtlasUv, vRect, ${glslFloat(SHADE_STEP)}) * vRelief);
+  gl_FragColor = vec4(normalize((viewMatrix * vec4(n, 0.0)).xyz) * 0.5 + 0.5, 1.0);
+}
+`;
+
 /** three's lights_pars_begin with the point lights' soft ceiling (LAMP_CEILING; also the object models'); throws if the
  *  attenuation line changed. */
 export function lampCeiling(parsBegin: string): string {
@@ -382,6 +418,8 @@ export class InflatedActors {
   private uniforms: ActorUniforms;
   /** The no-decisions texture a baked variant made for itself (no bake given), freed with the actors. */
   private ownDecisions: THREE.Texture | null = null;
+  /** The actors in GTAO's depth/normal prepass (aoPrepass.ts). */
+  private aoMaterial: THREE.ShaderMaterial;
 
   /**
    * `atlas`: the sprite atlas the actors sample; `field`: its inflation field (same layout, R = height in
@@ -440,16 +478,17 @@ export class InflatedActors {
       f = afterChunk(f, 'dithering_fragment', MASK_GLSL);
       s.fragmentShader = f;
     };
-    material.customProgramCacheKey = () => programKey(false, instanceUniforms, variant.tag);
+    material.customProgramCacheKey = () => programKey('main', instanceUniforms, variant.tag);
 
+    const twinUniforms = { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth,
+      uInst: u.uInst, ...(u.tXbr ? { tXbr: u.tXbr } : {}) };
     const depth = new THREE.ShaderMaterial({
       vertexShader: depthVert(instanceUniforms, variant),
       fragmentShader: depthFrag(variant),
-      uniforms: { tAtlas: u.tAtlas, tField: u.tField, uRight: u.uRight, uEye: u.uEye, uAtlasSize: u.uAtlasSize, uSmooth: u.uSmooth, uInst: u.uInst,
-        ...(u.tXbr ? { tXbr: u.tXbr } : {}) },
+      uniforms: twinUniforms,
       side: THREE.DoubleSide,
     });
-    depth.customProgramCacheKey = () => programKey(true, instanceUniforms, variant.tag);
+    depth.customProgramCacheKey = () => programKey('depth', instanceUniforms, variant.tag);
     this.mesh = new THREE.Mesh(this.geometry, material);
     this.mesh.name = 'inflatedActors';
     this.mesh.frustumCulled = false;
@@ -457,6 +496,18 @@ export class InflatedActors {
     this.mesh.receiveShadow = true;
     this.mesh.customDepthMaterial = depth;
     this.mesh.renderOrder = ACTOR_RENDER_ORDER;
+
+    // GTAO's prepass material (High). Its faces are the main material's: the shadow pass three runs inside that prepass
+    // sets the depth twin's side from the mesh's material then (WebGLShadowMap), so the twin's program stays the one
+    const ao = this.aoMaterial = new THREE.ShaderMaterial({
+      vertexShader: aoVert(instanceUniforms, variant),
+      fragmentShader: aoFrag(variant),
+      uniforms: { ...twinUniforms },
+      side: material.side,
+    });
+    ao.shadowSide = material.shadowSide;
+    ao.customProgramCacheKey = () => programKey('ao', instanceUniforms, variant.tag);
+    setAoPrepassMaterial(this.mesh, ao);
   }
 
   /** Actors drawn (instances). */
@@ -539,6 +590,7 @@ export class InflatedActors {
     for (const g of [this.geometry, this.quad, ...this.shadowGeometries]) g.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.customDepthMaterial?.dispose();
+    this.aoMaterial.dispose();
     this.ownDecisions?.dispose();
   }
 }
