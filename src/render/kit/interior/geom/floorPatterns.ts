@@ -27,11 +27,18 @@ import { floorLook } from '../colors';
 import {
   BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, FLOOR_SEAM_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL,
 } from '../floorGlsl';
-import { windowRect, type RoomLayout } from '../room';
+import { RECESS, windowRect, type RoomLayout } from '../room';
 
 export const enum FloorMat { Boards = 0, Tiles = 1, Carpet = 2, Rug = 3, Mat = 4 }
-/** edges: bit 0 N, 1 E, 2 S, 3 W — the neighbour on that side is another floor kind (rugs and mats draw their border). */
-export interface FloorCell { i: number; h: number; mat: FloorMat; tint: RGB; edges: number }
+/** edges: bit 0 N, 1 E, 2 S, 3 W — the neighbour on that side is another floor kind (rugs and mats draw their border).
+ *  north: where the cell's quad starts, in cells south of its north side (absent: 0, the whole cell). The back wall's
+ *  recess row starts at the wall's inner face (BAND_RECESS_NORTH); a band row north of it has no quad (BAND_HIDDEN):
+ *  claimed, so nothing draws behind the wall, but no floor. */
+export interface FloorCell { i: number; h: number; mat: FloorMat; tint: RGB; edges: number; north?: number }
+/** A back-wall recess row's quad: from the wall's inner face (RECESS north of the back line) south. */
+export const BAND_RECESS_NORTH = 1 - RECESS;
+/** A band cell north of the recess row: behind the back wall, no quad. */
+export const BAND_HIDDEN = 1;
 
 export const FLOOR_MAT: Readonly<Record<FloorKind, FloorMat>> = {
   boards: FloorMat.Boards, tiles: FloorMat.Tiles, carpet: FloorMat.Carpet, rug: FloorMat.Rug, mat: FloorMat.Mat,
@@ -127,7 +134,9 @@ const BETWEEN_MAX = 6;
  *  rule; a blocked cell with a floor id keeps its own kind; a blocked unknown cell (null / `legacy`) in the room that no
  *  family claimed stays legacy; a cell another family claimed CLAIM_SURFACE gets none. Tints: a 4-connected area of one
  *  kind takes its most common metatile tint (`floorTint`), so a rug's border metatiles and a floor's shadow variants do
- *  not read as patches. Heights: flat per room (`roomFloorHeights`). */
+ *  not read as patches. Heights: flat per room (`roomFloorHeights`). The back wall's band (not a partition): a quad only
+ *  in its recess row, from the wall's inner face (`north`); its rows behind the wall are cells (claimed: no legacy art
+ *  behind the wall) without a quad. */
 export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], L: RoomLayout, claims: Claims): FloorCell[] {
   const N = a.N;
   const kind = new Int8Array(N).fill(-1);
@@ -240,7 +249,14 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
       const j = a.inside(x + dx, y + dy) ? a.idx(x + dx, y + dy) : -1;
       if (j < 0 || kind[j] !== kind[i]) edges |= 1 << b;
     });
-    cells.push({ i, h: h[i], mat: kind[i] as FloorMat, tint: tint[i]!, edges });
+    const cell: FloorCell = { i, h: h[i], mat: kind[i] as FloorMat, tint: tint[i]!, edges };
+    // the back wall's band: floor only in its recess (the row over the room, from the wall's inner face); none behind
+    // the wall (a partition stands in the room: its cells keep their floor)
+    if (L.band[i] && !L.partition[i]) {
+      const s = a.inside(x, y + 1) ? a.idx(x, y + 1) : -1;
+      cell.north = s >= 0 && L.inside[s] ? BAND_RECESS_NORTH : BAND_HIDDEN;
+    }
+    cells.push(cell);
   }
   return cells;
 }
@@ -279,16 +295,17 @@ export function floorTexture(a: MapAnalysis, cells: readonly FloorCell[]): THREE
   return tex;
 }
 
-/** The floor's flat quads, one per cell at its height (un-projected: world (x, h, y + h)), facing up: non-indexed
- *  position + normal (the material reads no colours or UVs). */
+/** The floor's flat quads, one per cell at its height (un-projected: world (x, h, y + h)) from its `north` edge south
+ *  (none at BAND_HIDDEN), facing up: non-indexed position + normal (the material reads no colours or UVs). */
 export function floorGeometry(a: MapAnalysis, cells: readonly FloorCell[]): THREE.BufferGeometry {
-  const pos = new Float32Array(cells.length * 18);
-  const nor = new Float32Array(cells.length * 18);
+  const drawn = cells.filter((c) => (c.north ?? 0) < 1);
+  const pos = new Float32Array(drawn.length * 18);
+  const nor = new Float32Array(drawn.length * 18);
   let o = 0;
-  for (const c of cells) {
-    const x = a.cellX(c.i), y = a.cellY(c.i), h = c.h;
+  for (const c of drawn) {
+    const x = a.cellX(c.i), y = a.cellY(c.i), h = c.h, n = y + (c.north ?? 0);
     // TL, BR, TR, TL, BL, BR: wound to face +y
-    const v = [x, y, x + 1, y + 1, x + 1, y, x, y, x, y + 1, x + 1, y + 1];
+    const v = [x, n, x + 1, y + 1, x + 1, n, x, n, x, y + 1, x + 1, y + 1];
     for (let k = 0; k < 12; k += 2) {
       pos[o] = v[k]; pos[o + 1] = h; pos[o + 2] = v[k + 1] + h;
       nor[o + 1] = 1;

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  encodeFloor, floorCells, floorGeometry, FloorMat, floorTint, FLOOR_SAT_KNEE, FLOOR_SAT_SLOPE, interiorFloorMaterial, roomShaftMaterial,
+  BAND_HIDDEN, BAND_RECESS_NORTH, encodeFloor, floorCells, floorGeometry, FloorMat, floorTint, FLOOR_SAT_KNEE, FLOOR_SAT_SLOPE, interiorFloorMaterial, roomShaftMaterial,
   shaftGeometry, SHAFT_SLANT,
 } from '../src/render/kit/interior/geom/floorPatterns';
 import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
@@ -49,14 +49,33 @@ describe('interior floor cells', () => {
     expect(cells.some((c) => c.i === a.idx(3, 2))).toBe(true);
   });
 
-  it('floors the back-wall band, stairsUp, the mat (bordered) and Sootopolis 0x3FF blocks; leaves unknown cells legacy', () => {
+  it('floors the back wall\'s recess, stairsUp, the mat (bordered) and Sootopolis 0x3FF blocks; leaves unknown cells legacy', () => {
     const { at } = cellsOf(['         ', ' WWWWWWW ', ' S...... ', ' _....?. ', ' ...M... ', '         ']);
-    expect(at(2, 1)?.mat).toBe(FloorMat.Boards);                     // band: under the back wall's art
+    expect(at(2, 1)?.mat).toBe(FloorMat.Boards);                     // band: its recess row, from the wall's inner face
+    expect(at(2, 1)?.north).toBe(BAND_RECESS_NORTH);
+    expect(at(2, 2)?.north).toBeUndefined();                         // a room cell: whole
     expect(at(1, 2)?.mat).toBe(FloorMat.Boards);                     // stairsUp: the boards beside it
     expect(at(1, 3)?.mat).toBe(FloorMat.Boards);                     // a walkable 0x3FF block (real3ff): floor
     expect(at(4, 4)?.mat).toBe(FloorMat.Mat);
     expect(at(4, 4)?.edges).toBe(0b1111);                            // boards N/E/W, the void S: a border all round
     expect(at(6, 3)).toBeUndefined();                                // a blocked unknown cell no family claimed: legacy
+  });
+
+  it('lays no floor behind the back wall: a 2-row band keeps its cells, but quads only from the inner face south', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWOOWWWW ', ' WWOOWFWW ', ' ........ ', ' ........ ', '          ']);
+    const L = roomLayout(a, ids, []);
+    const cells = floorCells(a, ids, L, new Claims(a.N));
+    const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y));
+    expect(at(2, 1)?.north).toBe(BAND_HIDDEN);                       // behind the wall: claimed, no quad
+    expect(at(2, 2)?.north).toBe(BAND_RECESS_NORTH);                 // the recess row
+    const pos = floorGeometry(a, cells).getAttribute('position');
+    expect(pos.count).toBe(cells.filter((c) => c.north !== BAND_HIDDEN).length * 6);
+    // un-projected z = y + h: no vertex north of the back wall's inner face (backLine − RECESS) in its column
+    for (let k = 0; k < pos.count; k++) {
+      const x = Math.min(pos.getX(k), a.maxX - 1), bl = L.backLine[Math.floor(x) - a.minX];
+      const z = pos.getZ(k) - pos.getY(k);
+      if (bl >= 0) expect(z, `vertex ${k}`).toBeGreaterThanOrEqual(bl - RECESS - 1e-6);
+    }
   });
 
   it('keeps a cell another family surfaced, and gives a lone piece of furniture the room floor', () => {

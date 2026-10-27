@@ -75,7 +75,9 @@ describe('floor family', () => {
     const root = floorFamily.build(cells, ctx, kit)!;
     const floor = root.getObjectByName('floor') as THREE.Mesh, shafts = root.getObjectByName('shafts') as THREE.Mesh;
     expect(floor.receiveShadow).toBe(true); expect(floor.castShadow).toBe(false);
-    expect(floor.geometry.getAttribute('position').count).toBe(cells.length * 6);
+    // (every cell claimed; behind the back wall (the band's north row) no quad)
+    expect(floor.geometry.getAttribute('position').count).toBe(cells.filter((c) => (c.north ?? 0) < 1).length * 6);
+    expect(cells.some((c) => (c.north ?? 0) >= 1)).toBe(true);
     expect(shafts.castShadow).toBe(false);
     expect(shafts.geometry.getAttribute('color').itemSize).toBe(3);
     // (every window is in the back wall: the shafts are cut away with it, never a stray streak at yaw π — review C1 M2)
