@@ -2,7 +2,7 @@
 // that keeps grass and flowers from hiding a platform top.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { STAGE, GROUND_Y } from '../src/render/battle/stage';
+import { STAGE, GROUND_Y, BATTLE_CAMERA } from '../src/render/battle/stage';
 import { battleCamera, frameTop, sightCap, stageKeepOut, SCENERY_SEED } from '../src/render/battle/parts/scatter';
 import { battleFrameCamera } from '../src/render/battle/parts/frame';
 import { duneGeometry, duneMounds, onDune } from '../src/render/battle/parts/dunes';
@@ -19,6 +19,11 @@ import { groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { createKitUniforms } from '../src/render/kit/materials';
+
+/** The settled battle camera's reach (BattleView.update): the user's yaw, its sway and, while a move plays, its focus
+ *  nudge — and the oracles' yaws: the user's, then out to the sway's and the nudge's ends, either side. */
+const SETTLED = BATTLE_CAMERA.yaw + BATTLE_CAMERA.sway + BATTLE_CAMERA.focusYaw, SWAYED = BATTLE_CAMERA.yaw + BATTLE_CAMERA.sway;
+const YAWS = [-SETTLED, -SWAYED, -0.9, -0.45, 0, 0.45, 0.9, SWAYED, SETTLED];
 
 describe('arena scenery', () => {
   const ko = stageKeepOut(STAGE);
@@ -167,10 +172,10 @@ describe('arena scenery', () => {
   });
 
   it("keeps the grass under the sight lines of the intro sweep's cameras too (1.5× as far: flatter lines to the player)", () => {
-    // (an oracle: the sight line from each camera of the sweep's first frame and its midpoint, at the user's yaws, over the
-    // horizontal ray to the near edge of each platform top)
+    // (an oracle: the sight line from each camera of the sweep's first frame and its midpoint, at YAWS — the user's, to
+    // ±1.0 —, over the horizontal ray to the near edge of each platform top)
     const tops = [{ p: STAGE.player, rx: 2.1, rz: 2.1 * 0.62 }, { p: STAGE.enemy, rx: 1.9, rz: 1.9 * 0.62 }];
-    const cams = [0, 0.5].flatMap((e) => [-0.9, -0.45, 0, 0.45, 0.9].map((y) => battleCamera(STAGE, y, new THREE.Vector3(), new THREE.Vector3(), e)));
+    const cams = [0, 0.5].flatMap((e) => YAWS.map((y) => battleCamera(STAGE, y, new THREE.Vector3(), new THREE.Vector3(), e)));
     const line = (x: number, z: number) => {
       let cap = Infinity;
       for (const c of cams) for (const t of tops) {
@@ -193,10 +198,10 @@ describe('arena scenery', () => {
   });
 
   it("hides no platform top behind the grass at any of the user's zooms (0.6–1.6: zoomed out the sight lines run flatter)", () => {
-    // (an oracle through the cameras themselves: the ray from a camera through a clump's top, continued, meets the platform
-    // tops' plane y = 0 outside both platforms)
+    // (an oracle through the cameras themselves, at YAWS — the user's, to the sway's and the focus nudge's ends: ±1.0 —:
+    // the ray from a camera through a clump's top, continued, meets the platform tops' plane y = 0 outside both platforms)
     const tops = [{ p: STAGE.player, rx: 2.1, rz: 2.1 * 0.62 }, { p: STAGE.enemy, rx: 1.9, rz: 1.9 * 0.62 }];
-    const cams = [0.6, 1, 1.3, 1.6].flatMap((zoom) => [0, 0.5, 1].flatMap((e) => [-0.9, -0.45, 0, 0.45, 0.9].map((y) =>
+    const cams = [0.6, 1, 1.3, 1.6].flatMap((zoom) => [0, 0.5, 1].flatMap((e) => YAWS.map((y) =>
       battleCamera(STAGE, y, new THREE.Vector3(), new THREE.Vector3(), e, zoom))));
     for (const kind of ['grass', 'longGrass', 'plain', 'sand', 'pond'] as const) {
       const tall = kind === 'pond' ? REED.tall : 1;
@@ -245,8 +250,8 @@ describe('arena scenery', () => {
   it("shows no bare trunk in the intro sweep's frames nor zoomed in (0.6): a framed tree shows its crown, or stands crown on the ground", () => {
     // (an oracle through real cameras, 16:9: the sweep's first frames at the user's yaws, and the closest zoom settled; where
     // a frame shows a tree's foot it shows 0.3 of its crown too — or its crown's low edge is down at the ground)
-    const views = [...[0, 0.25, 0.5, 0.75].flatMap((ease) => [-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease, zoom: 1 }))),
-      ...[-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease: 1, zoom: 0.6 }))];
+    const views = [...[0, 0.25, 0.5, 0.75].flatMap((ease) => YAWS.map((yaw) => ({ yaw, ease, zoom: 1 }))),
+      ...YAWS.map((yaw) => ({ yaw, ease: 1, zoom: 0.6 }))];
     const cams = views.map((view) => battleFrameCamera(STAGE, view, 16 / 9));
     const low = { round: 0.74, bushy: 0.66, pine: 0.4, palm: 2.0 } as const;
     const v = new THREE.Vector3();
@@ -316,10 +321,10 @@ describe('arena scenery', () => {
     expect(grass.grass.length).toBe(0);
   });
 
-  it('keeps at Low quality every tree some settled frame shows (|yaw| ≤ 0.9), and drops some', () => {
-    // (an oracle through real cameras, 16:9, at the user's yaws: a tree shows where its foot or its crown's top lies in the
-    // frame)
-    const cams = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12).map((yaw) => battleFrameCamera(STAGE, yaw, 16 / 9));
+  it("keeps at Low quality every tree some settled frame shows (|yaw| ≤ 1.0: the user's 0.9, the sway, the nudge), and drops some", () => {
+    // (an oracle through real cameras, 16:9, at yaws to ±1.0 in steps of 0.1: a tree shows where its foot or its crown's top
+    // lies in the frame)
+    const cams = Array.from({ length: 21 }, (_, i) => -SETTLED + (2 * SETTLED * i) / 20).map((yaw) => battleFrameCamera(STAGE, yaw, 16 / 9));
     const v = new THREE.Vector3();
     const inFrame = (x: number, y: number, z: number) => cams.some((c) => {
       v.set(x, y, z).project(c);

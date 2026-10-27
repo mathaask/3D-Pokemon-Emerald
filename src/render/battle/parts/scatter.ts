@@ -1,8 +1,8 @@
 // Scattering the arena's scenery: seeded dart throwing in an annulus around the stage (deterministic: the same seed and
 // options give the same points), and the stage's keep-outs — the platforms, and the tall rule that keeps anything tall
 // out of the battle camera's way. The camera (BattleView) stands ≈ 11 units in front of the stage (+z), 3.6 up, looking
-// 16.55° down; it swings to ±0.9 yaw (plus its sway and focus nudge) and never frames the horizon (D1): it sees the ground
-// band up to ≈ 42 units behind the stage and, at its top edge, what rises there.
+// 16.55° down; it swings to ±0.9 yaw (plus its sway and focus nudge: ±1.0, SETTLED_YAW) and never frames the horizon
+// (D1): it sees the ground band up to ≈ 42 units behind the stage and, at its top edge, what rises there.
 
 import * as THREE from 'three';
 import { rng } from '../../kit/geom';
@@ -65,11 +65,14 @@ export function scatter(seed: number, o: ScatterOptions): { x: number; z: number
  *  must agree on it — the palms keep off the dunes, the rocks off the trees and onto the dunes. */
 export const SCENERY_SEED = 1;
 
-/** The yaw the battle camera reaches once its intro is done: the user's ±0.9, its sway (0.04) and its focus nudge (0.06).
- *  (The intro sweep starts 0.5 further, at yaw + 0.5, 1.5× as far and 0.06 steeper, and eases in over 2.2 s: with the
- *  user's yaw past +0.4 its first frames stand beyond this wedge, on the +x side, where a tall thing beside the stage may
- *  pass between it and the stage for a moment. The tall rule keeps to the settled camera.) */
-const CAMERA_YAW = 1.0;
+/** The yaw the battle camera reaches once its intro is done (BattleView.update): the user's ±0.9, its sway (0.04) and,
+ *  while a move plays, its focus nudge (0.06) — 1.0. The tall rule keeps out of the wedge it sweeps; the sight cap and the
+ *  frame top check the camera across it (SIGHT_YAWS). (The intro sweep starts 0.5 further, at yaw + 0.5, 1.5× as far and
+ *  0.06 steeper, and eases in over 2.2 s: with the user's yaw past +0.4 its first frames stand beyond this wedge, on the
+ *  +x side, where a tall thing beside the stage may pass between it and the stage for a moment. The tall rule keeps to the
+ *  settled camera.) */
+export const SETTLED_YAW = BATTLE_CAMERA.yaw + BATTLE_CAMERA.sway + BATTLE_CAMERA.focusYaw;
+const CAMERA_YAW = SETTLED_YAW;
 /** The battle camera's vertical field of view (BATTLE_CAMERA: 24°) and its pitch once settled (REF_PITCH − 0.13). */
 const CAMERA_FOV = THREE.MathUtils.degToRad(BATTLE_CAMERA.fov), CAMERA_PITCH = REF_PITCH - BATTLE_CAMERA.pitchDrop;
 
@@ -90,7 +93,7 @@ export function battleCamera(stage: Stage, yaw: number, out = new THREE.Vector3(
 const TALL = { r: 10, front: 4, clearance: 3 };
 
 /** Both platform footprints × 1.25 (ellipses) and the tall rule: a tall thing (> 1 unit) stands at r ≥ 10 from the
- *  centre and z ≤ centre.z + 4, never between the camera (any yaw in ±0.9) and the stage. */
+ *  centre and z ≤ centre.z + 4, never between the camera (any yaw in ±SETTLED_YAW) and the stage. */
 export function stageKeepOut(stage: Stage): { ellipses: Ellipse[]; tallOk(x: number, z: number): boolean } {
   const fp = PLATFORM_FOOTPRINT;
   const ellipses: Ellipse[] = [
@@ -125,18 +128,21 @@ export function behindBattler(stage: Stage, x: number, z: number, o: { half?: nu
   return [stage.player, stage.enemy].some((p) => z < p.z && z > p.z - reach && Math.abs(x - p.x) < half);
 }
 
-/** Yaws the sight cap and the frame top check the camera at (the user's ±0.9, in steps), the intro sweep's steps
- *  (ease 1: settled … 0: its first frame) and the user's zooms the sight cap checks (their range's ends: a sight line to a
+/** Yaws the sight cap and the frame top check the camera at (the user's ±0.9 in steps of 0.15 and, beyond them, the
+ *  sway's ends, ±0.94, and the focus nudge's, ±SETTLED_YAW: the user's ±0.9 alone left the settled camera's last 0.1
+ *  unchecked, where grass and long-grass clumps reached into the platform tops' rims), the intro sweep's steps (ease 1:
+ *  settled … 0: its first frame) and the user's zooms the sight cap checks (their range's ends: a sight line to a
  *  platform's near edge runs lower the further out the camera stands — zoomed out —, and lower beyond the point it looks
  *  at the nearer it stands). */
-const SIGHT_YAWS = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12);
+const SWAYED_YAW = BATTLE_CAMERA.yaw + BATTLE_CAMERA.sway;
+const SIGHT_YAWS = [-SETTLED_YAW, -SWAYED_YAW, ...Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12), SWAYED_YAW, SETTLED_YAW];
 const SIGHT_EASES = [1, 0.75, 0.5, 0.25, 0];
 const SIGHT_ZOOMS = [BATTLE_CAMERA.zoom[0], 1, BATTLE_CAMERA.zoom[1]];
 /** The sight cap stays this far under the sight line. */
 const SIGHT_MARGIN = 0.04;
 
 /** The highest a thing standing at (x, z) may reach (world y) without hiding a platform's top from the battle camera at
- *  any yaw in ±0.9, settled or anywhere in its intro sweep (battleCamera: the sweep stands 1.5× as far, and its sight
+ *  any yaw in ±SETTLED_YAW, settled or anywhere in its intro sweep (battleCamera: the sweep stands 1.5× as far, and its sight
  *  lines to the player's near edge run flatter), at any of the user's zooms (0.6–1.6: zoomed out, they run flatter still):
  *  below the sight line from the camera to the nearer edge of each platform top (y = 0) it stands in front of. Infinity
  *  where it stands in front of none. (The battlers stand on the tops, higher and further: under that line they stay whole
@@ -195,7 +201,7 @@ export const PASSING_VIEWS: readonly CameraView[] = [
 ];
 
 /** The height (world y) of the frame's top edge over (x, z): the lowest over the camera's `views` (default the settled
- *  camera at the user's yaws, ±0.9, zoom 1) that frame the point across (its horizontal angle off the view within
+ *  camera at its yaws, ±SETTLED_YAW, zoom 1) that frame the point across (its horizontal angle off the view within
  *  FRAME_SIDE) and whose top edge passes over `floor` there (default: every one) — what stands above it never shows, in
  *  any of them. Infinity where none does. (A floor of the ground's height leaves out the frames that do not show the
  *  ground there: what stands on it shows in none of them.) */
