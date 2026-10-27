@@ -7,9 +7,13 @@
 // The floor program fetches its cell the way the outdoor terrain does (kit/terrain.ts TERRAIN_GRID_GLSL +
 // TERRAIN_CELL_GLSL: un-projected grid point, clamped texel), without the border warp and without the bilinear tint
 // blend (rooms are rectilinear). Boards and tiles are Phase 3's analytic patterns (kit/interior/floorGlsl.ts), inlined
-// unchanged in blocks that declare the uniforms they read as locals. Every pattern is evaluated on every fragment and
-// the cell's kind selects among them: the snippets take derivatives (fwidth), which are undefined in control flow that
-// differs between neighbouring fragments (the kind changes from cell to cell).
+// unchanged (in their parts, floorGlsl.ts) in blocks that declare the uniforms they read as locals. A fragment runs only
+// its cell's pattern, chosen by the kind it fetches. The snippets' one derivative each (`fw`, fwidth) is undefined in
+// control flow that differs between neighbouring fragments, and the kind changes from cell to cell: so both footprints
+// are taken first, in uniform control flow, and handed to the patterns inside the branch (Phase 4 perf follow-up: until
+// then every pattern ran on every fragment, ~0.75 ms GPU on the iGPU). Not a draw per pattern: under MSAA a border
+// pixel's fragment is shaded at the pixel centre, which may lie in the neighbouring cell, and must shade it as that cell's
+// kind (the per-fragment choice by the fetched kind does; a per-draw choice cannot).
 
 import * as THREE from 'three';
 import { K, type MapAnalysis } from '../../../overworld/analyze';
@@ -20,7 +24,9 @@ import type { TileInfo } from '../../../overworld/tileInfo';
 import { TERRAIN_CELL_GLSL, TERRAIN_GRID_GLSL } from '../../terrain';
 import { FLOOR_KINDS, type FloorKind, type InteriorId } from '../../tables/building';
 import { floorLook } from '../colors';
-import { BOARDS_GLSL, FLOOR_SEAM_GLSL, TILES_GLSL } from '../floorGlsl';
+import {
+  BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, FLOOR_SEAM_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL,
+} from '../floorGlsl';
 import { windowRect, type RoomLayout } from '../room';
 
 export const enum FloorMat { Boards = 0, Tiles = 1, Carpet = 2, Rug = 3, Mat = 4 }
@@ -327,48 +333,65 @@ float floorEdgeDist(vec2 f, int edges) {
 }
 `;
 
+/** The terrain's cell fetch (TERRAIN_CELL_GLSL: `g`, `ic`, `mat`) with its texel kept as `vec4 cd`: one fetch for the
+ *  kind, the tint and the edges. */
+const FETCH_MAT = 'int mat = int(texelFetch(tCells, ic, 0).a * 255.0 + 0.5) >> 4;';
+if (!TERRAIN_CELL_GLSL.includes(FETCH_MAT)) throw new Error('floorPatterns: TERRAIN_CELL_GLSL no longer fetches `mat` as expected');
+const FLOOR_CELL_GLSL = TERRAIN_CELL_GLSL.replace(FETCH_MAT, 'vec4 cd = texelFetch(tCells, ic, 0);\n  int mat = int(cd.a * 255.0 + 0.5) >> 4;');
+
 const FLOOR_COLOR = /* glsl */ `
 {
 ${TERRAIN_GRID_GLSL}  vec2 warp = vec2(0.0);
-${TERRAIN_CELL_GLSL}  vec4 cd = texelFetch(tCells, ic, 0);
-  int edges = int(cd.a * 255.0 + 0.5) & 15;
+${FLOOR_CELL_GLSL}  int edges = int(cd.a * 255.0 + 0.5) & 15;
   vec3 tint = kitSrgbToLinear(cd.rgb);
   vec2 fp = cell;                                  // grid space: boards along z, tile seams on the grid
   vec2 pw = fwidth(fp);
   float pf = max(max(pw.x, pw.y), 1e-4);           // a pixel's footprint (cells; > 0: the smoothsteps need edge0 < edge1)
-  vec3 kBoards;
+  // the patterns' footprints (their only derivatives), taken here where control flow is uniform: below, a fragment runs
+  // only its cell's pattern, and the kind changes from cell to cell
+  vec2 fwBoards, fwTiles;
   {
+    vec4 uFloor = vec4(0.0, ${f(FLOOR_BOARDS.size)}, ${f(FLOOR_BOARDS.seam)}, ${f(FLOOR_BOARDS.tone)});
+${BOARDS_CELL_GLSL}${BOARDS_FW_GLSL}    fwBoards = fw;
+  }
+  {
+    vec4 uFloor = vec4(1.0, ${f(FLOOR_TILES.size)}, ${f(FLOOR_TILES.seam)}, ${f(FLOOR_TILES.tone)});
+${TILES_CELL_GLSL}${TILES_FW_GLSL}    fwTiles = fw;
+  }
+  vec3 kf;
+  if (mat == 0) {
     vec3 k = vec3(1.0);
     float seam = 0.0;
     vec4 uFloor = vec4(0.0, ${f(FLOOR_BOARDS.size)}, ${f(FLOOR_BOARDS.seam)}, ${f(FLOOR_BOARDS.tone)});
     vec3 uFloorAlt = vec3(1.0);
-${BOARDS_GLSL}    kBoards = k * (1.0 - uFloor.z * seam);
-  }
-  vec3 kTiles;
-  {
+${BOARDS_CELL_GLSL}    vec2 fw = fwBoards;
+${BOARDS_SHADE_GLSL}    kf = k * (1.0 - uFloor.z * seam);
+  } else if (mat == 1) {
     vec3 k = vec3(1.0);
     float seam = 0.0;
     vec4 uFloor = vec4(1.0, ${f(FLOOR_TILES.size)}, ${f(FLOOR_TILES.seam)}, ${f(FLOOR_TILES.tone)});
     vec3 uFloorAlt = vec3(${f(FLOOR_TILES.alt)});
-${TILES_GLSL}    kTiles = k * (1.0 - uFloor.z * seam);
+${TILES_CELL_GLSL}    vec2 fw = fwTiles;
+${TILES_SHADE_GLSL}    kf = k * (1.0 - uFloor.z * seam);
+  } else {
+    // fabric: a soft pile, its fine grain fading out where a pixel spans it
+    float fine = 1.0 - smoothstep(0.03, 0.08, pf);
+    float pile = 1.0 + 0.1 * (kitNoise2(fp * 3.1) - 0.5) + 0.08 * fine * (kitNoise2(fp * 17.0 + 7.3) - 0.5);
+    // rugs and mats: a border band on their edge sides (a rug's with a thin inner line)
+    float d = floorEdgeDist(fract(g), edges);
+    float rugBand = 1.0 - smoothstep(${f(RUG_BORDER.width)} - pf, ${f(RUG_BORDER.width)} + pf, d);
+    float rugLine = 1.0 - smoothstep(${f(RUG_BORDER.lineHalf)} - pf, ${f(RUG_BORDER.lineHalf)} + pf, abs(d - ${f(RUG_BORDER.width + RUG_BORDER.lineGap)}));
+    rugLine = mix(rugLine, ${f(2 * RUG_BORDER.lineHalf)}, smoothstep(0.02, 0.08, pf));
+    float kRug = mix(1.0, ${f(RUG_BORDER.shade)}, max(rugBand, rugLine));
+    float matBand = 1.0 - smoothstep(${f(MAT_BORDER.width)} - pf, ${f(MAT_BORDER.width)} + pf, d);
+    // a mat's weave: three bands across it, a fine basket weave, both fading out with distance
+    float weaveNear = 1.0 - smoothstep(0.03, 0.1, pf);
+    float bandsNear = 1.0 - smoothstep(0.1, 0.3, pf);
+    float bands = 0.5 + 0.5 * sin(fp.y * 18.849556);
+    float weave = sin(fp.x * 75.398224) * sin(fp.y * 75.398224);
+    float kMat = (1.0 + bandsNear * 0.12 * (bands - 0.5) + weaveNear * 0.05 * weave) * mix(1.0, ${f(MAT_BORDER.shade)}, matBand);
+    kf = vec3(pile * (mat == 3 ? kRug : mat == 4 ? kMat : 1.0));
   }
-  // fabric: a soft pile, its fine grain fading out where a pixel spans it
-  float fine = 1.0 - smoothstep(0.03, 0.08, pf);
-  float pile = 1.0 + 0.1 * (kitNoise2(fp * 3.1) - 0.5) + 0.08 * fine * (kitNoise2(fp * 17.0 + 7.3) - 0.5);
-  // rugs and mats: a border band on their edge sides (a rug's with a thin inner line)
-  float d = floorEdgeDist(fract(g), edges);
-  float rugBand = 1.0 - smoothstep(${f(RUG_BORDER.width)} - pf, ${f(RUG_BORDER.width)} + pf, d);
-  float rugLine = 1.0 - smoothstep(${f(RUG_BORDER.lineHalf)} - pf, ${f(RUG_BORDER.lineHalf)} + pf, abs(d - ${f(RUG_BORDER.width + RUG_BORDER.lineGap)}));
-  rugLine = mix(rugLine, ${f(2 * RUG_BORDER.lineHalf)}, smoothstep(0.02, 0.08, pf));
-  float kRug = mix(1.0, ${f(RUG_BORDER.shade)}, max(rugBand, rugLine));
-  float matBand = 1.0 - smoothstep(${f(MAT_BORDER.width)} - pf, ${f(MAT_BORDER.width)} + pf, d);
-  // a mat's weave: three bands across it, a fine basket weave, both fading out with distance
-  float weaveNear = 1.0 - smoothstep(0.03, 0.1, pf);
-  float bandsNear = 1.0 - smoothstep(0.1, 0.3, pf);
-  float bands = 0.5 + 0.5 * sin(fp.y * 18.849556);
-  float weave = sin(fp.x * 75.398224) * sin(fp.y * 75.398224);
-  float kMat = (1.0 + bandsNear * 0.12 * (bands - 0.5) + weaveNear * 0.05 * weave) * mix(1.0, ${f(MAT_BORDER.shade)}, matBand);
-  vec3 kf = mat == 0 ? kBoards : mat == 1 ? kTiles : vec3(pile * (mat == 3 ? kRug : mat == 4 ? kMat : 1.0));
   diffuseColor.rgb *= tint * kf;
 }
 `;

@@ -25,28 +25,47 @@ float floorSeam(float f, float halfW, float fw) {
 }
 `;
 
-/** Boards along z (statements; see the header for what they read and write). */
-export const BOARDS_GLSL = /* glsl */ `    // boards along z, uFloor.y wide, each 2.6–4.2 long, their butt joints staggered board to board; a tone per board and
+// Each pattern is also exported in its three parts (the whole is their concatenation, byte for byte): _CELL (the
+// pattern's coordinates), _FW (`vec2 fw`, the pixel's footprint in them: the snippet's only derivative) and _SHADE (the
+// rest, no derivatives). A caller choosing a pattern per fragment (the interior floor: by the cell's kind) takes the
+// footprint before its branch, where control flow is uniform, and passes it in as `fw` (kit/interior/geom/floorPatterns.ts).
+
+/** Boards: their coordinates (bx across, bz along; bi, bj the board and its segment; h, len its hash and length). */
+export const BOARDS_CELL_GLSL = /* glsl */ `    // boards along z, uFloor.y wide, each 2.6–4.2 long, their butt joints staggered board to board; a tone per board and
     // a soft grain along it, both fading out where a pixel spans a board
     float bx = fp.x / uFloor.y, bi = floor(bx);
     float h = kitHash12(vec2(bi, 17.0));
     float len = 2.6 + 1.6 * h;
     float bz = fp.y / len + h * 5.3, bj = floor(bz);
-    vec2 fw = fwidth(vec2(bx, bz));
-    float near = 1.0 - smoothstep(0.08, 0.4, fw.x);
+`;
+/** Boards: the pixel's footprint in board coordinates (needs uniform control flow). */
+export const BOARDS_FW_GLSL = /* glsl */ `    vec2 fw = fwidth(vec2(bx, bz));
+`;
+/** Boards: tone, grain and seams from the coordinates and `fw`. */
+export const BOARDS_SHADE_GLSL = /* glsl */ `    float near = 1.0 - smoothstep(0.08, 0.4, fw.x);
     float tone = kitHash12(vec2(bi * 1.7 + 3.0, bj));
     float grain = kitNoise2(vec2(fp.x * 6.0 + tone * 31.0, fp.y * 0.5));
     k *= 1.0 + near * (uFloor.w * (2.0 * tone - 1.0) + 0.05 * (grain - 0.5));
     seam = max(floorSeam(fract(bx), 0.03, fw.x), floorSeam(fract(bz), 0.02 / len, fw.y));
 `;
 
-/** Square tiles (statements; see the header for what they read and write). */
-export const TILES_GLSL = /* glsl */ `    // square tiles, uFloor.y on a side: a soft checker (uFloorAlt) and a tone per tile, fading out with distance
+/** Boards along z (statements; see the header for what they read and write). */
+export const BOARDS_GLSL = BOARDS_CELL_GLSL + BOARDS_FW_GLSL + BOARDS_SHADE_GLSL;
+
+/** Tiles: their coordinates (t, and ti the tile). */
+export const TILES_CELL_GLSL = /* glsl */ `    // square tiles, uFloor.y on a side: a soft checker (uFloorAlt) and a tone per tile, fading out with distance
     vec2 t = fp / uFloor.y, ti = floor(t);
-    vec2 fw = fwidth(t);
-    float near = 1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y));
+`;
+/** Tiles: the pixel's footprint in tile coordinates (needs uniform control flow). */
+export const TILES_FW_GLSL = /* glsl */ `    vec2 fw = fwidth(t);
+`;
+/** Tiles: checker, tone and seams from the coordinates and `fw`. */
+export const TILES_SHADE_GLSL = /* glsl */ `    float near = 1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y));
     float tone = kitHash12(ti + 5.0);
     float chk = mod(ti.x + ti.y, 2.0);
     k *= mix(vec3(1.0), uFloorAlt, mix(0.5, chk, near)) * (1.0 + near * uFloor.w * (2.0 * tone - 1.0));
     seam = max(floorSeam(fract(t.x), 0.012, fw.x), floorSeam(fract(t.y), 0.012, fw.y));
 `;
+
+/** Square tiles (statements; see the header for what they read and write). */
+export const TILES_GLSL = TILES_CELL_GLSL + TILES_FW_GLSL + TILES_SHADE_GLSL;

@@ -8,7 +8,9 @@ import {
   shaftGeometry, SHAFT_SLANT,
 } from '../src/render/kit/interior/geom/floorPatterns';
 import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
-import { BOARDS_GLSL, TILES_GLSL } from '../src/render/kit/interior/floorGlsl';
+import {
+  BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_GLSL, BOARDS_SHADE_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_GLSL, TILES_SHADE_GLSL,
+} from '../src/render/kit/interior/floorGlsl';
 import { TERRAIN_CELL_GLSL, TERRAIN_GRID_GLSL, terrainFragColor, terrainMaterial } from '../src/render/kit/terrain';
 import { CLAIM_OBJECT, CLAIM_SURFACE, Claims } from '../src/render/overworld/claims';
 import type { MapAnalysis } from '../src/render/overworld/analyze';
@@ -141,9 +143,19 @@ describe('interior floor program', () => {
     expect(o.hookKey).toBe('interiorFloor');
     const glsl = String(o.fragHead) + String(o.fragColor);
     expect(o.fragColor).toContain(TERRAIN_GRID_GLSL);
-    expect(o.fragColor).toContain(TERRAIN_CELL_GLSL);
-    expect(o.fragColor).toContain(BOARDS_GLSL);
-    expect(o.fragColor).toContain(TILES_GLSL);
+    // the terrain's cell fetch (its g, ic lines), its texel fetched once: kind, tint and edges from one `cd`
+    const [gLine, icLine] = TERRAIN_CELL_GLSL.split('\n');
+    expect(o.fragColor).toContain(`${gLine}\n${icLine}\n  vec4 cd = texelFetch(tCells, ic, 0);\n  int mat = int(cd.a * 255.0 + 0.5) >> 4;\n`);
+    expect(o.fragColor!.match(/texelFetch\(/g)).toHaveLength(1);
+    // the snippets in their parts (whole = parts joined, byte for byte: the battle's hall floor composes the whole)
+    expect(BOARDS_CELL_GLSL + BOARDS_FW_GLSL + BOARDS_SHADE_GLSL).toBe(BOARDS_GLSL);
+    expect(TILES_CELL_GLSL + TILES_FW_GLSL + TILES_SHADE_GLSL).toBe(TILES_GLSL);
+    expect([sha(BOARDS_GLSL), sha(TILES_GLSL)]).toEqual([          // recorded before the split
+      'd9c7dc0e0d71a08ced99c5ca90d2ce51dd4d6d3b337d32538956bbf0b40909ae', 'e5412d15d78a963f7249248a3a05b9c06793ff98db1f0aaa923f5c27cdfc21ff',
+    ]);
+    for (const part of [BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL]) {
+      expect(o.fragColor).toContain(part);
+    }
     expect(o.fragColor).toContain('vec4 uFloor = vec4(0.0, 0.55, 0.38, 0.07);');
     expect(o.fragColor).toContain('vec4 uFloor = vec4(1.0, 1.0, 0.22, 0.025);');
     expect(glsl).not.toMatch(/uniform\s+vec[34]\s+uFloor/);
@@ -151,6 +163,21 @@ describe('interior floor program', () => {
     expect(o.fragColor).not.toMatch(/\d\.\d{7,}/);                   // float literals stay short
     // braces balance (the inlined blocks are closed)
     expect([...glsl].filter((c) => c === '{').length).toBe([...glsl].filter((c) => c === '}').length);
+  });
+
+  it('runs only the cell kind\'s pattern, every derivative taken before the branch on the kind', () => {
+    const c = interiorFloorMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1)).fragColor!;
+    const branch = c.indexOf('if (mat == 0)');
+    expect(branch).toBeGreaterThan(0);
+    expect(c.lastIndexOf('fwidth(')).toBeLessThan(branch);              // fwidth(fp) and both patterns' footprints
+    expect(c.match(/fwidth\(/g)).toHaveLength(3);
+    // one pattern per branch: boards, tiles, else fabric (carpet; rugs and mats with their borders)
+    const tiles = c.indexOf('} else if (mat == 1)'), fabric = c.indexOf('} else {', tiles);
+    expect(branch < tiles && tiles < fabric).toBe(true);
+    expect(c.slice(branch, tiles)).toContain(BOARDS_SHADE_GLSL);
+    expect(c.slice(tiles, fabric)).toContain(TILES_SHADE_GLSL);
+    expect(c.slice(fabric)).toMatch(/kitNoise2[\s\S]*kRug[\s\S]*kMat/);
+    expect(c.slice(0, branch)).not.toMatch(/kitNoise2\(|kRug|kMat|float near/);   // no pattern work before the branch
   });
 });
 
