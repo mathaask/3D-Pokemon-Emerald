@@ -378,6 +378,15 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
     kit/palette `nightSoilScale` not folded onto the shared night helper; `Soup` repeats QuadWriter's winding rule;
     monbg copy history treats a u32 frame-counter wrap like a rewind (one frame, every ~2.3 years of play).
 
+- **Post-merge fix (2026-10-27, branch `battle-feet`, user report "the lower body of big Pokémon is hidden in the
+  platforms"):** each battler card slides along the reference camera's ray (orthographic, so the GBA layout is exact)
+  until its lowest opaque row stands on the platform top; floaters keep their elevation. Before: up to 12 rows hidden
+  (Groudon, Steelix, Aggron, Onix 12, Snorlax 11, Wailord 10); after: 0. Applied to **both styles** (Retro had the same
+  bug: a deliberate, user-requested break of the Retro pixel rule; new Retro battle reference = this fix). Moved
+  opponents look ≈ 7 % bigger under the perspective default camera. Gates: non-battle shots 0.00 %, walks compile 0,
+  luminance 0.967–1.124, A/B +2.57 ms (within the Phase 3 reference), battle_enter first frame 61.7 ms (quiet run).
+  Report: `.superpowers/sdd/battle-feet-report.md` (gitignored).
+
 ## Next step
 - **Phase 3 is complete (2026-10-27)** and merged to `main`. Next candidates: terrain height solver v2 (mountain
   ridges), Phase 4 (interiors, spec §8), or a battle look-polish pass (the Phase 3 known gaps above).
