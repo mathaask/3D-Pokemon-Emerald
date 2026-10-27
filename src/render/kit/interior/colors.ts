@@ -16,6 +16,10 @@ const LIT = 0.2;
 const SECOND_DIFF = 0.1;
 /** `accent`: saturation at least this, on at least ACCENT_PX pixels. */
 const ACCENT_SAT = 0.3, ACCENT_PX = 6;
+/** The GBA's dark blue-grey outline (0x424a6b, 0x52526b …): the most frequent colour of small objects, never a surface.
+ *  The interior furniture's one outline rule (geom/homeFurniture.ts, geom/serviceFurniture.ts). */
+export const isOutline = (c: RGB) => luma(c) < 0.4 && saturation(c) < 0.3;
+
 /** A part with no pixel at all. */
 const NO_COLOUR: RGB = [0.5, 0.5, 0.5];
 /** A back wall with no wall art at all (a warm off-white). */

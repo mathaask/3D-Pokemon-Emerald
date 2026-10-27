@@ -14,7 +14,7 @@ import { lathe, lin, tube, type Soup } from '../../soup';
 import { rng, type V3 } from '../../geom';
 import * as THREE from 'three';
 import { mix, scale, soften, type RGB } from '../../palette';
-import { isOutline } from './homeFurniture';
+import { isOutline } from '../colors';
 import type { Quality } from '../../../post';
 import type { PartColors } from '../colors';
 import type { WallDir } from '../room';
@@ -56,7 +56,7 @@ const RAIL = { height: 0.9, post: 0.045, radius: 0.025, inset: 0.05 };
 const TOP_LIFT = 0.3, TOP_TINT = 0.12, OUTLINE_LIFT = 0.55;
 
 /** The part's colours for surfaces, softened and made linear. The GBA rings its counters, shelves, machines and stairs
- *  in a dark blue-grey outline (0x52526b, 0x424a6b …: the kit's one `isOutline` rule, geom/homeFurniture.ts) that is
+ *  in a dark blue-grey outline (0x52526b, 0x424a6b …: the kit's one `isOutline` rule, colors.ts) that is
  *  often a part's most frequent colour: never a surface. `main` the body (the tile's main; an outline main gives way to
  *  the second, or is lifted towards white), `second` the top (the tile's second when it is no outline and apart from the
  *  body, else the body lifted towards white with a hint of accent), `accent` (an outline accent gives way to the top),

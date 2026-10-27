@@ -13,6 +13,11 @@ import { interiorIds } from '../../src/render/kit/tables/building';
 import { interiorScope } from '../../src/render/kit/interior/scope';
 import { gridEvents } from '../../src/render/kit/events';
 import { roomLayout, checkRoomLayout, ROOM_RULES, type RoomLayout } from '../../src/render/kit/interior/room';
+import { flattenFloors } from '../../src/render/overworld/world';
+import { extractAll } from '../../src/render/kit/semantics';
+import { INTERIOR_FAMILIES } from '../../src/render/kit/interior/index';
+import { roomFloorHeights, type FloorCell } from '../../src/render/kit/interior/geom/floorPatterns';
+import type { ShellPlacement } from '../../src/render/kit/interior/shell';
 
 /** The world's margin (World.margin). */
 const MARGIN = 14;
@@ -73,6 +78,41 @@ describe('interior room layouts on the real maps', () => {
       const { a, L } = layout(loadStaticMap(g, n));
       expect(roomDigest(a, L), k).toBe(want);
     }
+  });
+
+  // review B I2: the floor's heights and the walls' floorY come from one vote (RoomLayout.floorY); this ties them on every
+  // in-scope map, both as World.build runs the families (floors flattened) and on the solver's own heights
+  it('lays every room floor at the floorY of its walls', () => {
+    const bad: string[] = [];
+    let faces = 0;
+    for (const m of loadAllMaps(new RomReader(loadRom()))) {
+      const s = loadStaticMap(m.group, m.num);
+      const key = `${m.group}.${m.num}`;
+      if (!interiorScope(s.opts, key)) continue;
+      for (const flat of [true, false]) {
+        const a = analyze(s.grid, { ...s.opts, margin: MARGIN });
+        if (flat) flattenFloors(a);
+        const ex = extractAll({ a, events: gridEvents(s.map.events, 0), quality: 'medium' }, INTERIOR_FAMILIES);
+        const L = (ex.payloads.get('shell') as ShellPlacement).layout;
+        const h = new Map<number, number>();
+        for (const c of ex.payloads.get('floor') as FloorCell[]) h.set(c.i, c.h);
+        const raw = roomFloorHeights(a, L);
+        for (const [i, y] of h) if (L.room[i] >= 0 && y !== L.floorY[L.room[i]]) bad.push(`${key}${flat ? '' : ' raw'}: floor cell ${i} at ${y}`);
+        for (let i = 0; i < a.N; i++) if (L.room[i] >= 0 && raw[i] !== Math.fround(L.floorY[L.room[i]])) bad.push(`${key}: roomFloorHeights ${i}`);
+        // each run's face: the room cells it closes (N: the row at or south of its line, S: north of it, E / W likewise)
+        for (const r of L.runs) {
+          for (let t = Math.floor(r.from); t < Math.ceil(r.to); t++) {
+            const [x, y] = r.dir === 'N' ? [t, Math.ceil(r.line)] : r.dir === 'S' ? [t, r.line - 1]
+              : r.dir === 'E' ? [r.line - 1, t] : [r.line, t];
+            if (!a.inside(x, y) || !L.inside[a.idx(x, y)] || !h.has(a.idx(x, y))) continue;
+            faces++;
+            if (h.get(a.idx(x, y)) !== Math.fround(r.floorY)) bad.push(`${key}${flat ? '' : ' raw'}: ${r.dir}${r.line} floorY ${r.floorY}, floor (${x}, ${y}) at ${h.get(a.idx(x, y))}`);
+          }
+        }
+      }
+    }
+    expect(faces).toBeGreaterThan(5000);
+    expect(bad).toEqual([]);
   });
 
   // firstSegment and corner change none of today's maps (they guard shapes the unit tests pin: a void gap under the

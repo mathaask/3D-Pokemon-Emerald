@@ -1,6 +1,9 @@
 // Interior room layout (Phase 4 Task 5): the wall-art band, the back line, wall runs, wall art features and door gaps.
 import { describe, it, expect } from 'vitest';
-import { roomLayout, checkRoomLayout, windowRect, RECESS, WALL_H } from '../src/render/kit/interior/room';
+import {
+  roomLayout, checkRoomLayout, windowRect, bandRect, mergeSpans, RECESS, WALL_H, WALL_SPAN,
+} from '../src/render/kit/interior/room';
+import { roomFloorHeights } from '../src/render/kit/interior/geom/floorPatterns';
 import { interiorIds } from '../src/render/kit/tables/building';
 import { fakeInterior } from './helpers/fakeInterior';
 const HOUSE = [
@@ -245,5 +248,44 @@ describe('room layout', () => {
     const L = roomLayout(a, ids, []);
     const copy = { ...L.features[0] };              // a copy: z falls back to the northernmost N run over its centre
     expect(checkRoomLayout(a, { ...L, features: [copy], runs: L.runs.filter((r) => r.dir !== 'N') })).toContain('window at 3…5 on no N run');
+  });
+  // review B I2: one vote for a room's floor height, read by the walls (runs' floorY) and the floor (roomFloorHeights)
+  it('raises the walls and the floor of a room together', () => {
+    const { a, ids } = fakeInterior(['         ', ' WWW WWW ', ' ... ... ', ' ... ... ', '         ']);
+    for (let i = 0; i < a.N; i++) if (a.cellX(i) >= 5 && !Number.isNaN(a.height[i])) a.height[i] = 2;   // the east room: 2 up
+    const L = roomLayout(a, ids, []);
+    expect(L.rooms).toBe(2);
+    const east = L.room[a.idx(6, 2)], west = L.room[a.idx(2, 2)];
+    expect(east).not.toBe(west);
+    expect(L.floorY[east]).toBe(2);
+    expect(L.floorY[west]).toBe(0);
+    const h = roomFloorHeights(a, L);
+    for (const r of L.runs) {
+      const x = r.dir === 'E' ? r.line - 1 : r.dir === 'W' ? r.line : Math.floor(r.from);
+      const y = r.dir === 'N' ? Math.ceil(r.line) : r.dir === 'S' ? r.line - 1 : Math.ceil(r.from);
+      expect(h[a.idx(x, y)], `${r.dir}${r.line}`).toBe(r.floorY);
+    }
+    expect(L.runs.filter((r) => r.floorY === 2)).toHaveLength(4);
+    expect(L.room[a.idx(4, 2)]).toBe(-1);           // the void between them
+  });
+  // review B M5: windows, clocks and decals map a band's rows to heights one way
+  it('maps the rows of a 3-row band to the same heights for windows and the other wall art', () => {
+    const { a, ids } = fakeInterior(['        ', ' WWWWWW ', ' WOOWWW ', ' WOOWWW ', ' ...... ', ' ...... ', '        ']);
+    const L = roomLayout(a, ids, []);
+    const f = L.features.find((q) => q.kind === 'window')!;
+    expect([f.rows, f.row0, f.row1]).toEqual([3, 1, 2]);
+    const w = windowRect(L, f), b = bandRect(f, WALL_SPAN[0], WALL_SPAN[1]);
+    expect([w.y0, w.y1]).toEqual([b.y0, b.y1]);
+    expect(w.y0).toBeCloseTo(WALL_SPAN[0], 9);       // the band's bottom two rows: the span's lower two thirds
+    expect(w.y1).toBeCloseTo(WALL_SPAN[0] + ((WALL_SPAN[1] - WALL_SPAN[0]) * 2) / 3, 9);
+    expect(WALL_SPAN).toEqual([0.2, WALL_H - 0.3]);
+  });
+  it('merges collinear spans of one direction, line, floorY and partition flag only', () => {
+    const m = mergeSpans([
+      { dir: 'N' as const, line: 1, from: 2, to: 3, floorY: 0 }, { dir: 'N' as const, line: 1, from: 0, to: 2, floorY: 0 },
+      { dir: 'N' as const, line: 1, from: 3, to: 4, floorY: 1 }, { dir: 'E' as const, line: 1, from: 0, to: 1, floorY: 0 },
+    ]);
+    expect(m).toEqual([{ dir: 'N', line: 1, from: 0, to: 3, floorY: 0 }, { dir: 'N', line: 1, from: 3, to: 4, floorY: 1 },
+      { dir: 'E', line: 1, from: 0, to: 1, floorY: 0 }]);
   });
 });

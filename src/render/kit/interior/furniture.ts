@@ -24,7 +24,7 @@ import { Soup } from '../soup';
 import { hashCell } from '../geom';
 import type { RGB } from '../palette';
 import { FURNITURE_KINDS, interiorIds, type FurnitureKind, type InteriorId } from '../tables/building';
-import { RECESS, roomLayout, type RoomLayout, type WallDir } from './room';
+import { DIR_STEP, RECESS, roomLayout, walkable, type RoomLayout, type WallDir } from './room';
 import { partColors, type PartColors } from './colors';
 import { SHELL } from './wallParts';
 import type { InteriorCatalogueEntry } from './index';
@@ -123,11 +123,6 @@ const FURNITURE = new Set<InteriorId>(FURNITURE_KINDS);
 const STAIRS: ReadonlySet<FurnitureKind> = new Set<FurnitureKind>(['stairsUp', 'stairsDown']);
 const KIND_INDEX = new Map<FurnitureKind, number>(FURNITURE_KINDS.map((k, n) => [k, n]));
 
-/** Room material the player can stand on: a walkable cell, a Sootopolis 0x3FF floor block (`real3ff`) included. */
-function walkable(a: MapAnalysis, i: number): boolean {
-  return a.kind[i] !== K.Void ? a.col[i] === 0 : a.real3ff[i] === 1;
-}
-
 /** The floor height under cell i (a walkable cell's own, a blocked one's ground). */
 function floorAt(a: MapAnalysis, i: number): number {
   const h = a.kind[i] === K.Floor ? a.height[i] : a.groundH[i];
@@ -173,8 +168,6 @@ function splitComponent(a: MapAnalysis, kind: FurnitureKind, cells: number[]): n
   }
   return out;
 }
-
-const DIR_STEP: Readonly<Record<WallDir, [number, number]>> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
 
 /** A chair's facing: towards the nearest table cell within CHAIR_REACH (the larger axis; ties: east / west). */
 function chairFacing(a: MapAnalysis, ids: readonly (InteriorId | null)[], xy: readonly [number, number][]): WallDir | null {

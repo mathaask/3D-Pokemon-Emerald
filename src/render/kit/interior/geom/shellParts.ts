@@ -27,7 +27,10 @@ import { lathe, lin, Soup } from '../../soup';
 import type { V3 } from '../../geom';
 import { scale4x } from '../../upscale';
 import { INNER_NORMAL, pocketDir } from '../cutaway';
-import { RECESS, WALL_H, WALL_T, windowRect, type DoorGap, type RoomLayout, type WallDir, type WallFeature, type WallRun } from '../room';
+import {
+  RECESS, WALL_H, WALL_SPAN, WALL_T, bandRect, mergeSpans, windowRect, type DoorGap, type RoomLayout, type WallDir, type WallFeature,
+  type WallRun,
+} from '../room';
 import {
   SHELL, WINDOW, addWindow, maxProfileDepth, shellPalette, shellProfile, wallFrameAt, wallPath,
   type ShellColors, type ShellPalette, type ShellProfile, type V2, type WallFrame, type WindowSize,
@@ -45,9 +48,9 @@ export const LINTEL_H = 2.1;
 export const PARTITION_H = WALL_H / 2;
 /** A decal stands this far in front of its wall's face (inner face 0): clear of the rail and baseboard (SHELL.relief). */
 export const DECAL_OFFSET = SHELL.relief + 0.01;
-/** The band's art rows are stretched over this height span on a wall (windowRect's: 0.2 … WALL_H − 0.3) and on a
- *  partition's face. */
-export const WALL_SPAN: readonly [number, number] = [0.2, WALL_H - 0.3];
+/** The band's art rows are stretched over WALL_SPAN on a wall (room.ts: windows, clocks, decals) and over this span on
+ *  a partition's face. */
+export { WALL_SPAN, bandRect };
 export const PARTITION_SPAN: readonly [number, number] = [0.12, PARTITION_H - 0.12];
 /** Doorways: the casing `casing` wide standing `depth` off the wall; linings `lining` thick on the opening's jambs and
  *  head; the closed slab `slab` thick in the middle of the wall; a knob. */
@@ -127,20 +130,6 @@ export function cropProfile(p: ShellProfile, h0: number, h1: number): ShellProfi
 /** An outer wall run built by the shell (WallRun without the partition flag). */
 export type ShellRun = Omit<WallRun, 'partition'>;
 
-/** Merges collinear adjacent runs (same dir, line, floorY); ordered by dir (N, E, S, W), from, line. */
-function mergeRuns(runs: ShellRun[]): ShellRun[] {
-  const order: Record<WallDir, number> = { N: 0, E: 1, S: 2, W: 3 };
-  const s = runs.map((r) => ({ ...r }))
-    .sort((p, q) => order[p.dir] - order[q.dir] || p.line - q.line || p.floorY - q.floorY || p.from - q.from);
-  const out: ShellRun[] = [];
-  for (const r of s) {
-    const last = out[out.length - 1];
-    if (last && last.dir === r.dir && last.line === r.line && last.floorY === r.floorY && r.from <= last.to) last.to = Math.max(last.to, r.to);
-    else out.push(r);
-  }
-  return out.sort((p, q) => order[p.dir] - order[q.dir] || p.from - q.from || p.line - q.line);
-}
-
 /** Whether cell (x, y)'s north neighbour is back-wall band (not a partition): a partition cell there reaches back into
  *  the recess to the back wall's face. */
 function underBackBand(a: MapAnalysis, L: RoomLayout, x: number, y: number): boolean {
@@ -176,7 +165,7 @@ export function shellRuns(a: MapAnalysis, L: RoomLayout): ShellRun[] {
     const near = outer.find((r) => r.dir === b.dir && r.line === b.line && r.from <= b.to && b.from <= r.to);
     outer.push({ ...b, floorY: near ? near.floorY : fyMode });
   }
-  return mergeRuns(outer);
+  return mergeSpans(outer);
 }
 
 /** The run's two ends' neighbours: per end (from, to) the inner normal of the run of the other axis that has an end at
@@ -223,12 +212,6 @@ function addRun(s: Soup, r: ShellRun, ends: [V2 | null, V2 | null], openings: re
 }
 
 // ------------------------------------------------------------------------------------------------- features
-
-/** A feature's art rows stretched over [y0s, y1s] (row 0 = the band's top, at y1s). */
-export function bandRect(f: WallFeature, y0s: number, y1s: number): { y0: number; y1: number } {
-  const span = y1s - y0s;
-  return { y0: y1s - ((f.row1 + 1) / f.rows) * span, y1: y1s - (f.row0 / f.rows) * span };
-}
 
 /** Whether a feature hangs on a partition (its first row's middle cell, as roomLayout reads the wall it hangs on). */
 export function onPartition(L: RoomLayout, f: WallFeature): boolean {
@@ -411,9 +394,9 @@ function addDoor(s: Soup, r: ShellRun, from: number, to: number, trim: RGB): voi
  *  the solid on its left, each segment's inner normal (pointing away from the solid, into the room), its floorY. */
 export interface PartitionLoop { path: V2[]; inward: V2[]; floorY: number }
 
-/** The partitions' footprints (their cells, and the recess where a cell hangs from the back wall's band), traced on a
- *  half-cell grid into closed loops (collinear edges merged). */
-export function partitionLoops(a: MapAnalysis, L: RoomLayout): PartitionLoop[] {
+/** The partitions' footprint on a half-cell grid (W × H half cells from a.minX, a.minY): their cells, and the recess
+ *  where a cell hangs from the back wall's band. null: no partition. */
+export function partitionSolid(a: MapAnalysis, L: RoomLayout): { solid: Uint8Array; W: number; H: number } | null {
   const W = (a.maxX - a.minX) * 2, H = (a.maxY - a.minY) * 2;
   const solid = new Uint8Array(W * H);
   let any = false;
@@ -424,7 +407,14 @@ export function partitionLoops(a: MapAnalysis, L: RoomLayout): PartitionLoop[] {
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) solid[(hy + dy) * W + hx + dx] = 1;
     if (underBackBand(a, L, x, y) && hy > 0) { solid[(hy - 1) * W + hx] = 1; solid[(hy - 1) * W + hx + 1] = 1; }
   }
-  if (!any) return [];
+  return any ? { solid, W, H } : null;
+}
+
+/** The partitions' footprints (`partitionSolid`) traced into closed loops (collinear edges merged). */
+export function partitionLoops(a: MapAnalysis, L: RoomLayout): PartitionLoop[] {
+  const P = partitionSolid(a, L);
+  if (!P) return [];
+  const { solid, W, H } = P;
   const fy = (() => {
     const p = L.runs.find((r) => r.partition);
     return p ? p.floorY : 0;
@@ -509,7 +499,7 @@ export function featureRole(L: RoomLayout, runs: readonly ShellRun[], f: WallFea
 }
 
 /** The features the shell draws as decals (featureRole; a window whose opening would overlap another one also becomes
- *  one at build, never seen on the 138 maps). */
+ *  one at build, never seen on the 137 in-scope maps). */
 export function shellDecals(a: MapAnalysis, L: RoomLayout): WallFeature[] {
   const runs = shellRuns(a, L);
   return L.features.filter((f) => featureRole(L, runs, f) === 'decal');
@@ -626,14 +616,9 @@ export function buildShellSoups(inp: ShellInput): ShellSoups {
 
 /** The partitions' lids over their footprints: per half-cell row, its runs of solid half-cells as one quad each. */
 function addPartitionLids(s: Soup, a: MapAnalysis, L: RoomLayout, fy: number, C: ShellPalette): void {
-  const W = (a.maxX - a.minX) * 2, H = (a.maxY - a.minY) * 2;
-  const solid = new Uint8Array(W * H);
-  for (let i = 0; i < a.N; i++) {
-    if (!L.partition[i]) continue;
-    const x = a.cellX(i), y = a.cellY(i), hx = (x - a.minX) * 2, hy = (y - a.minY) * 2;
-    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) solid[(hy + dy) * W + hx + dx] = 1;
-    if (underBackBand(a, L, x, y) && hy > 0) { solid[(hy - 1) * W + hx] = 1; solid[(hy - 1) * W + hx + 1] = 1; }
-  }
+  const P = partitionSolid(a, L);
+  if (!P) return;
+  const { solid, W, H } = P;
   const y = fy + PARTITION_H;
   for (let j = 0; j < H; j++) {
     for (let i = 0; i < W; i++) {

@@ -23,6 +23,9 @@ export const RECESS = 0.5;     // the back wall's inner face this far north of t
 export const WALL_H = 2.6;     // wall height over the room floor
 export const WALL_T = 0.3;     // wall thickness (outwards)
 export const BAND_MAX = 3;     // at most this many wall-art rows under the void
+/** A back wall's art rows are stretched over this height span (row 0, the band's top, at the top): its windows, clocks
+ *  and decals (`bandRect`). */
+export const WALL_SPAN: readonly [number, number] = [0.2, WALL_H - 0.3];
 export type WallDir = 'N' | 'E' | 'S' | 'W';   // the side of the room the wall closes (N = back wall, looks south)
 /** A straight wall: its inner face on `line` (world z for N/S, world x for E/W), from `from` to `to` along the other axis.
  *  `partition`: the face of a partition (a dividing wall in the room), present only then. */
@@ -33,6 +36,8 @@ export interface WallFeature { kind: 'window' | 'clock' | 'decor'; x0: number; x
 export interface DoorGap { dir: WallDir; line: number; from: number; to: number }
 export interface RoomLayout {
   rooms: number;
+  room: Int32Array;      // per analysis cell: its room (a 4-connected component of room material), −1 none
+  floorY: number[];      // per room: its floor height (the walls' `floorY`, the floor's `roomFloorHeights`)
   inside: Uint8Array;    // per analysis cell: room floor area (walkable, furniture, stairs, mats)
   band: Uint8Array;      // per cell: back-wall art (non-void, above the back line), partitions included
   partition: Uint8Array; // per cell: a partition's cell (a subset of `band`)
@@ -61,6 +66,8 @@ export const ROOM_RULES = {
 const FURNITURE = new Set<InteriorId>(FURNITURE_KINDS);
 const DIR_ORDER: Record<WallDir, number> = { N: 0, E: 1, S: 2, W: 3 };
 const DIRS: readonly WallDir[] = ['N', 'E', 'S', 'W'];
+/** One grid step towards each side (grid y grows south). */
+export const DIR_STEP: Readonly<Record<WallDir, readonly [number, number]>> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
 
 /** Per feature: the z of the wall it hangs on (by reference: a copied feature falls back in `windowRect`). */
 const featureZ = new WeakMap<WallFeature, number>();
@@ -68,15 +75,16 @@ const memo = new WeakMap<MapAnalysis, { ids: readonly (InteriorId | null)[]; war
 
 /** Room material: an in-map cell (a map whose border is no void, the Department Store's rooftop, ends at its edge)
  *  that is non-void, or a block of metatile 0x3FF the classifier reads as the border (`real3ff`: Sootopolis' houses
- *  floor parts of their rooms with it). */
-function nonVoid(a: MapAnalysis, i: number): boolean {
+ *  floor parts of their rooms with it). The one rule: the layout, the floor and the furniture all read it here. */
+export function roomMaterial(a: MapAnalysis, i: number): boolean {
   const m = a.opts.margin, x = a.cellX(i), y = a.cellY(i);
   if (x < a.minX + m || y < a.minY + m || x >= a.maxX - m || y >= a.maxY - m) return false;
   return a.kind[i] !== K.Void || a.real3ff[i] > 0;
 }
 
-/** Walkable: room material the game lets the player stand on. */
-function walkable(a: MapAnalysis, i: number): boolean {
+/** Walkable: room material the game lets the player stand on (a 0x3FF block: its own collision, `real3ff` 1). The one
+ *  rule, as `roomMaterial`. */
+export function walkable(a: MapAnalysis, i: number): boolean {
   return a.kind[i] !== K.Void ? a.col[i] === 0 : a.real3ff[i] === 1;
 }
 
@@ -105,7 +113,7 @@ interface Edge { line: number; from: number; to: number; partition: boolean }
 /** A unit boundary edge of inside cell (x, y) towards `dir` (the run it needs), or null when the neighbour is room.
  *  `bl`: per cell, its segment's back line (for band cells: of the room rows below them). */
 function edgeOf(a: MapAnalysis, inside: Uint8Array, band: Uint8Array, part: Uint8Array, bl: Int32Array, x: number, y: number, dir: WallDir): Edge | null {
-  const dx = dir === 'E' ? 1 : dir === 'W' ? -1 : 0, dy = dir === 'S' ? 1 : dir === 'N' ? -1 : 0;
+  const [dx, dy] = DIR_STEP[dir];
   const nx = x + dx, ny = y + dy;
   const n = a.inside(nx, ny) ? a.idx(nx, ny) : -1;
   if (n >= 0 && inside[n]) return null;
@@ -123,8 +131,9 @@ function edgeOf(a: MapAnalysis, inside: Uint8Array, band: Uint8Array, part: Uint
   return { line: dir === 'E' ? x + 1 : x, from: recess ? y - RECESS : y, to, partition };
 }
 
-/** Merges collinear adjacent spans (same dir, line, floorY and partition flag): sorted by dir, from, line. */
-function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: number; floorY?: number; partition?: true }>(spans: T[]): T[] {
+/** Merges collinear adjacent spans (same dir, line, floorY and partition flag; sorts `spans` in place, returns new
+ *  objects): sorted by dir, from, line. The layout's runs and doors, the shell's outer runs. */
+export function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: number; floorY?: number; partition?: true }>(spans: T[]): T[] {
   const same = (p: T, q: T) => p.dir === q.dir && p.line === q.line && p.floorY === q.floorY && p.partition === q.partition;
   spans.sort((p, q) => DIR_ORDER[p.dir] - DIR_ORDER[q.dir] || p.line - q.line || (p.floorY ?? 0) - (q.floorY ?? 0)
     || Number(p.partition ?? 0) - Number(q.partition ?? 0) || p.from - q.from);
@@ -136,6 +145,17 @@ function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: nu
   }
   return out.sort((p, q) => DIR_ORDER[p.dir] - DIR_ORDER[q.dir] || p.from - q.from || p.line - q.line);
 }
+
+/** A floor height vote's winner: the most votes, ties the lower height; no votes 0. */
+export function heightMode(votes: ReadonlyMap<number, number>): number {
+  let best = 0, bestN = 0;
+  for (const [h, n] of votes) if (n > bestN || (n === bestN && h < best)) { best = h; bestN = n; }
+  return best;
+}
+
+/** Whether cell i votes for its room's floor height: a room cell of the floor with a height. */
+export const votesHeight = (a: MapAnalysis, L: Pick<RoomLayout, 'inside'>, i: number): boolean =>
+  L.inside[i] === 1 && a.kind[i] === K.Floor && !Number.isNaN(a.height[i]);
 
 /**
  * The room layout of an in-scope interior (memoised per analysis, ids and warps: pass the build's own `warps` from every
@@ -160,7 +180,7 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   const room = new Int32Array(N).fill(-1);
   let rooms = 0;
   for (let s = 0; s < N; s++) {
-    if (!nonVoid(a, s) || room[s] >= 0) continue;
+    if (!roomMaterial(a, s) || room[s] >= 0) continue;
     const id = rooms++;
     room[s] = id;
     const stack = [s];
@@ -171,7 +191,7 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
         const nx = cx + dx, ny = cy + dy;
         if (!a.inside(nx, ny)) continue;
         const j = a.idx(nx, ny);
-        if (nonVoid(a, j) && room[j] < 0) { room[j] = id; stack.push(j); }
+        if (roomMaterial(a, j) && room[j] < 0) { room[j] = id; stack.push(j); }
       }
     }
   }
@@ -183,9 +203,9 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     const seen = new Set<number>();
     let y = minY;
     while (y < maxY) {
-      if (!nonVoid(a, a.idx(x, y))) { y++; continue; }
+      if (!roomMaterial(a, a.idx(x, y))) { y++; continue; }
       const t = y;
-      while (y + 1 < maxY && nonVoid(a, a.idx(x, y + 1))) y++;
+      while (y + 1 < maxY && roomMaterial(a, a.idx(x, y + 1))) y++;
       const b = y;
       y++;
       let own = -1;
@@ -258,14 +278,10 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   // each room's floor height: the mode of its walkable floor cells' heights
   const hv = Array.from({ length: rooms }, () => new Map<number, number>());
   for (let i = 0; i < N; i++) {
-    if (!inside[i] || a.kind[i] !== K.Floor || Number.isNaN(a.height[i])) continue;
+    if (!votesHeight(a, { inside }, i)) continue;
     hv[room[i]].set(a.height[i], (hv[room[i]].get(a.height[i]) ?? 0) + 1);
   }
-  const floorY = hv.map((m) => {
-    let best = 0, bestN = 0;
-    for (const [h, n] of m) if (n > bestN || (n === bestN && h < best)) { best = h; bestN = n; }
-    return best;
-  });
+  const floorY = hv.map(heightMode);
 
   // wall runs: every boundary edge of an inside cell, merged
   const edges: WallRun[] = [];
@@ -353,7 +369,7 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   };
   const floorTile = floorCount.size ? mostCommon(floorCount) : mostCommon(anyCount);
 
-  const L: RoomLayout = { rooms, inside, band, partition: part, backLine, runs, features, doors, floorTile };
+  const L: RoomLayout = { rooms, room, floorY, inside, band, partition: part, backLine, runs, features, doors, floorTile };
   memo.set(a, { ids, warps, L });
   return L;
 }
@@ -440,18 +456,24 @@ export function checkRoomLayout(a: MapAnalysis, L: RoomLayout, warps?: readonly 
   return out;
 }
 
+/** A feature's art rows stretched over [y0s, y1s], row 0 (the band's top) at the top: y0 = y0s + ((rows − row1 − 1) /
+ *  rows)·span, y1 = y0s + ((rows − row0) / rows)·span (span = y1s − y0s). Windows, clocks and decals (WALL_SPAN on a
+ *  back wall, the shell's PARTITION_SPAN on a partition). */
+export function bandRect(f: WallFeature, y0s: number, y1s: number): { y0: number; y1: number } {
+  const span = y1s - y0s;
+  return { y0: y0s + ((f.rows - f.row1 - 1) / f.rows) * span, y1: y0s + ((f.rows - f.row0) / f.rows) * span };
+}
+
 /** A window feature's glass rectangle on its back wall (shared by the shell's window and the floor family's shaft):
- *  x centred on the feature, width x1 − x0 − 0.3; its art rows stretched over 0.2 … WALL_H − 0.3, row 0 (the band's top)
- *  at the top: y0 = 0.2 + ((rows − row1 − 1) / rows)·(WALL_H − 0.5), y1 = 0.2 + ((rows − row0) / rows)·(WALL_H − 0.5)
- *  (the brief's formula counted rows from the floor: a top-row window sat low); z = the N run's line there.
+ *  x centred on the feature, width x1 − x0 − 0.3; its art rows over WALL_SPAN (`bandRect`; the brief's formula
+ *  counted rows from the floor: a top-row window sat low); z = the N run's line there.
  *  Pass the feature itself (z is kept by reference); a copy falls back to the northernmost N run over its centre. */
 export function windowRect(L: RoomLayout, f: WallFeature): { x0: number; x1: number; y0: number; y1: number; z: number } {
   const cx = (f.x0 + f.x1) / 2, hw = (f.x1 - f.x0 - 0.3) / 2;
-  const span = WALL_H - 0.5;
   let z = featureZ.get(f);
   if (z === undefined) {
     const r = L.runs.filter((q) => q.dir === 'N' && q.from <= cx && cx < q.to).sort((p, q) => p.line - q.line)[0];
     z = r ? r.line : 0;
   }
-  return { x0: cx - hw, x1: cx + hw, y0: 0.2 + ((f.rows - f.row1 - 1) / f.rows) * span, y1: 0.2 + ((f.rows - f.row0) / f.rows) * span, z };
+  return { x0: cx - hw, x1: cx + hw, ...bandRect(f, WALL_SPAN[0], WALL_SPAN[1]), z };
 }

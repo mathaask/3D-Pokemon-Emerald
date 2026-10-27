@@ -21,8 +21,8 @@ import { luma, mix, saturation, scale, soften, type RGB } from '../../palette';
 import { rng, type V3 } from '../../geom';
 import type { Quality } from '../../../post';
 import type { FurnitureKind } from '../../tables/building';
-import type { PartColors } from '../colors';
-import type { WallDir } from '../room';
+import { isOutline, type PartColors } from '../colors';
+import { DIR_STEP, type WallDir } from '../room';
 import { addShelf, wallFrameAt } from '../wallParts';
 import { FURNITURE_SPEC } from '../furniture';
 
@@ -66,8 +66,6 @@ const CUSHION: RGB = [0.88, 0.5, 0.38];
 const BIN: RGB = [0.55, 0.64, 0.6];
 const WHITE: RGB = [1, 1, 1];
 
-/** The GBA's dark blue-grey outline (0x424a6b, 0x52526b …): the most frequent colour of small objects, never a surface. */
-export const isOutline = (c: RGB) => luma(c) < 0.4 && saturation(c) < 0.3;
 /** Warm wood / yellow (red ≥ green ≥ blue, red well over blue). */
 const isWood = (c: RGB) => c[0] >= c[1] - 0.02 && c[1] >= c[2] - 0.02 && c[0] - c[2] >= 0.15
   // (an orange-to-yellow hue: green at least 0.3 of the way from blue to red — a red (0xd65242) or a peach cushion is no wood)
@@ -267,8 +265,6 @@ function columns(p: HomePiece): HomeRect[] {
     });
 }
 
-const DIR: Readonly<Record<WallDir, [number, number]>> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
-
 // ---------------------------------------------------------------- builders
 
 function bed(p: HomePiece, s: HomeSoups, q: Quality): void {
@@ -325,7 +321,7 @@ function chair(p: HomePiece, s: HomeSoups, q: Quality): void {
 }
 function chairAt(s: Soup, R: HomeRect, facing: WallDir, C: HomeColors, q: Quality): void {
   const { sides, segs } = HOME_DETAIL[q], H = R.height, Y = R.y, low = H <= LOW_SEAT + 1e-9;
-  const f = DIR[facing], g: [number, number] = [-f[1], f[0]], alongX = f[0] !== 0;
+  const f = DIR_STEP[facing], g: [number, number] = [-f[1], f[0]], alongX = f[0] !== 0;
   // the chair's size along its facing (la) and across it (lb), fitted to the rectangle
   const w = R.x1 - R.x0, d = R.z1 - R.z0;
   let la = low ? 0.56 : 0.5, lb = low ? 0.62 : 0.5;

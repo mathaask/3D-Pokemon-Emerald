@@ -27,7 +27,7 @@ import { floorLook } from '../colors';
 import {
   BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, FLOOR_SEAM_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL,
 } from '../floorGlsl';
-import { RECESS, windowRect, type RoomLayout } from '../room';
+import { RECESS, heightMode, votesHeight, walkable, windowRect, type RoomLayout } from '../room';
 
 export const enum FloorMat { Boards = 0, Tiles = 1, Carpet = 2, Rug = 3, Mat = 4 }
 /** edges: bit 0 N, 1 E, 2 S, 3 W — the neighbour on that side is another floor kind (rugs and mats draw their border).
@@ -47,49 +47,15 @@ const FLOOR_SET = new Set<InteriorId>(FLOOR_KINDS);
 /** A room without any floor metatile (no walkable cell at all): warm wood. */
 const NO_FLOOR: RGB = [0.72, 0.56, 0.4];
 
-/** Room material, as room.ts reads it: an in-map cell that is non-void or a metatile-0x3FF block (`real3ff`). */
-function nonVoid(a: MapAnalysis, i: number): boolean {
-  const m = a.opts.margin, x = a.cellX(i), y = a.cellY(i);
-  if (x < a.minX + m || y < a.minY + m || x >= a.maxX - m || y >= a.maxY - m) return false;
-  return a.kind[i] !== K.Void || a.real3ff[i] > 0;
-}
-/** Walkable, as room.ts reads it (a 0x3FF block: its own collision, `real3ff` 1). */
-const walkable = (a: MapAnalysis, i: number) => (a.kind[i] !== K.Void ? a.col[i] === 0 : a.real3ff[i] === 1);
-
-/** Per cell: its room's floor height (flat rooms: the mode of the room's walkable floor heights, as the walls' `floorY`;
- *  a room = a 4-connected component of room material, room.ts). Cells in no room: the map's mode. */
+/** Per cell: its room's floor height, the layout's own (`L.floorY`: the walls stand on it). Cells in no room: the
+ *  map's mode (the same vote over every room). */
 export function roomFloorHeights(a: MapAnalysis, L: RoomLayout): Float32Array {
   const N = a.N;
-  const room = new Int32Array(N).fill(-1);
-  let rooms = 0;
-  const stack: number[] = [];
-  for (let s = 0; s < N; s++) {
-    if (room[s] >= 0 || !nonVoid(a, s)) continue;
-    const id = rooms++;
-    room[s] = id;
-    stack.push(s);
-    while (stack.length) {
-      const i = stack.pop()!;
-      const x = a.cellX(i), y = a.cellY(i);
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        if (!a.inside(x + dx, y + dy)) continue;
-        const j = a.idx(x + dx, y + dy);
-        if (room[j] < 0 && nonVoid(a, j)) { room[j] = id; stack.push(j); }
-      }
-    }
-  }
-  const votes = Array.from({ length: rooms + 1 }, () => new Map<number, number>());   // [rooms] = the whole map
-  for (let i = 0; i < N; i++) {
-    if (!L.inside[i] || a.kind[i] !== K.Floor || Number.isNaN(a.height[i])) continue;
-    for (const v of [votes[room[i]], votes[rooms]]) v.set(a.height[i], (v.get(a.height[i]) ?? 0) + 1);
-  }
-  const mode = votes.map((m) => {
-    let best = 0, bestN = 0;
-    for (const [h, n] of m) if (n > bestN || (n === bestN && h < best)) { best = h; bestN = n; }
-    return best;
-  });
+  const all = new Map<number, number>();
+  for (let i = 0; i < N; i++) if (votesHeight(a, L, i)) all.set(a.height[i], (all.get(a.height[i]) ?? 0) + 1);
+  const map = heightMode(all);
   const out = new Float32Array(N);
-  for (let i = 0; i < N; i++) out[i] = mode[room[i] >= 0 ? room[i] : rooms];
+  for (let i = 0; i < N; i++) out[i] = L.room[i] >= 0 ? L.floorY[L.room[i]] : map;
   return out;
 }
 
