@@ -33,6 +33,36 @@ describe('ModernArena', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
+  /** A mesh whose geometry throws when freed (a part handing back a malformed object). */
+  const badMesh = () => {
+    const m = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    m.geometry.dispose = () => { throw new Error('dispose'); };
+    return m;
+  };
+  it('fails safe when freeing the failed build throws: failed and warned first, the arena emptied, the key left failed', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = new ModernArena(createKitUniforms(), [part('ground', 'all', badMesh), part('trees', 'all', () => { throw new Error('boom'); })]);
+    expect(() => a.build('grass', defaultArenaColors('grass'), 'medium')).not.toThrow();
+    expect(a.failed).toBe(true);
+    expect(a.group.children).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("arena part 'trees' failed for grass");
+    // (the same call again — the identity fast path, then the key's —: still failed, today's arena)
+    expect(a.build('grass', defaultArenaColors('grass'), 'medium')).toBe(false);
+    expect(a.build('grass', { ...defaultArenaColors('grass') }, 'medium')).toBe(false);
+    warn.mockRestore();
+  });
+  it('builds the next arena when freeing the last one throws: the old one dropped, the new one alone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let n = 0;
+    const a = new ModernArena(createKitUniforms(), [part('ground', 'all', () => (n++ === 0 ? badMesh() : new THREE.Group()))]);
+    expect(a.build('grass', defaultArenaColors('grass'), 'medium')).toBe(true);
+    expect(a.build('sand', defaultArenaColors('sand'), 'medium')).toBe(true);
+    expect(a.failed).toBe(false);
+    expect(a.group.children).toHaveLength(1);
+    expect((a.group.children[0] as THREE.Mesh).isMesh).toBeFalsy();
+    warn.mockRestore();
+  });
   it('locks the colours: defaults until the first valid sample, then that sample for the battle', () => {
     const lock = new ArenaColorLock();
     const a = { ...defaultArenaColors('grass'), platform: [0.1, 0.8, 0.2] as [number, number, number] };

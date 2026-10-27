@@ -141,7 +141,12 @@ export class ModernArena {
     const key = `${kind}|${quality}|${colorsKey(colors)}`;
     if (key === this.key) return !this.failed;
     this.key = key;
-    this.clear();
+    try {
+      this.clear();
+    } catch (e) {
+      // (a part's object of the last build failed to free: clear dropped it and the rest — the new build goes on)
+      console.warn('[battle] freeing the last arena failed', e);
+    }
     const t0 = performance.now();
     this.failed = false;
     this.builtPalette = null;
@@ -171,11 +176,16 @@ export class ModernArena {
       }
       this.builtPalette = palette;
     } catch (e) {
-      this.clear();
+      // (failed and warned first: freeing the half-built arena may throw too, and must not leave this key reading as built)
       this.failed = true;
       if (!this.warned.has(kind)) {
         this.warned.add(kind);
         console.warn(`[battle] arena part '${at}' failed for ${kind}: the battle uses today's arena`, e);
+      }
+      try {
+        this.clear();
+      } catch {
+        // (clear emptied the arena whatever threw: nothing of the failed build is left to draw)
       }
     }
     this.buildMs = performance.now() - t0;
@@ -193,14 +203,31 @@ export class ModernArena {
     return this.buildMs;
   }
 
-  /** Frees the built parts (kit materials back to the uniforms' pool, the build's textures) and keeps the group. */
+  /** Frees the built parts (kit materials back to the uniforms' pool, the build's textures) and keeps the group — every
+   *  part and texture, emptying the group and the build's list, even where one throws (a malformed object a part handed
+   *  back); then throws the first error. */
   private clear(): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    for (const child of [...this.group.children]) disposeKit(child, ctx);
-    for (const d of ctx.disposables) d.dispose();
-    ctx.disposables.length = 0;
     this.ctx = null;
+    let error: { e: unknown } | null = null;
+    for (const child of [...this.group.children]) {
+      try {
+        disposeKit(child, ctx);
+      } catch (e) {
+        error ??= { e };
+        child.removeFromParent();
+      }
+    }
+    for (const d of ctx.disposables) {
+      try {
+        d.dispose();
+      } catch (e) {
+        error ??= { e };
+      }
+    }
+    ctx.disposables.length = 0;
+    if (error) throw error.e;
   }
 
   /** Frees the build and detaches the arena; the next build starts afresh. */
