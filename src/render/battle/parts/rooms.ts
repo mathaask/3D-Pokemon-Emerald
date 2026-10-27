@@ -17,12 +17,13 @@ import { kitMaterial } from '../../kit/materials';
 import { BUILDING_BODY, BUILDING_GLASS } from '../../kit/buildings';
 import { PROP_GLOW } from '../../kit/props';
 import { SOIL_MATERIAL } from '../../kit/soil';
-import { luma, mix, scale, toLinear, type RGB } from '../../kit/palette';
+import { luma, mix, scale, type RGB } from '../../kit/palette';
 import { rng, type V3 } from '../../kit/geom';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, PLATFORM_FOOTPRINT, type Stage } from '../stage';
 import { COURT_BOUNDS } from './floor';
+import { Soup, lathe, lin, type LatheColor } from './soup';
 
 // ------------------------------------------------------------------------------------------------- the halls
 
@@ -40,80 +41,6 @@ export const HALLS: Readonly<Record<HallKind, Hall>> = {
   leader: { back: -17, halfWidth: 22, height: 10, front: 3.9, pillars: 6, windows: 0, banners: 5, seats: false, lights: 0 },
   frontier: { back: -18, halfWidth: 24, height: 11, front: 3.9, pillars: 8, windows: 0, banners: 0, seats: true, lights: 6 },
 };
-
-// ------------------------------------------------------------------------------------------------- geometry writer
-
-/** Triangles (non-indexed) with a normal and a colour per vertex: position, normal, color(3), all Float32 (colours
- *  linear). Quads are wound to face along the direction given (as kit/geom.ts QuadWriter: from the diagonals). (The
- *  stadiums' and the Sky Pillar's geometry writes with it too: parts/stadium.ts, parts/skyPillar.ts.) */
-export class Soup {
-  private p: number[] = [];
-  private n: number[] = [];
-  private c: number[] = [];
-
-  private v(p: V3, n: V3, c: RGB): void {
-    this.p.push(p[0], p[1], p[2]);
-    this.n.push(n[0], n[1], n[2]);
-    this.c.push(c[0], c[1], c[2]);
-  }
-
-  /** Triangle a→b→c (wound to face along `face`), corner normals `ns` and colours `cs`. */
-  triN(a: V3, b: V3, c: V3, face: V3, ns: [V3, V3, V3], cs: [RGB, RGB, RGB]): void {
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-    const flip = (uy * vz - uz * vy) * face[0] + (uz * vx - ux * vz) * face[1] + (ux * vy - uy * vx) * face[2] < 0;
-    if (flip) { this.v(a, ns[0], cs[0]); this.v(c, ns[2], cs[2]); this.v(b, ns[1], cs[1]); }
-    else { this.v(a, ns[0], cs[0]); this.v(b, ns[1], cs[1]); this.v(c, ns[2], cs[2]); }
-  }
-
-  /** A flat triangle: one normal (`n`, normalised here), one colour. */
-  tri(a: V3, b: V3, c: V3, n: V3, col: RGB): void {
-    const l = Math.hypot(n[0], n[1], n[2]) || 1, nn: V3 = [n[0] / l, n[1] / l, n[2] / l];
-    this.triN(a, b, c, nn, [nn, nn, nn], [col, col, col]);
-  }
-
-  /** Quad a→b→c→d (round its edge), corner normals `ns` and colours `cs`, wound to face along `face`. */
-  quadN(a: V3, b: V3, c: V3, d: V3, face: V3, ns: [V3, V3, V3, V3], cs: [RGB, RGB, RGB, RGB]): void {
-    const ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], vx = d[0] - b[0], vy = d[1] - b[1], vz = d[2] - b[2];
-    const flip = (uy * vz - uz * vy) * face[0] + (uz * vx - ux * vz) * face[1] + (ux * vy - uy * vx) * face[2] < 0;
-    const P = [a, b, c, d];
-    const order = flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3];
-    for (const i of order) this.v(P[i], ns[i], cs[i]);
-  }
-
-  /** A flat quad: one normal (`n`, normalised here), one colour. */
-  quad(a: V3, b: V3, c: V3, d: V3, n: V3, col: RGB): void {
-    const l = Math.hypot(n[0], n[1], n[2]) || 1, nn: V3 = [n[0] / l, n[1] / l, n[2] / l];
-    this.quadN(a, b, c, d, nn, [nn, nn, nn, nn], [col, col, col, col]);
-  }
-
-  /** A box spanned by `o` + u·[u0, u1] + y·[y0, y1] + w·[w0, w1] (u, w unit, horizontal, u × y = w or −w: either way),
-   *  every face outwards; `bottom` false leaves out its underside (on the floor, never seen). */
-  box(o: V3, u: V3, w: V3, u0: number, u1: number, y0: number, y1: number, w0: number, w1: number, col: RGB, bottom = false): void {
-    const at = (s: number, h: number, d: number): V3 => [o[0] + u[0] * s + w[0] * d, o[1] + h, o[2] + u[2] * s + w[2] * d];
-    const neg = (x: V3): V3 => [-x[0], -x[1], -x[2]];
-    this.quad(at(u0, y1, w0), at(u1, y1, w0), at(u1, y1, w1), at(u0, y1, w1), [0, 1, 0], col);
-    if (bottom) this.quad(at(u0, y0, w0), at(u1, y0, w0), at(u1, y0, w1), at(u0, y0, w1), [0, -1, 0], col);
-    this.quad(at(u0, y0, w1), at(u1, y0, w1), at(u1, y1, w1), at(u0, y1, w1), w, col);
-    this.quad(at(u0, y0, w0), at(u1, y0, w0), at(u1, y1, w0), at(u0, y1, w0), neg(w), col);
-    this.quad(at(u0, y0, w0), at(u0, y0, w1), at(u0, y1, w1), at(u0, y1, w0), neg(u), col);
-    this.quad(at(u1, y0, w0), at(u1, y0, w1), at(u1, y1, w1), at(u1, y1, w0), u, col);
-  }
-
-  get empty(): boolean {
-    return this.p.length === 0;
-  }
-
-  geometry(): THREE.BufferGeometry {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.p), 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(this.n), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.c), 3));
-    g.computeBoundingSphere();
-    return g;
-  }
-}
-
-const lin = (c: RGB): RGB => toLinear([Math.min(1, Math.max(0, c[0])), Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2]))]);
 
 // ------------------------------------------------------------------------------------------------- the walls
 
@@ -238,24 +165,10 @@ export function pillarGeometry(radius: number, height: number, color: RGB): THRE
   const s = new Soup();
   const r = radius, c = lin(color), light = lin(scale(color, 1.07)), [pw, ph] = PILLAR.plinth, [aw, ah] = PILLAR.abacus;
   const top = height - ah;
-  // (r, y) profile and each step's colour
+  // (r, y) profile and each step's colour: the mouldings and the capital light, the shaft (the fifth step) darker at its foot
   const prof: [number, number][] = [[1.36 * r, ph], [1.36 * r, ph + 0.1], [1.2 * r, ph + 0.22], [1.08 * r, ph + 0.28], [r, ph + 0.38],
     [0.93 * r, top - 0.42], [1.02 * r, top - 0.3], [1.18 * r, top - 0.14], [1.3 * r, top]];
-  const N = PILLAR.sides;
-  for (let k = 0; k + 1 < prof.length; k++) {
-    const [r0, y0] = prof[k], [r1, y1] = prof[k + 1];
-    const l = Math.hypot(y1 - y0, r1 - r0), nr = (y1 - y0) / l, ny = -(r1 - r0) / l;
-    const shaft = k === 4;
-    for (let q = 0; q < N; q++) {
-      const a0 = (q / N) * Math.PI * 2, a1 = ((q + 1) / N) * Math.PI * 2;
-      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
-      const n0: V3 = [nr * c0, ny, nr * s0], n1: V3 = [nr * c1, ny, nr * s1];
-      const k0 = shaft ? scale(c, 0.9) : light, k1 = shaft ? c : light;
-      const am = (a0 + a1) / 2;
-      s.quadN([r0 * c0, y0, r0 * s0], [r0 * c1, y0, r0 * s1], [r1 * c1, y1, r1 * s1], [r1 * c0, y1, r1 * s0],
-        [Math.cos(am) * nr, ny, Math.sin(am) * nr], [n0, n1, n1, n0], [k0, k0, k1, k1]);
-    }
-  }
+  lathe(s, [0, 0, 0], prof, prof.slice(1).map((_, k): LatheColor => (k === 4 ? [scale(c, 0.9), c] : light)), PILLAR.sides);
   s.box([0, 0, 0], [1, 0, 0], [0, 0, 1], -pw * r, pw * r, 0, ph, -pw * r, pw * r, light);
   s.box([0, 0, 0], [1, 0, 0], [0, 0, 1], -aw * r, aw * r, top, height, -aw * r, aw * r, light, true);
   return s.geometry();

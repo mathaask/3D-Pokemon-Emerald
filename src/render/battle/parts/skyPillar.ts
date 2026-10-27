@@ -13,17 +13,15 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { noise2, rng, type V3 } from '../../kit/geom';
 import { kitMaterial } from '../../kit/materials';
-import { mix, scale, toLinear, type RGB } from '../../kit/palette';
+import { mix, scale, type RGB } from '../../kit/palette';
 import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import { blobCrown } from '../../kit/trees';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { BATTLE_CAMERA, GROUND_Y, type Stage } from '../stage';
 import { GROUND_RENDER_ORDER } from './ground';
-import { Soup } from './rooms';
+import { Soup, lin } from './soup';
 import { FRAME_ASPECT, SCENERY_SEED, battleCamera } from './scatter';
-
-const lin = (c: RGB): RGB => toLinear([Math.min(1, Math.max(0, c[0])), Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2]))]);
 
 // ------------------------------------------------------------------------------------------------- the broken edge
 

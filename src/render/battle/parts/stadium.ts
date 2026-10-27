@@ -29,7 +29,8 @@ import {
   LAVA_GLOW, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaMaterial, lavaPools, rockWallGeometry, stalagmiteGeometry,
   type ArenaSpire, type LavaPool, type WallBand,
 } from './rock';
-import { SHELL, Soup, pillarGeometry, roomShell, wallFrame, type RoomSpec, type ShellColors, type Wall } from './rooms';
+import { SHELL, pillarGeometry, roomShell, wallFrame, type RoomSpec, type ShellColors, type Wall } from './rooms';
+import { Soup, cross, lathe, lin, norm, sub, tube } from './soup';
 import { WATER_RENDER_ORDER, arenaWaterMaterial, opaqueWater } from './water';
 import { arenaClear } from './flora';
 import { SCENERY_SEED, frameProjector, frameTop, scatter, sightCap, stageKeepOut } from './scatter';
@@ -62,60 +63,6 @@ export const ICE_RING = { r: 16.3, wander: 0.7, step: 1.55, arc: 1.55, height: [
 /** The arena's rim: a ring step round the stage, its inner face `r` from the centre (both platforms reach ≈ 4.4 from it,
  *  their slabs' plinths ≈ 4.6), `height` tall, its outer slope reaching the floor at `outer`. */
 export const RIM = { r: 6.0, height: 0.25, outer: 7.4, segments: 128 };
-
-const lin = (c: RGB): RGB => toLinear([Math.min(1, Math.max(0, c[0])), Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2]))]);
-
-/** A lathe round the vertical axis through `at`: the profile (r, y over at's y) walked up its outer faces, inward over its
- *  tops and down its inner ones (so its faces point out of the solid), `sides` round, smooth round and crisp along the
- *  profile; `cols` (linear) one per step (k → k + 1) or one per profile point (a gradient). */
-function lathe(s: Soup, at: V3, prof: readonly (readonly [number, number])[], cols: readonly RGB[], sides: number, phase = 0): void {
-  const perPoint = cols.length === prof.length;
-  for (let k = 0; k + 1 < prof.length; k++) {
-    const [r0, y0] = prof[k], [r1, y1] = prof[k + 1];
-    const l = Math.hypot(y1 - y0, r1 - r0);
-    if (l < 1e-9 || (r0 < 1e-6 && r1 < 1e-6)) continue;
-    const nr = (y1 - y0) / l, ny = -(r1 - r0) / l;
-    // (the step's colour at its start; at its end the next point's in a gradient, else the same)
-    const ca = cols[k], cb = perPoint ? cols[k + 1] : ca;
-    for (let q = 0; q < sides; q++) {
-      const a0 = phase + (q / sides) * Math.PI * 2, a1 = phase + ((q + 1) / sides) * Math.PI * 2, am = (a0 + a1) / 2;
-      const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
-      const n0: V3 = [nr * c0, ny, nr * s0], n1: V3 = [nr * c1, ny, nr * s1];
-      const P = (r: number, y: number, c: number, sn: number): V3 => [at[0] + r * c, at[1] + y, at[2] + r * sn];
-      s.quadN(P(r0, y0, c0, s0), P(r0, y0, c1, s1), P(r1, y1, c1, s1), P(r1, y1, c0, s0), [Math.cos(am) * nr, ny, Math.sin(am) * nr],
-        [n0, n1, n1, n0], [ca, ca, cb, cb]);
-    }
-  }
-}
-
-const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const norm = (a: V3): V3 => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
-
-/** A tube of radius `rad` along `pts` (each ring across the path's mean direction there: mitred, no cracks at the
- *  joints; `closed`: a loop), `sides` round, smooth; open ends. */
-function tube(s: Soup, pts: readonly V3[], rad: number, col: RGB, sides = 10, closed = false): void {
-  const n = pts.length;
-  const rings = pts.map((p, i) => {
-    const a = closed ? pts[(i - 1 + n) % n] : pts[Math.max(0, i - 1)], b = closed ? pts[(i + 1) % n] : pts[Math.min(n - 1, i + 1)];
-    const t = norm(sub(b, a));
-    const u = norm(cross(t, Math.abs(t[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0])), v = cross(u, t);
-    return { p, u, v };
-  });
-  const at = (i: number, phi: number): { p: V3; n: V3 } => {
-    const r = rings[i], c = Math.cos(phi), sn = Math.sin(phi);
-    const n: V3 = [r.u[0] * c + r.v[0] * sn, r.u[1] * c + r.v[1] * sn, r.u[2] * c + r.v[2] * sn];
-    return { p: [r.p[0] + n[0] * rad, r.p[1] + n[1] * rad, r.p[2] + n[2] * rad], n };
-  };
-  for (let i = 0; i < (closed ? n : n - 1); i++) {
-    const j = (i + 1) % n;
-    for (let q = 0; q < sides; q++) {
-      const p0 = (q / sides) * Math.PI * 2, p1 = ((q + 1) / sides) * Math.PI * 2;
-      const A = at(i, p0), B = at(i, p1), C = at(j, p1), D = at(j, p0), M = at(i, (p0 + p1) / 2);
-      s.quadN(A.p, B.p, C.p, D.p, M.n, [A.n, B.n, C.n, D.n], [col, col, col, col]);
-    }
-  }
-}
 
 /** A collar round a pipe: a short cylinder of radius `rad` from `p0` to `p1` with its two annular faces down to `inner`. */
 function collar(s: Soup, p0: V3, p1: V3, rad: number, inner: number, col: RGB, sides = 10): void {
