@@ -174,6 +174,20 @@ export function pillarGeometry(radius: number, height: number, color: RGB): THRE
   return s.geometry();
 }
 
+/** The pillars along a room's walls: their radius, and how far off their wall they stand (engaged: their plinth meets the
+ *  wall). */
+const PILLAR_R = 0.5, PILLAR_OFF = 0.62;
+
+/** Pillars against the walls of the room `spec` (the halls', the marble stadium rooms': stadium.ts), one at each of `at`
+ *  (a wall, s along it): PILLAR_R round, PILLAR_OFF off the wall, up to the crown; `color` sRGB. One geometry each, in
+ *  place. */
+export function wallPillars(spec: RoomSpec, at: readonly { wall: Wall; s: number }[], stage: Stage, color: RGB): THREE.BufferGeometry[] {
+  return at.map((p) => {
+    const o = wallFrame(p.wall, spec, stage).at(p.s, 0, PILLAR_OFF);
+    return pillarGeometry(PILLAR_R, spec.height - SHELL.crown, color).translate(o[0], o[1], o[2]);
+  });
+}
+
 // ------------------------------------------------------------------------------------------------- court lines
 
 /** The court's lines: `width` wide at GROUND_Y + `y`; a ring 1.15–1.25 × each platform's footprint; the centre line
@@ -489,8 +503,6 @@ export function hallColors(kind: HallKind, p: ArenaPalette): HallColors {
 // ------------------------------------------------------------------------------------------------- the part
 
 const PNC = { position: 3, normal: 3, color: 3 };
-/** The pillars' radius, and how far off their wall they stand (engaged: their plinth meets the wall). */
-const PILLAR_R = 0.5, PILLAR_OFF = 0.62;
 /** The banners: width, rod height under the crown, tip height over the floor; how far off the wall. */
 const BANNER = { width: 1.5, under: 1.4, tip: 0.5, off: 0.12 };
 /** The light panels' daylight glow (linear emissive, × their colour; set for their draw only: the pooled material
@@ -516,13 +528,9 @@ export const HALL_PART: ArenaPart = {
     const { stage, palette } = ctx;
     const colors = hallColors(kind, palette), layout = hallLayout(kind);
     const group = new THREE.Group();
-    const parts: THREE.BufferGeometry[] = [roomShell(spec, stage, palette, colors.shell)];
+    const parts: THREE.BufferGeometry[] = [roomShell(spec, stage, palette, colors.shell), ...wallPillars(spec, layout.pillars, stage, colors.pillar)];
     const extra = new Soup(), glass = new Soup(), glow = new Soup();
     const frames = { back: wallFrame('back', spec, stage), left: wallFrame('left', spec, stage), right: wallFrame('right', spec, stage) };
-    for (const p of layout.pillars) {
-      const F = frames[p.wall], at = F.at(p.s, 0, PILLAR_OFF);
-      parts.push(pillarGeometry(PILLAR_R, spec.height - SHELL.crown, colors.pillar).translate(at[0], at[1], at[2]));
-    }
     const bannerH = spec.height - BANNER.under - BANNER.tip;
     for (const b of layout.banners) {
       const F = frames[b.wall], at = F.at(b.s, BANNER.tip, BANNER.off);

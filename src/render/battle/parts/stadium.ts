@@ -29,7 +29,7 @@ import {
   LAVA_GLOW, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaMaterial, lavaPools, rockWallGeometry, stalagmiteGeometry,
   type ArenaSpire, type LavaPool, type WallBand,
 } from './rock';
-import { SHELL, pillarGeometry, roomShell, wallFrame, type RoomSpec, type ShellColors, type Wall } from './rooms';
+import { HALLS, hallLayout, pillarGeometry, roomShell, wallPillars, type RoomSpec, type ShellColors } from './rooms';
 import { Soup, cross, lathe, lin, norm, sub, tube } from './soup';
 import { WATER_RENDER_ORDER, arenaWaterMaterial, opaqueWater } from './water';
 import { arenaClear } from './flora';
@@ -53,8 +53,8 @@ export const ROCK_BAND: WallBand = { r: 18, arc: 1.75, height: [10, 16] };
 /** The metal ring: `sides` flat panels round the stage, their inner faces `r` from its centre, `height` tall, the
  *  panels whose ends stand past centre.z + `front` left out (the camera's side, as the halls' rule: rooms.ts). */
 export const METAL_RING = { sides: 16, r: 17, height: 10, front: 3.9 };
-/** The marble rooms: the gyms' room (rooms.ts HALLS.gym) with pillars along their walls as the gyms'. */
-export const MARBLE_ROOM: RoomSpec = { back: -17, halfWidth: 22, height: 10, front: 3.9 };
+/** The marble rooms: the gyms' room (rooms.ts HALLS.gym) with pillars along their walls as the gyms' (hallLayout('gym')). */
+export const MARBLE_ROOM: RoomSpec = HALLS.gym;
 /** The ice room: crystal clusters every `step` units along r `r` (± `wander`), ± `arc` rad from straight behind,
  *  `height` tall, before an ice band (`band`). */
 export const ICE_RING = { r: 16.3, wander: 0.7, step: 1.55, arc: 1.55, height: [3.2, 7.5] as const,
@@ -490,8 +490,6 @@ function stadiumColors(kind: StadiumKind, p: ArenaPalette, c: ArenaColors): Stad
 // ------------------------------------------------------------------------------------------------- the part
 
 const PN = { position: 3, normal: 3 }, PNC = { position: 3, normal: 3, color: 3 };
-/** The marble rooms' pillars against their walls (as the gyms': rooms.ts) — radius, off the wall, where. */
-const WALL_PILLAR = { r: 0.5, off: 0.62, at: [['back', -16], ['back', -7.5], ['back', 7.5], ['back', 16], ['left', 8], ['right', -8]] as [Wall, number][] };
 /** Phoebe's candle flames' glow (linear emissive, set for their draw only: the pooled material keeps black for any other
  *  user): bright, just under the bloom's threshold (post.ts: 1.05) — over it they bloomed, and any bloom in the frame cost
  *  ≈ 1.2 ms on the dev iGPU (same-session A/B: 2.16 → 1.01 at 0.35; the lava's glow pays it too). */
@@ -542,11 +540,7 @@ export const STADIUM_PART: ArenaPart = {
       case 'rock': rock.push(rockWallGeometry(WALL_SEED, stage, ROCK_BAND, col.rock)); break;
       case 'metal': room.push(metalRingGeometry(stage, col.metal!)); break;
       case 'marble': {
-        room.push(roomShell(MARBLE_ROOM, stage, palette, col.shell));
-        for (const [wall, at] of WALL_PILLAR.at) {
-          const p = wallFrame(wall, MARBLE_ROOM, stage).at(at, 0, WALL_PILLAR.off);
-          room.push(pillarGeometry(WALL_PILLAR.r, MARBLE_ROOM.height - SHELL.crown, col.pillar).translate(p[0], p[1], p[2]));
-        }
+        room.push(roomShell(MARBLE_ROOM, stage, palette, col.shell), ...wallPillars(MARBLE_ROOM, hallLayout('gym').pillars, stage, col.pillar));
         break;
       }
       case 'ice': {
