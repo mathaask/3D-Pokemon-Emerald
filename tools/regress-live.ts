@@ -80,7 +80,8 @@
 // flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary).
 // Night twins (every run with Modern; NIGHT_TWINS, Phase 4's D8): a night interior preview's Modern shot against its day
 // twin's — night / day mean luma of the room (non-actor pixels) and of the actors (`nightLum` on the night entry's Modern
-// key, and a table); gated on the in-scope pairs: room ≥ 0.45, actors 0.9-1.15 (a failure fails the run).
+// key, and a table); gated on the in-scope pairs: room ≥ 0.45, actors 0.9-1.15, and both measurable (no actor measure, or
+// a twin without its Modern shot in this run, fails; a failure fails the run). Selecting either twin runs both.
 // A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
 // entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
@@ -352,7 +353,8 @@ const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'truc
  * = night / day mean sRGB luma (Rec. 709) of the pixels no actor covers in either mask (with a 1-px margin), actorLum =
  * night / day mean luma of the actor pixels visible in both masks (as actorLum; null under ACTOR_LUM_MIN_PX). Gated on the
  * in-scope pairs (not OUT_OF_SCOPE_INTERIOR): roomLuma ≥ NIGHT_ROOM_MIN, actorLum within NIGHT_ACTOR_BAND (D8: the room
- * stays readable at night, the actors lit as by day). Today's fixed indoor light reads ≈ 1.0 (p4-base). Every live entry
+ * stays readable at night, the actors lit as by day); an unmeasured actorLum, or a twin without its Modern shot in this run,
+ * fails (never a vacuous pass). With Modern, selecting either twin runs both (main's selection). Today's fixed indoor light reads ≈ 1.0 (p4-base). Every live entry
  * is day: each save state's in-game clock reads 10:00 under manual mode's fixed RTC (nightFactor 0; probed in Phase 4
  * Task 1).
  */
@@ -772,7 +774,9 @@ async function nightLum(page: Page, night: string, day: string, files: [string, 
   if (n.gated) {
     const broken: string[] = [];
     if (!(n.roomLuma >= NIGHT_ROOM_MIN)) broken.push(`roomLuma ${n.roomLuma} < ${NIGHT_ROOM_MIN}`);
-    if (n.actorLum !== null && !(n.actorLum >= NIGHT_ACTOR_BAND[0] && n.actorLum <= NIGHT_ACTOR_BAND[1])) {
+    // (no actor measure is a failure, not a pass: D8's actor rule cannot be judged on an entry whose actors vanished)
+    if (n.actorLum === null) broken.push(`actorLum unmeasured (${n.actorPx} actor px visible in both masks < ${ACTOR_LUM_MIN_PX})`);
+    else if (!(n.actorLum >= NIGHT_ACTOR_BAND[0] && n.actorLum <= NIGHT_ACTOR_BAND[1])) {
       broken.push(`actorLum ${n.actorLum} outside ${NIGHT_ACTOR_BAND.join('-')}`);
     }
     if (broken.length) n.broken = broken;
@@ -1102,18 +1106,29 @@ async function main(): Promise<void> {
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
   const nightRows: { name: string; n: NightLum }[] = [];
-  const nightFailures: string[] = []; // in-scope night twins outside D8's bounds
+  const nightFailures: string[] = []; // in-scope night twins outside D8's bounds, or not measurable
+  const shotThisRun = new Set<string>(); // the entry_style keys this run shot (and kept)
   const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
     ...[...STATIC, ...STATIC_INTERIOR, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
+  // (a misspelt name in the interior tables would drop an entry from --interiors or a pair from the night gate unseen;
+  // the night twins are map previews: NIGHT_FN compares renderStill frames, with no mask-mismatch check as LUM_FN's)
+  const known = (n: string, kind?: 'static') => all.some((e) => e.name === n && (!kind || e.kind === kind));
+  for (const n of [...Object.keys(INTERIOR_LIVE), ...OUT_OF_SCOPE_INTERIOR]) if (!known(n)) throw new Error(`unknown interior entry: ${n}`);
+  for (const n of Object.entries(NIGHT_TWINS).flat()) if (!known(n, 'static')) throw new Error(`NIGHT_TWINS names no static entry: ${n}`);
   // --only picks entries of both kinds by name; otherwise --static picks every entry, --battles the battle entries,
-  // --interiors the interior entries (both flags: either), and none of these every live entry
+  // --interiors the interior entries (both flags: either), and none of these every live entry. With Modern, a selected
+  // night twin brings its twin (NIGHT_TWINS: the pair is measured within one run)
   const statics = flag('static'), battles = flag('battles'), interiors = flag('interiors');
-  const entries = only.length ? all.filter((e) => only.includes(e.name))
+  const picked = new Set((only.length ? all.filter((e) => only.includes(e.name))
     : all.filter((e) => statics || (battles || interiors ? (battles && isBattleEntry(e)) || (interiors && isInteriorEntry(e))
-      : e.kind === 'live'));
+      : e.kind === 'live'))).map((e) => e.name));
+  if (styles.includes('modern')) {
+    for (const pair of Object.entries(NIGHT_TWINS)) if (pair.some((n) => picked.has(n))) pair.forEach((n) => picked.add(n));
+  }
+  const entries = all.filter((e) => picked.has(e.name));
   const outDir = path.join(root, 'out/regress-live', label);
   const refDir = compare ? path.join(root, 'out/regress-live', compare) : '';
   // (the same folder however spelled: ./p2, p2/, P2 on Windows' case-insensitive file system)
@@ -1178,7 +1193,9 @@ async function main(): Promise<void> {
           } else {
             q = ['autostart=1', 'manual=1', 'actors=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           }
-          await page.goto(`http://localhost:${port}/?${q}`, { waitUntil: 'load' });
+          // (the run's first pages wait for Vite's cold transform of the whole renderer: past puppeteer's default 30 s on
+          // the dev machine at times, as the ready wait below allows)
+          await page.goto(`http://localhost:${port}/?${q}`, { waitUntil: 'load', timeout: 120_000 });
           await page.waitForFunction(e.kind === 'live' ? '!!(window.emu && window.emu.step)' : '!!(window.preview && window.preview.frames)',
             { timeout: 120_000, polling: 100 });
           if (!gpuName) {
@@ -1336,6 +1353,7 @@ async function main(): Promise<void> {
             }
           }
           stats[key] = entry;
+          shotThisRun.add(key);
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
           console.log(line);
         } catch (err) {
@@ -1392,7 +1410,9 @@ async function main(): Promise<void> {
       }
       fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
     }
-    // D8's night twins: a pair one of whose entries ran (Modern) and whose Modern shots, masks and stats are all in the folder
+    // D8's night twins: every pair of the run (the selection added each selected entry's twin), measured from both Modern
+    // shots of this run only (no older run's shot may stand in for one). A gated pair that cannot be measured (an entry of
+    // it failed) fails the gate; an out-of-scope one is skipped
     if (styles.includes('modern')) {
       current = 'night twins';
       for (const [night, day] of Object.entries(NIGHT_TWINS)) {
@@ -1400,7 +1420,11 @@ async function main(): Promise<void> {
         const st = stats[`${night}_modern`];
         const files = [`${night}_modern.png`, `${day}_modern.png`, `_mask_${night}_modern.png`, `_mask_${day}_modern.png`]
           .map((f) => path.join(outDir, f)) as [string, string, string, string];
-        if (!st || !stats[`${day}_modern`] || !files.every((f) => fs.existsSync(f))) continue;
+        if (!shotThisRun.has(`${night}_modern`) || !shotThisRun.has(`${day}_modern`) || !files.every((f) => fs.existsSync(f))) {
+          if (st) delete st.nightLum;
+          if (!OUT_OF_SCOPE_INTERIOR.has(night)) nightFailures.push(`${night} (no Modern shot of it and of ${day} in this run to compare)`);
+          continue;
+        }
         const n = st.nightLum = await nightLum(page, night, day, files);
         nightRows.push({ name: night, n });
         if (n.broken) nightFailures.push(`${night} (${n.broken.join('; ')})`);
