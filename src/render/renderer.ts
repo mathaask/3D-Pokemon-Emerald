@@ -12,6 +12,7 @@ import { Hud } from './hud';
 import { PostFX, tiltShiftFor, type Quality } from './post';
 import type { WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
+import { battleFadeOverlay } from './battle/battleActors';
 import { BattleTransitionFx } from './transition';
 import { SpriteClassifier, SpriteKind } from '../game/spriteKinds';
 import { mapLoadInProgress } from '../game/mapLoad';
@@ -31,7 +32,7 @@ export class Renderer {
   private screen: ScreenView;
   private gbaTex: GbaTextures;
   private spriteAtlas: SpriteAtlas;
-  /** Inflation field of the sprite atlas (Modern overworld only). */
+  /** Inflation field of the sprite atlas for the overworld (Modern overworld only; the battlers have their own: BattleView.field). */
   private spriteField: SpriteField;
   readonly overworld: OverworldView;
   readonly battle: BattleView;
@@ -66,6 +67,10 @@ export class Renderer {
   private syncGate = new SyncGate();
   /** The emulated state read ahead of a sync while the game is loading a map: would the sync rebuild the world? */
   private probe: GameState | null = null;
+  /** Whether finishPrecompile compiled the fade quad, ScreenView, the HUD and the transition effect. */
+  private screensCompiled = false;
+  /** Their parallel compile, issued at construction (compileScreensAsync). */
+  private screens: Promise<void>;
   cameraInput = { yaw: 0, pitch: 0, zoom: 0 };
 
   constructor(private canvas: HTMLCanvasElement, private gba: Gba, quality: Quality = 'medium') {
@@ -89,7 +94,7 @@ export class Renderer {
     // (the inflated actors' instance data: a uniform array where the device has the vertex uniform vectors; ?actorUniforms=0|1)
     const actorUniforms = instanceUniformsFit(this.webgl.capabilities.maxVertexUniforms, new URLSearchParams(location.search).get('actorUniforms'));
     this.overworld = new OverworldView(this.gbaTex, this.spriteAtlas, this.webgl.capabilities.getMaxAnisotropy(), this.spriteField, actorUniforms);
-    this.battle = new BattleView(this.spriteAtlas);
+    this.battle = new BattleView(this.spriteAtlas, { instanceUniforms: actorUniforms });
     this.classifier = new SpriteClassifier(this.state.mem);
     this.overworld.classifier = this.classifier;
     gba.ppu.overlayMask = 0x01; // BG0: text boxes and menus
@@ -98,11 +103,16 @@ export class Renderer {
     this.quality = q === 'low' || q === 'high' ? q : 'medium';
     this.overworld.quality = this.quality;
     this.overworld.setShadowQuality(this.quality);
+    this.battle.quality = this.quality;
     this.post = new PostFX(this.webgl, this.overworld.scene, this.overworld.camera, this.quality);
-    // the overworld's precompile frame (before the start gesture, or at its first sync) is drawn through PostFX, as frames
-    // are presented
+    // the overworld's and the battle's precompile frames (before the start gesture, or at the view's first sync) are drawn
+    // through PostFX, as frames are presented
     this.overworld.precompileFrame = () => {
       this.post.setCamera(this.overworld.scene, this.overworld.camera);
+      this.post.render(0);
+    };
+    this.battle.precompileFrame = () => {
+      this.post.setCamera(this.battle.scene, this.battle.camera);
       this.post.render(0);
     };
     this.applyTiltShift(this.overworld.worldStyle);
@@ -110,12 +120,44 @@ export class Renderer {
     this.fadeScene.add(this.fade);
     window.addEventListener('resize', () => this.resize());
     // a restored context has lost every render target's pixels: the atlas redraws only on change
-    canvas.addEventListener('webglcontextrestored', () => this.overworld.atlas.invalidate());
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.overworld.atlas.invalidate();
+      this.battle.invalidateField();
+    });
     this.resize();
-    // every overworld program (the world's catalogue, the actors') compiles from boot on, in parallel: a map's first
-    // visit compiles nothing. The frame that compiles the rest blocks: main.ts draws it while the loader waits for the
-    // start gesture if the programs are ready by then (finishPrecompile), else the first overworld sync draws it
+    // every overworld program (the world's catalogue, the actors') and every battle program (the battle catalogue: the
+    // arenas of both styles) compiles from boot on, in parallel: a map's first visit and a battle's entry compile nothing.
+    // The frames that compile the rest block: main.ts draws them while the loader waits for the start gesture if the
+    // programs are ready by then (finishPrecompile), else each view's first sync draws its own. (The battle's starts one
+    // macrotask later: its catalogue's build and the overworld's are separate tasks on the main thread — precompiled(),
+    // called right after construction in normal boot, starts it a macrotask later too; the first battle sync starts it
+    // at once if it has not started yet.)
     void this.overworld.precompile(this.webgl);
+    setTimeout(() => void this.battle.precompile(this.webgl), 0);
+    this.screens = this.compileScreensAsync();
+  }
+
+  /**
+   * The renderer-level programs nothing else precompiles, compiled from boot on in parallel without drawing, whatever
+   * the start gesture does (compileAsync for the canvas, as they draw, and a render target for ScreenView's blur pass):
+   * the fade quad (a palette fade: a battle's end, a warp), the battle transition effect, the HUD (overlay and sprites:
+   * first drawn after a wild battle's transition) and ScreenView (the `screen2d` frames of the transition after a battle).
+   * finishPrecompile still draws them once (compileScreens) as the backup. A failure is logged once.
+   */
+  private compileScreensAsync(): Promise<void> {
+    const r = this.webgl;
+    // (an async body: a synchronous throw becomes the rejection)
+    return (async () => {
+      r.setRenderTarget(null);
+      await Promise.all([
+        r.compileAsync(this.fadeScene, this.fadeCamera),
+        this.transitionFx.compile(r),
+        r.compileAsync(this.hud.scene, this.hud.camera),
+        this.screen.compile(r),
+      ]);
+    })().catch((e) => {
+      console.warn('[render] compiling the screen programs failed (they compile on first use instead)', e);
+    });
   }
 
   resize(): void {
@@ -137,11 +179,14 @@ export class Renderer {
   setWorldStyle(s: WorldStyle): void {
     const changed = s !== this.overworld.worldStyle;
     this.overworld.setWorldStyle(s);
+    // (the battle draws its style's arena from its next frame on: BattleView.update runs every frame)
+    this.battle.setWorldStyle(s);
     this.applyTiltShift(s);
     // The world is rebuilt by the next sync, which follows an emulated frame; while the settings
     // panel is open emulation is paused, so sync at the next render: the new world shows at once,
-    // with the style's shadows and blur.
-    if (changed && this.presented === 'overworld') this.resync = true;
+    // with the style's shadows and blur. (A battle likewise: the battlers' field is computed at a sync, from the atlas it
+    // bakes — Modern's inflated battlers never draw from a field of an earlier atlas.)
+    if (changed && (this.presented === 'overworld' || this.presented === 'battle')) this.resync = true;
   }
 
   private applyTiltShift(s: WorldStyle): void {
@@ -153,9 +198,16 @@ export class Renderer {
     this.post.setEnabled(tiltShift, bloom);
   }
 
-  /** Sprite edges of the Modern overworld's actors: HD smooth (xBR) or Pixel. Retro ignores it. */
+  /** Sprite edges of the Modern actors, the overworld's and the battlers: HD smooth (xBR) or Pixel. Retro ignores it. */
   setSpriteFilter(f: SpriteFilter): void {
     this.overworld.setSpriteFilter(f);
+    this.battle.setSpriteFilter(f);
+  }
+
+  /** Draws every actor of both views flat magenta (the harness's visible-actor mask) or normally. */
+  setActorMask(on: boolean): void {
+    this.overworld.setActorMask(on);
+    this.battle.setActorMask(on);
   }
 
   /** Called after every emulated frame (possibly several per displayed frame). */
@@ -187,10 +239,15 @@ export class Renderer {
       this.hud.updateOverlay();
       this.hud.setSprites(st.sprites.filter((s) => !s.coordOffset && !s.invisible && this.classifier.kind(s) !== SpriteKind.Hidden), this.spriteAtlas);
     } else if (this.presented === 'battle') {
+      // (every battle program compiled before the first battle frame: at boot, or here at the latest — never in an
+      // overworld frame)
+      this.battle.finishPrecompile(this.webgl);
       this.gbaTex.paletteSource = null;
       this.gbaTex.update();
       const dispcnt = this.gba.bus.io16[0];
       this.spriteAtlas.update(this.webgl, st.sprites, (dispcnt & 0x40) === 0);
+      // the battlers' inflation field of this same atlas (Modern; its own instance: the overworld's stays the overworld's)
+      this.battle.updateField(this.webgl, st);
       this.hud.updateOverlay();
     } else {
       this.gbaTex.paletteSource = null;
@@ -200,10 +257,11 @@ export class Renderer {
     this.gba.ppu.overlayMask = this.presented === 'battle' ? 0x07 : 0x01;
   }
 
-  /** Global fade (warps, battle starts/ends): the GBA fades its palettes; we fade the frame. */
+  /** Global fade (warps, battle starts/ends): the GBA fades its palettes; we fade the frame (a Modern battle not for a
+   *  fade of OBJ palettes only: battleFadeOverlay). */
   private renderFade(r: THREE.WebGLRenderer): void {
     const st = this.state;
-    const k = st.fadeY / 16;
+    const k = this.presented === 'battle' ? battleFadeOverlay(st, this.battle.worldStyle) : st.fadeY / 16;
     if (k <= 0) return;
     const mat = this.fade.material as THREE.MeshBasicMaterial;
     const c = st.fadeColor;
@@ -233,20 +291,57 @@ export class Renderer {
     };
   }
 
-  /** Resolves when the overworld precompile's parallel compile is done (or failed: logged). */
+  /** Resolves when the overworld's and the battle's precompiles' and the screen programs' parallel compiles are done (or
+   *  failed: logged). The battle's is started (if it has not started yet) a macrotask later, as the constructor starts
+   *  it: main.ts calls this right after the constructor, which must not pull the battle catalogue's build into the
+   *  overworld's task. */
   precompiled(): Promise<void> {
-    return this.overworld.precompile(this.webgl);
+    const battle = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() => this.battle.precompile(this.webgl));
+    return Promise.all([this.overworld.precompile(this.webgl), battle, this.screens]).then(() => undefined);
   }
 
   /**
-   * Draws the overworld precompile frame now (once; it blocks while the rest compiles: shadow-depth, PostFX passes), then
-   * clears the canvas it painted. main.ts calls it while the loader still covers the page, before anything runs; without
-   * it the first overworld sync draws it, before the first world build.
+   * Draws the overworld's and the battle's precompile frames now (once each; they block while the rest compiles:
+   * shadow-depth, PostFX passes), then compiles the renderer-level programs nothing else precompiles (compileScreens),
+   * then clears the canvas it painted. main.ts calls it while the loader still covers the page, before anything runs (the
+   * harness's battle entry and exit walks in their eval); without it the first overworld sync draws the overworld's frame,
+   * before the first world build, and the first battle sync the battle's — never an overworld frame.
    */
   finishPrecompile(): void {
     this.overworld.finishPrecompile(this.webgl);
+    this.battle.finishPrecompile(this.webgl);
+    this.compileScreens();
     this.webgl.setRenderTarget(null);
     this.webgl.clear();
+  }
+
+  /**
+   * The backup of compileScreensAsync (its programs are normally ready by then, and drawing them compiles nothing):
+   * draws (once) what the views' precompiles leave to first use, so a battle's entry and exit compile nothing (the
+   * battle_enter / battle_exit walks): the fade quad (a palette fade: a battle's end, a warp), ScreenView (its blur pass and
+   * screen quad: the `screen2d` frames of the transition after a battle), the HUD (overlay and sprites: first drawn after a
+   * wild battle's transition) and the battle transition effect. Each is drawn once as at run time, on the canvas (a render
+   * target would compile other variants: linear output, no tone mapping) — invisibly (the fade at opacity 0, the effect at
+   * progress 0, no HUD sprites) or cleared by finishPrecompile.
+   */
+  private compileScreens(): void {
+    if (this.screensCompiled) return;
+    this.screensCompiled = true;
+    const r = this.webgl;
+    const auto = r.autoClear;
+    try {
+      r.setRenderTarget(null);
+      r.autoClear = false;
+      r.render(this.fadeScene, this.fadeCamera);
+      this.transitionFx.precompile(r);
+      this.hud.render(r);
+      this.screen.precompile(r);
+    } catch (e) {
+      console.warn('[render] precompiling the screen programs failed (they compile on first use instead)', e);
+    } finally {
+      r.autoClear = auto;
+      r.setRenderTarget(null);
+    }
   }
 
   /**
@@ -268,24 +363,33 @@ export class Renderer {
     );
   }
 
-  /** The field is computed in the Modern overworld only: the self-test and the dump need it current. */
-  private checkFieldLive(): void {
-    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
-      throw new Error(`the inflation field is computed in the Modern overworld only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+  /** The presented view's inflation field, which the self-test and the dump need current: the overworld's (computed in
+   *  the Modern overworld) or the battlers' (a Modern battle with inflation on); throws elsewhere. */
+  private liveField(): SpriteField {
+    if (this.presented === 'battle') {
+      if (!this.battle.fieldLive) {
+        throw new Error(`the battlers' inflation field is computed in a Modern battle with inflation on only (now: ${this.battle.worldStyle}, inflation ${this.battle.inflation})`);
+      }
+      return this.battle.field;
     }
+    if (this.presented !== 'overworld' || this.overworld.worldStyle !== 'modern') {
+      throw new Error(`the inflation field is computed in the Modern overworld or a Modern battle only (now: ${this.presented}, ${this.overworld.worldStyle})`);
+    }
+    return this.spriteField;
   }
 
-  /** Actor self-test (harness --selftest): the last frame's field vs the CPU reference of its atlas, and the
-   *  xBR shader vs its CPU reference on a fixture. */
+  /** Actor self-test (harness --selftest): the presented view's field as the last frame left it vs the CPU reference of
+   *  its atlas, and the xBR shader vs its CPU reference on a fixture. */
   actorSelfTest(): Promise<ActorSelfTest> {
-    this.checkFieldLive();
-    return actorSelfTest(this.webgl, this.spriteAtlas, this.spriteField);
+    const field = this.liveField();
+    // (the battlers' field covers their slots only)
+    return actorSelfTest(this.webgl, this.spriteAtlas, field, field === this.battle.field ? this.battle.fieldSlots : undefined);
   }
 
-  /** The used slots of the inflation field as a grey PNG data URL (harness --selftest: _field_<entry>.png). */
+  /** The used slots of the presented view's inflation field as a grey PNG data URL (harness --selftest:
+   *  _field_<entry>.png). */
   actorFieldDump(): string {
-    this.checkFieldLive();
-    return fieldDump(this.webgl, this.spriteAtlas, this.spriteField);
+    return fieldDump(this.webgl, this.spriteAtlas, this.liveField());
   }
 
   render(_dtMs: number): void {

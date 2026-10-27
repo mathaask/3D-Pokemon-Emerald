@@ -1,0 +1,242 @@
+// The Modern battle arena: the parts (ground, platforms, scenery: Tasks 6–11) built for an arena kind from the kit's
+// materials, in the colours of the GBA's battle background (palette.ts, through ArenaColorLock). Each part builds inside
+// try/catch: one that throws empties the arena and the battle draws today's arena instead (spec §11), warned once per
+// kind. From Task 6 the ground and the platforms cover every kind; from Task 7 the outdoor kinds get their scenery; from
+// Task 8 the water kinds their water (the sea, the ponds, Kyogre's) and the sea floor its kelp; from Task 9 the mountain
+// and the caves their cliff bands, stalagmites and boulders, Groudon's cave its lava; from Task 10 the indoor halls (the
+// building, the gyms, the Frontier) their rooms on hall floors; from Task 11 the Stadium rooms (Magma's and Aqua's
+// hideouts, the Elite Four, the Champion) their themed rooms and the Sky Pillar its broken floor over a sea of clouds.
+
+import * as THREE from 'three';
+import type { KitMaterialOptions, KitUniforms } from '../kit/materials';
+import { disposeKit, type KitContext } from '../kit/semantics';
+import type { Quality } from '../post';
+import type { ArenaKind } from './arenaKind';
+import { colorsKey, defaultArenaColors, type ArenaColors } from './bgSample';
+import { STAGE, type Stage } from './stage';
+import { arenaPalette, type ArenaPalette } from './palette';
+import { arenaLook, type ArenaLook } from './look';
+import { GROUND_PART, groundCells } from './parts/ground';
+import { FLOOR_STYLE } from './parts/floor';
+import { PLATFORM_PART } from './parts/platforms';
+import { HORIZON_PART } from './parts/horizon';
+import { FLORA_PART } from './parts/flora';
+import { DUNES_PART } from './parts/dunes';
+import { ROCKS_PART } from './parts/rocks';
+import { WATER_PART } from './parts/water';
+import { ROCK_PART } from './parts/rock';
+import { HALL_PART } from './parts/rooms';
+import { STADIUM_PART } from './parts/stadium';
+import { SKY_PILLAR_PART } from './parts/skyPillar';
+
+/** A build's context (the kit's KitContext: disposeKit frees what it lists): the kind, its colours and their palette, the
+ *  ground's cells (groundCells as a texture over the grid from `min`, `size` cells; freed with the build) and the look at
+ *  hour 12 (the parts read only its static fields, `clouds` and `caustics`). */
+export interface ArenaContext extends KitContext {
+  kind: ArenaKind; colors: ArenaColors; stage: Stage;
+  palette: ArenaPalette;
+  ground: { tex: THREE.DataTexture; min: THREE.Vector2; size: THREE.Vector2 };
+  look: ArenaLook;
+}
+
+/** One program variant a part can build: a kit material on a mesh type with an attribute set (name → item size), casting
+ *  a shadow or not (the battle catalogue makes one tiny mesh of it). */
+export interface CatalogueEntry {
+  material: KitMaterialOptions; mesh: 'mesh' | 'instanced' | 'instancedColors';
+  attrs: Record<string, number>; castShadow: boolean;
+}
+
+export interface ArenaPart {
+  name: string;
+  kinds: readonly ArenaKind[] | 'all';
+  /** Every program variant it can build (the battle catalogue precompiles exactly these; `placeholder` makes textures). */
+  catalogue(placeholder: () => THREE.Texture): readonly CatalogueEntry[];
+  build(ctx: ArenaContext): THREE.Object3D | null;
+}
+
+/** The arena parts, built in this order: the foundation (Task 6); the outdoor scenery (Task 7: the horizon's hills, the
+ *  flora, the dunes, the rocks); the water and the sea floor (Task 8); the rock arenas' cliff bands, stalagmites,
+ *  boulders and lava (Task 9); the indoor halls' rooms (Task 10: the building, the gyms, the Frontier); the Stadium rooms
+ *  (Task 11: the hideouts, the Elite Four, the Champion) and the Sky Pillar. Every kind has one room or scenery owner at
+ *  most among the rock, the halls, the stadiums and the Sky Pillar. */
+export const ARENA_PARTS: ArenaPart[] = [GROUND_PART, PLATFORM_PART, HORIZON_PART, FLORA_PART, DUNES_PART, ROCKS_PART, WATER_PART,
+  ROCK_PART, HALL_PART, STADIUM_PART, SKY_PILLAR_PART];
+
+/** The colours a battle's arena is built with: the kind's defaults until the first valid sample, then that sample for the
+ *  rest of the battle (a new kind starts over). At most two builds per battle; later samples never rebuild. Each change
+ *  hands out a fresh object (ModernArena.build's identity fast path: an object, once handed out, never changes). */
+export class ArenaColorLock {
+  private kind: ArenaKind | null = null;
+  private colors: ArenaColors | null = null;
+  private sampled = false;
+
+  observe(kind: ArenaKind, sample: ArenaColors | null): ArenaColors {
+    if (kind !== this.kind || !this.colors) {
+      this.kind = kind;
+      this.colors = defaultArenaColors(kind);
+      this.sampled = false;
+    }
+    if (sample && !this.sampled) {
+      this.colors = { backdrop: [...sample.backdrop], stripe: [...sample.stripe], top: [...sample.top], platform: [...sample.platform],
+        platformDetail: [...sample.platformDetail], rim: [...sample.rim] };
+      this.sampled = true;
+    }
+    return this.colors;
+  }
+
+  /** Whether `kind`'s colours are a sample (locked: later samples change nothing, so they need not be taken). */
+  locked(kind: ArenaKind): boolean {
+    return this.sampled && kind === this.kind;
+  }
+}
+
+/** `parts` with the part named `name` replaced by one that throws — or, with no part of that name, such a part added for
+ *  every kind (the preview's &arenaFail=<name>: the fallback to today's arena, exercised before any part exists). */
+export function withFailingPart(parts: readonly ArenaPart[], name: string): ArenaPart[] {
+  const fail = (p: Pick<ArenaPart, 'kinds' | 'catalogue'>): ArenaPart => ({
+    name, kinds: p.kinds, catalogue: p.catalogue,
+    build: () => { throw new Error(`arena part '${name}' made to fail (&arenaFail)`); },
+  });
+  return parts.some((p) => p.name === name) ? parts.map((p) => (p.name === name ? fail(p) : p))
+    : [...parts, fail({ kinds: 'all', catalogue: () => [] })];
+}
+
+const appliesTo = (p: ArenaPart, kind: ArenaKind) => p.kinds === 'all' || p.kinds.includes(kind);
+
+export class ModernArena {
+  readonly group = new THREE.Group();
+  /** The last build failed (a part threw): the arena is empty and the battle draws today's arena. */
+  failed = false;
+  private key = '';
+  /** The last build call's arguments (its colours by identity). */
+  private lastKind: ArenaKind | null = null;
+  private lastColors: ArenaColors | null = null;
+  private lastQuality: Quality | null = null;
+  private ctx: ArenaContext | null = null;
+  /** Kinds whose failure was warned about (once per kind). */
+  private warned = new Set<ArenaKind>();
+  private buildMs = 0;
+  /** The last successful build's palette (the view's look reads it). */
+  private builtPalette: ArenaPalette | null = null;
+
+  constructor(private readonly uniforms: KitUniforms, private readonly parts: readonly ArenaPart[] = ARENA_PARTS) {
+    this.group.name = 'modernArena';
+  }
+
+  /** A part named 'ground' covers the kind: the Modern arena draws it (else the view draws today's arena). */
+  covers(kind: ArenaKind): boolean {
+    return this.parts.some((p) => p.name === 'ground' && appliesTo(p, kind));
+  }
+
+  /** Builds the covering parts for (kind, colours, quality); a no-op when unchanged. A part that throws empties the
+   *  arena, sets `failed`, warns once per kind ("[battle] arena part '<name>' failed for <kind>: the battle uses today's
+   *  arena") and returns false. */
+  build(kind: ArenaKind, colors: ArenaColors, quality: Quality): boolean {
+    // (the very colours object of the last call again: unchanged, without building its key — a caller hands a new
+    // object for new colours, never mutates one; any other object is compared by value)
+    if (kind === this.lastKind && colors === this.lastColors && quality === this.lastQuality) return !this.failed;
+    this.lastKind = kind;
+    this.lastColors = colors;
+    this.lastQuality = quality;
+    const key = `${kind}|${quality}|${colorsKey(colors)}`;
+    if (key === this.key) return !this.failed;
+    this.key = key;
+    try {
+      this.clear();
+    } catch (e) {
+      // (a part's object of the last build failed to free: clear dropped it and the rest — the new build goes on)
+      console.warn('[battle] freeing the last arena failed', e);
+    }
+    const t0 = performance.now();
+    this.failed = false;
+    this.builtPalette = null;
+    let at = 'foundation';
+    try {
+      // the palette, the ground's cells and the look, before the parts (they all read them; a hall's floor — FLOOR_STYLE:
+      // boards or tiles, no terrain — reads no cells: one blank cell)
+      const palette = arenaPalette(kind, colors);
+      const cells = FLOOR_STYLE[kind] ? { data: new Uint8Array(4), w: 1, h: 1, min: [0, 0] } : groundCells(kind, palette, STAGE);
+      const tex = new THREE.DataTexture(cells.data, cells.w, cells.h, THREE.RGBAFormat, THREE.UnsignedByteType);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.flipY = false;
+      tex.needsUpdate = true;
+      const ctx: ArenaContext = { uniforms: this.uniforms, quality, disposables: [tex], kind, colors, stage: STAGE, palette,
+        ground: { tex, min: new THREE.Vector2(cells.min[0], cells.min[1]), size: new THREE.Vector2(cells.w, cells.h) },
+        look: arenaLook(kind, palette, 12) };
+      this.ctx = ctx;
+      for (const part of this.parts) {
+        if (!appliesTo(part, kind)) continue;
+        at = part.name;
+        const obj = part.build(ctx);
+        if (obj) {
+          obj.name = part.name;
+          this.group.add(obj);
+        }
+      }
+      this.builtPalette = palette;
+    } catch (e) {
+      // (failed and warned first: freeing the half-built arena may throw too, and must not leave this key reading as built)
+      this.failed = true;
+      if (!this.warned.has(kind)) {
+        this.warned.add(kind);
+        console.warn(`[battle] arena part '${at}' failed for ${kind}: the battle uses today's arena`, e);
+      }
+      try {
+        this.clear();
+      } catch {
+        // (clear emptied the arena whatever threw: nothing of the failed build is left to draw)
+      }
+    }
+    this.buildMs = performance.now() - t0;
+    return !this.failed;
+  }
+
+  /** The palette of the last build (null: none, or it failed): the battle view's look takes its fog and hemisphere
+   *  colours from it. */
+  get palette(): ArenaPalette | null {
+    return this.builtPalette;
+  }
+
+  /** The last build's ms. */
+  get lastBuildMs(): number {
+    return this.buildMs;
+  }
+
+  /** Frees the built parts (kit materials back to the uniforms' pool, the build's textures) and keeps the group — every
+   *  part and texture, emptying the group and the build's list, even where one throws (a malformed object a part handed
+   *  back); then throws the first error. */
+  private clear(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.ctx = null;
+    let error: { e: unknown } | null = null;
+    for (const child of [...this.group.children]) {
+      try {
+        disposeKit(child, ctx);
+      } catch (e) {
+        error ??= { e };
+        child.removeFromParent();
+      }
+    }
+    for (const d of ctx.disposables) {
+      try {
+        d.dispose();
+      } catch (e) {
+        error ??= { e };
+      }
+    }
+    ctx.disposables.length = 0;
+    if (error) throw error.e;
+  }
+
+  /** Frees the build and detaches the arena; the next build starts afresh. */
+  dispose(): void {
+    this.clear();
+    this.builtPalette = null;
+    this.key = '';
+    this.lastKind = this.lastColors = this.lastQuality = null;
+    this.failed = false;
+    this.group.removeFromParent();
+  }
+}

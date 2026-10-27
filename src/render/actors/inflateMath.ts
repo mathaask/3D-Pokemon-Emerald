@@ -17,6 +17,11 @@ export interface InflateParams {
 
 export const INFLATE: InflateParams = { amp: 1.0, cap: 9, window: 12, sigma: 3.0 }; // tuned in Task 5
 
+/** The battlers' field (Phase 3): 64-px Pokémon and trainer pictures, ≈ 4× a 16-px character, so the distance window
+ *  and cap grow to match (window ≥ cap: the profile's flat top is reachable) and the height in proportion (inflateMax /
+ *  64 within 0.5–1.5× the overworld's / 16). Tuned on the battle review (Phase 3 Task 5). */
+export const BATTLE_INFLATE: InflateParams = { amp: 2.75, cap: 16, window: 20, sigma: 3.0 };
+
 /** Height (sprite px) of the flattest-topped point: amp·sqrt(cap). */
 export const inflateMax = (p: InflateParams = INFLATE) => p.amp * Math.sqrt(p.cap);
 

@@ -8,6 +8,7 @@ import type { SpritePixelSource } from '../src/render/actors/spriteColors';
 import { createKitUniforms } from '../src/render/kit/materials';
 import { bgr555ToSrgb, toLinear } from '../src/render/kit/palette';
 import { blankSprite } from '../src/render/previewActors';
+import { setAoPrepassMaterial, aoPrepassMaterial } from '../src/render/aoPrepass';
 
 const slot = { u0: 0, v0: 0.0625, u1: 0.015625, v1: 0 };
 
@@ -50,22 +51,51 @@ describe('cardSpec', () => {
 });
 
 describe('skipOverridePasses', () => {
-  it('draws no instance in a pass with an override material (the GTAO prepass), its own material untouched', () => {
+  it('draws no instance in a pass with an override material (the GTAO prepass), on its own program there', () => {
     const g = new THREE.InstancedBufferGeometry();
     g.instanceCount = 3;
-    const own = new THREE.MeshBasicMaterial(), override = new THREE.MeshNormalMaterial();
+    const own = new THREE.MeshBasicMaterial();
     const mesh = new THREE.Mesh(g, own);
     skipOverridePasses(mesh);
+    // (three draws it with its own material in the override pass: the main pass's program — an override program's
+    // variant for a normal-less mesh depends on the draw order, so it compiled mid-walk at High)
+    expect(own.allowOverride).toBe(false);
     const r = {} as THREE.WebGLRenderer, scene = new THREE.Scene(), cam = new THREE.Camera();
-    mesh.onBeforeRender(r, scene, cam, g, override, null as unknown as THREE.Group);
+    scene.overrideMaterial = new THREE.MeshNormalMaterial();
+    mesh.onBeforeRender(r, scene, cam, g, own, null as unknown as THREE.Group);
     expect(g.instanceCount).toBe(0);
-    mesh.onAfterRender(r, scene, cam, g, override, null as unknown as THREE.Group);
+    mesh.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
     expect(g.instanceCount).toBe(3);
+    scene.overrideMaterial = null;
     mesh.onBeforeRender(r, scene, cam, g, own, null as unknown as THREE.Group);
     expect(g.instanceCount).toBe(3);
     g.instanceCount = 5; // (the next frame's count, set between passes)
     mesh.onAfterRender(r, scene, cam, g, own, null as unknown as THREE.Group);
     expect(g.instanceCount).toBe(5);
+  });
+  it('draws a mesh with a prepass material of its own (aoPrepass) in the override pass', () => {
+    const g = new THREE.InstancedBufferGeometry();
+    g.instanceCount = 3;
+    const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial()), prepass = new THREE.ShaderMaterial();
+    setAoPrepassMaterial(mesh, prepass);
+    skipOverridePasses(mesh);
+    const r = {} as THREE.WebGLRenderer, scene = new THREE.Scene(), cam = new THREE.Camera();
+    scene.overrideMaterial = new THREE.MeshNormalMaterial();
+    mesh.onBeforeRender(r, scene, cam, g, prepass, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(3);
+    mesh.onAfterRender(r, scene, cam, g, prepass, null as unknown as THREE.Group);
+    expect(g.instanceCount).toBe(3);
+  });
+  it('keeps every overworld actor mesh on its own program in override passes; the inflated actors draw their prepass material', () => {
+    const atlas = { slots: new Map(), target: { texture: new THREE.Texture() } };
+    const layer = new ActorLayer(atlas, { field: { texture: new THREE.Texture() } });
+    const meshes: THREE.Mesh[] = [];
+    layer.group.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+    expect(meshes.map((m) => m.name).sort()).toEqual(['blobShadows', 'cards', 'contactShadows', 'inflatedActors']);
+    for (const m of meshes) expect((m.material as THREE.Material).allowOverride, m.name).toBe(false);
+    const inflated = meshes.find((m) => m.name === 'inflatedActors')!;
+    expect((aoPrepassMaterial(inflated) as THREE.ShaderMaterial).customProgramCacheKey()).toBe('actor:inflated-ao:1:uniforms');
+    expect(meshes.filter((m) => aoPrepassMaterial(m) !== undefined)).toEqual([inflated]);
   });
   it('passes the instance-data variant to its inflated actors (uniform array by default, attributes on request)', () => {
     const atlas = { slots: new Map(), target: { texture: new THREE.Texture() } };

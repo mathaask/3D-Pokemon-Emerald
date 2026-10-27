@@ -1,0 +1,210 @@
+// The arena palette: every colour a Modern arena is built with, derived from the colours sampled off the GBA's battle
+// background (bgSample.ts: backdrop, top band, platform fill, platform rim) by the kit's art direction (kit/palette.ts:
+// soften tames neon and lifts crushed darks, lush grades foliage, earthTone turns soil warm brown). All sRGB 0..1.
+
+import { lush, luma, mix, scale, soften, earthTone, type RGB } from '../kit/palette';
+import { GroundMat } from '../kit/terrain';
+import { defaultArenaColors, type ArenaColors } from './bgSample';
+import type { ArenaKind } from './arenaKind';
+
+export interface ArenaPalette {
+  groundMat: GroundMat; ground: RGB;           // the field
+  pathMat: GroundMat; path: RGB;               // the worn ring around the platforms (outdoor kinds)
+  platformMat: GroundMat; platformTop: RGB;    // painted by the ground material on the platform tops
+  platformSide: RGB; skirt: RGB;               // platform body; the grass skirt
+  leaf: RGB; trunk: RGB; blade: RGB; rock: RGB; water: RGB; wall: RGB; accent: RGB;
+}
+
+const TRUNK: RGB = [0.42, 0.3, 0.2], ROCK: RGB = [0.58, 0.56, 0.52], WATER: RGB = [0.32, 0.42, 0.84];
+/** The seabed's sand (kit/water.ts SEABED_MATERIAL's colour); a warm desert sand the sand field is pulled to. */
+const SEABED: RGB = [0.74, 0.66, 0.47], WARM_SAND: RGB = [0.88, 0.76, 0.52], CREAM: RGB = [0.97, 0.91, 0.74];
+/** The rock arenas' stone (Task 9): Groudon's volcanic red-brown rock and floor, Kyogre's wet dark blue-grey (Marine
+ *  Cave), and the warm tan cave rock of the cave pond (its background is the pond's picture: no cave colour to take). */
+const VOLCANIC: RGB = [0.5, 0.26, 0.19], VOLCANIC_FLOOR: RGB = [0.56, 0.47, 0.42], MARINE_ROCK: RGB = [0.52, 0.6, 0.68];
+const CAVE_TAN: RGB = [0.76, 0.65, 0.48];
+/** Under the grass kinds' platform rim: a warm soil brown the rim colour is pulled to. */
+const SOIL: RGB = [0.5, 0.36, 0.22];
+/** The ground scale of the grass kinds: long grass is the darker field. */
+const GRASS_SCALE: Partial<Record<ArenaKind, number>> = { longGrass: 0.78, grass: 0.9, plain: 1.0 };
+/** The Stadium backgrounds (gBattleEnvironmentTiles_Stadium): one picture for seven rooms — a pale striped wall under a
+ *  dark top band (teal for the Elite Four, blue for Aqua and the Champion, grey for Magma), the platforms in each room's
+ *  colour. Their 3D rooms (Task 11, parts/stadium.ts) have walls of their own theme, coloured from the picture towards it
+ *  (sRGB): Magma's volcanic rock (the grey band darkened, warmed), Aqua's blue metal (the band and the platform's blue),
+ *  Sidney's dark rock (the teal band near charcoal), Phoebe's deep purple stone (her lilac platform, deepened), Glacia's
+ *  pale ice (her platform's rim, paler), Drake's warm stone (a sandstone towards his orange platform), the Champion's
+ *  pale marble (the pale backdrop, whiter). The look's fog follows the wall (look.ts: indoor fog = the wall × 0.6). */
+const STADIUM_WALL: Readonly<Partial<Record<ArenaKind, (c: ArenaColors) => RGB>>> = {
+  magma: (c) => mix(scale(c.top, 0.5), [0.36, 0.25, 0.22], 0.6),
+  aqua: (c) => scale(mix(c.top, c.platform, 0.5), 0.75),
+  sidney: (c) => mix(scale(c.top, 0.35), [0.2, 0.19, 0.23], 0.6),
+  phoebe: (c) => scale(mix(c.platform, [0.45, 0.25, 0.55], 0.5), 0.5),
+  glacia: (c) => mix(c.rim, [0.86, 0.95, 1.0], 0.45),
+  drake: (c) => mix([0.6, 0.48, 0.4], c.platform, 0.3),
+  champion: (c) => mix(c.backdrop, [0.96, 0.96, 0.94], 0.5),
+};
+/** Their floors (sRGB; `wall` STADIUM_WALL's): Magma's dark basalt, Sidney's dark slate, Phoebe's deep purple, Drake's
+ *  sandstone, the Champion's pale marble with a hint of his teal — their walls' stone paler; Aqua's and Glacia's keep the
+ *  pale floor of the halls (the platform half way to the pale backdrop: blue metal, pale ice). The vivid platforms stand
+ *  out on them as the GBA's on its pale room. */
+const STADIUM_FLOOR: Readonly<Partial<Record<ArenaKind, (c: ArenaColors, wall: RGB) => RGB>>> = {
+  magma: (_c, wall) => mix(wall, [0.42, 0.38, 0.36], 0.45),
+  sidney: (_c, wall) => mix(wall, [0.46, 0.46, 0.48], 0.45),
+  phoebe: (c, wall) => mix(wall, c.platform, 0.3),
+  drake: (_c, wall) => mix(wall, [0.82, 0.74, 0.62], 0.45),
+  champion: (c, wall) => mix(wall, c.platform, 0.12),
+};
+
+const clamp01 = (c: RGB): RGB => [0, 1, 2].map((i) => Math.min(1, Math.max(0, c[i]))) as RGB;
+const copy = (c: RGB): RGB => [c[0], c[1], c[2]];
+
+/**
+ * The palette of an arena kind from its background colours (null → defaultArenaColors(kind)). Rules (`c` the colours):
+ * grass / longGrass / plain: the field Grass from the platform's green (soften(scale(c.platform, 0.78 / 0.9 / 1.0))), a
+ * worn earth Path ring (earthTone(c.rim)), lush Grass tops on soil sides, a lush rim-coloured grass skirt; sand: Sand
+ * field and tops; water / kyogre: a sandy seabed under the platform's water colour, the rim's foam (Kyogre's rock a wet
+ * blue-grey); pond: a grass shore around the pond (lily pads in the rim's green); cavePond: a Dirt bank and rock of warm
+ * tan cave stone (CAVE_TAN); underwater: pale turquoise sand, kelp, rocks; mountain: Gravel field, Rock path and tops, a
+ * pale stone cliff; cave:
+ * a smooth warm tan Dirt floor from the backdrop, its rock the backdrop towards the top band's brown, Rock tops from the
+ * platform fill; groudon: a cracked volcanic Rock floor, red-brown volcanic rock, its lava the top band; building: Deck floor, Paving tops; gym … champion: Paving floor and tops (the
+ * Stadium kinds' walls by their theme: STADIUM_WALL); rayquaza: pale Paving. Unlisted fields: path = ground, skirt = blade and
+ * the kit's defaults (trunk, rock, water), wall = c.backdrop, accent = c.top. Every channel stays in 0..1.
+ */
+export function arenaPalette(kind: ArenaKind, colors: ArenaColors | null): ArenaPalette {
+  const c = colors ?? defaultArenaColors(kind);
+  const leaf = lush(scale(c.platform, 0.7)), blade = lush(c.platform);
+  let p: ArenaPalette;
+  switch (kind) {
+    case 'grass': case 'longGrass': case 'plain': {
+      const ground = soften(scale(c.platform, GRASS_SCALE[kind]!));
+      p = {
+        groundMat: GroundMat.Grass, ground, pathMat: GroundMat.Path, path: earthTone(c.rim),
+        platformMat: GroundMat.Grass, platformTop: lush(c.platform),
+        platformSide: earthTone(mix(c.rim, SOIL, 0.7)), skirt: lush(c.rim),
+        leaf, trunk: TRUNK, blade, rock: ROCK, water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'sand': {
+      const blades = mix(c.platform, [0.5, 0.55, 0.3], 0.5);
+      // (the field: the platform's yellow warmed 0.7 of the way to desert sand — as it is, lit by the sky it read
+      // olive-mustard; the mound and the worn ring the rim's pale yellow warmed to the GBA's pale cream: a light mound on a
+      // warm field)
+      const cream = soften(mix(c.rim, CREAM, 0.6));
+      p = {
+        groundMat: GroundMat.Sand, ground: soften(mix(c.platform, WARM_SAND, 0.7)), pathMat: GroundMat.Sand, path: cream,
+        platformMat: GroundMat.Sand, platformTop: cream, platformSide: scale(soften(c.platform), 0.8), skirt: blades,
+        leaf: [0.35, 0.62, 0.3], trunk: TRUNK, blade: blades, rock: mix(c.platform, [0.6, 0.58, 0.55], 0.6), water: WATER,
+        wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'water': case 'kyogre': {
+      const ground = mix(c.platform, SEABED, 0.5);
+      p = {
+        groundMat: GroundMat.Sand, ground, pathMat: GroundMat.Sand, path: ground,
+        platformMat: GroundMat.Sand, platformTop: copy(c.rim), platformSide: scale(ground, 0.8), skirt: blade,
+        leaf, trunk: TRUNK, blade, rock: kind === 'kyogre' ? mix(scale(soften(c.backdrop), 0.5), MARINE_ROCK, 0.8) : ROCK,
+        water: copy(c.platform), wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'pond': {
+      // (its grass, the lily pads and the shore's blades are the rim's green: the platform fill is the pond's water)
+      const pad = lush(c.rim), ground = scale(pad, 0.85);
+      p = {
+        groundMat: GroundMat.Grass, ground, pathMat: GroundMat.Grass, path: ground,
+        platformMat: GroundMat.Grass, platformTop: pad, platformSide: scale(pad, 0.7), skirt: pad,
+        leaf: lush(scale(c.rim, 0.6)), trunk: TRUNK, blade: pad, rock: ROCK, water: copy(c.platform),
+        wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'cavePond': {
+      // (a cave of warm tan rock round the pond: its picture's pale backdrop turned to the cave's stone)
+      const stone = soften(mix(c.backdrop, CAVE_TAN, 0.85)), ground = scale(stone, 0.8);
+      p = {
+        groundMat: GroundMat.Dirt, ground, pathMat: GroundMat.Rock, path: ground,
+        platformMat: GroundMat.Rock, platformTop: copy(c.rim), platformSide: scale(ground, 0.8), skirt: lush(c.rim),
+        leaf, trunk: TRUNK, blade: lush(c.rim), rock: scale(stone, 0.9), water: copy(c.platform),
+        wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'underwater': {
+      // (tuned at Task 8's reviews: the sea floor a pale turquoise sand — the backdrop's pale blue 0.3 of the way to the
+      // seabed's sand, blue over red — and the platforms the GBA's lavender lightened, not darkened (× 0.8 read navy))
+      const kelp = mix(lush(c.rim), [0.35, 0.4, 0.2], 0.5), rock = mix(c.platform, [1, 1, 1], 0.3), floor = mix(c.backdrop, SEABED, 0.3);
+      p = {
+        groundMat: GroundMat.Sand, ground: floor, pathMat: GroundMat.Sand, path: floor,
+        platformMat: GroundMat.Rock, platformTop: rock, platformSide: rock, skirt: kelp,
+        leaf, trunk: TRUNK, blade: kelp, rock, water: copy(c.backdrop), wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'mountain': {
+      // (Task 9: its cliff a pale warm stone, the platform's beige turned half way to the GBA's pale backdrop — lighter than
+      // the gravel, as the GBA's mountain is pale; the platform's beige × 0.8 read khaki-olive, the gravel's own tone)
+      const side = scale(soften(c.platform), 0.8), cliff = soften(mix(c.platform, c.backdrop, 0.55));
+      p = {
+        groundMat: GroundMat.Gravel, ground: soften(c.platform), pathMat: GroundMat.Rock, path: soften(c.rim),
+        platformMat: GroundMat.Rock, platformTop: soften(c.rim), platformSide: side, skirt: blade,
+        leaf, trunk: TRUNK, blade, rock: cliff, water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'cave': case 'groudon': {
+      // (Task 9: the cave a warm tan as the GBA's — its floor the backdrop's tan a little greyed, smooth earth (Dirt), its
+      // rock the tan turned towards the top band's brown — where the backdrop × 0.55 / × 0.7 in cracked Rock read as murky
+      // olive under the cave's dim light, the tonemapper crushing its blue; Groudon's red-brown volcanic rock on a cracked
+      // warm ash floor)
+      const tan = soften(c.backdrop), grey = (k: RGB, t: number) => mix(k, [luma(k), luma(k), luma(k)], t);
+      // (the walls' brown a little redder: in their shade a tan whose red and green match turns olive)
+      const warm = (k: RGB): RGB => [k[0] * 1.04, k[1] * 0.97, k[2] * 0.93];
+      const ground = kind === 'groudon' ? mix(scale(tan, 0.7), VOLCANIC_FLOOR, 0.7) : grey(tan, 0.25);
+      const rock = kind === 'groudon' ? mix(scale(tan, 0.5), VOLCANIC, 0.8) : warm(grey(soften(mix(c.backdrop, c.top, 0.3)), 0.15));
+      p = {
+        groundMat: kind === 'groudon' ? GroundMat.Rock : GroundMat.Dirt, ground, pathMat: GroundMat.Rock, path: ground,
+        platformMat: GroundMat.Rock, platformTop: soften(c.platform), platformSide: scale(rock, 0.95), skirt: blade,
+        leaf, trunk: TRUNK, blade, rock, water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'building': {
+      const ground = soften(c.platform);
+      p = {
+        groundMat: GroundMat.Deck, ground, pathMat: GroundMat.Deck, path: ground,
+        platformMat: GroundMat.Paving, platformTop: soften(c.rim), platformSide: scale(soften(c.rim), 0.8), skirt: blade,
+        leaf, trunk: TRUNK, blade, rock: ROCK, water: WATER, wall: soften(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    case 'rayquaza': {
+      const stone = soften(c.platform);
+      p = {
+        groundMat: GroundMat.Paving, ground: stone, pathMat: GroundMat.Paving, path: stone,
+        platformMat: GroundMat.Paving, platformTop: stone, platformSide: scale(stone, 0.8), skirt: blade,
+        leaf, trunk: TRUNK, blade, rock: soften(c.rim), water: WATER, wall: copy(c.backdrop), accent: copy(c.top),
+      };
+      break;
+    }
+    default: {
+      // gym, leader, frontier and the Stadium kinds (magma, aqua, the Elite Four, the Champion)
+      // (the floor: the platform colour more than half way to the pale backdrop — tuned from 0.3, which floored the Stadium
+      // rooms wall to wall in their vivid platform colours, where the GBA's platforms stand out on a pale room; the Stadium
+      // rooms' walls and floors by their theme: STADIUM_WALL, STADIUM_FLOOR)
+      const wall = STADIUM_WALL[kind]?.(c) ?? soften(c.backdrop);
+      const ground = STADIUM_FLOOR[kind]?.(c, wall) ?? soften(mix(c.platform, c.backdrop, 0.55));
+      p = {
+        groundMat: GroundMat.Paving, ground, pathMat: GroundMat.Paving, path: ground,
+        platformMat: GroundMat.Paving, platformTop: soften(c.platform), platformSide: scale(soften(c.rim), 0.8), skirt: blade,
+        leaf, trunk: TRUNK, blade, rock: ROCK, water: WATER, wall, accent: copy(c.top),
+      };
+    }
+  }
+  for (const k of Object.keys(p) as (keyof ArenaPalette)[]) {
+    const v = p[k];
+    if (Array.isArray(v)) (p as unknown as Record<string, RGB>)[k] = clamp01(v);
+  }
+  return p;
+}

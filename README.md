@@ -77,8 +77,38 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   lightning), volcanic ash, sandstorms, and underwater bubbles are real 3D particles.
 - **Battles.** Each GBA battle sprite is projected into a 3D arena through a reference
   camera that matches the original layout. Lunges, faints, and move effects keep their
-  original choreography but move through real space. The arena is themed per battle
-  environment, using colours sampled from the game's own backgrounds.
+  original choreography but move through real space.
+- **Battle arenas (Modern).** Every battle takes place in a modelled arena built for the
+  background the GBA draws, picked the way the game picks it (battle type, then trainer, then
+  the map, then the terrain). There are 24 of them:
+  - *Outdoors* (grass, long grass, sand, plain): rolling ground with groves of rounded trees,
+    grass clumps, flowers, dunes and palms, and rocks.
+  - *Water* (sea, pond, underwater): the sea with islets and palms; a pond with lily pads,
+    reeds and a sandy bank; the sea floor with kelp, caustics and light shafts.
+  - *Rock* (mountain, cave, cave pond, Kyogre's cave, Groudon's lava cave): cliff walls,
+    stalagmites, boulders, dark water and glowing lava.
+  - *Indoor halls* (building, gym, Gym Leader, Battle Frontier): panelled rooms with
+    bookcases, gym courts with banners, and stadium seating with glowing panels.
+  - *Stadium rooms* for Team Magma's and Team Aqua's hideouts, the four Elite Four rooms and the
+    Champion's room, each with its own theme: lava and pipes, fountains, spikes, candelabra, ice
+    crystals, stone pillars.
+  - *The Sky Pillar* for Rayquaza: a broken stone floor over a sea of clouds.
+
+  The two platforms are modelled per terrain: an earth disc with a grass skirt, a sand mound, a
+  stone slab, a lily pad, cave rock, a rock on the sea floor, or a ripple ring on open water. Colours are sampled from the battle background the game
+  loads from your ROM, so every arena keeps the GBA's palette. Outdoor battles share the
+  overworld's time of day. A gradient sky with soft clouds sits over the outdoor arenas. The
+  battle camera looks down at the GBA's angle, so the sky shows only in water reflections and as
+  cloud shadows drifting over the ground. The Pokémon (and the trainers' intro pictures) are
+  inflated sprites like the overworld characters, lit by the arena, and the **Sprite edges**
+  setting applies to them. A floating Pokémon's shadow lies flat on its platform.
+  What stays 2D: move-effect sprites are flat cards in 3D space, as before. Health boxes, text
+  boxes and menus are the crisp original screen on top, and so are full-screen background move
+  effects. Every shader a battle can draw is compiled at boot, so no shader compiles when a battle
+  starts (the first battle of each arena type in a session still builds its scenery once: one
+  longer frame, about 0.1 s, during the battle's opening transition). **Retro 3D** keeps the original themed arena with flat cards, unchanged. A world-style
+  switch in the middle of a battle applies at once, and V shows the original GBA screen at any
+  point.
 - **Menus and cutscenes** are shown as the crisp original screen on an ambilight backdrop.
 
 ## Project layout
@@ -88,7 +118,8 @@ src/gba/        GBA emulator: ARM7TDMI CPU, PPU, APU, DMA, timers, HLE BIOS, Fla
 src/game/       Emerald knowledge: symbol addresses, live-state reader, sprite classes, ROM decoders
 src/render/     Three.js renderer: overworld (map analysis, world mesh, weather, sky), kit (Modern
                 style models: terrain, water, cliffs, trees, grass, flowers, buildings, props),
-                battle (arena, reference-camera projection), HUD, post-processing, map preview
+                battle (reference-camera projection, Modern arenas built from parts, the Retro
+                arena, battle sky), HUD, post-processing, map and battle previews
 src/ui, input, audio   Shell, settings, keyboard/gamepad, AudioWorklet output
 tools/          Headless runner, scripted play, screenshot capture, map atlas, analysis
 tests/          Unit tests (CPU, core hardware, PPU, APU, ROM) + ROM-driven smoke tests
@@ -107,6 +138,9 @@ npm run regress -- --label mine            # 16 maps at day + night → out/regr
 npm run regress:live -- --label mine --static --gpu --selftest
                                            # live save-state scenes + map previews with actors, both styles
                                            # (add --compare <label> to diff against an earlier run)
+npm run regress:live -- --label mine --battles --review
+                                           # battles only: live battles + a preview of every arena kind,
+                                           # review sheet GBA | before | Modern | Retro (--review-before <label>)
 npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.test.ts tests/smoke/semantics.test.ts
                                            # ROM-driven smoke tests; coverage report → out/coverage*.txt
 ```
@@ -118,7 +152,12 @@ with `--static`, map previews showing the map's object events (`?map=…&actors=
 `--compare <label>` diffs every shot against an earlier run, `--gpu` times 60 frames with GPU
 timer queries, `--selftest` checks the GPU inflation field and the HD edge filter against CPU
 references, and `--ab` measures what the Modern characters and objects cost over flat cards in
-the same session. The header of the tool documents every flag and the `stats.json` fields.
+the same session (`--ab-feature battle`: the Modern battle over the Retro one; `--ab-feature
+battlers`: the inflated battlers over flat cards). `--battles` runs only the battle entries:
+the live battles and a static preview of every arena kind, each saved next to the GBA's own
+picture of the same scene. `--review` adds `_review_battle.png`, one row per battle with the
+columns GBA | before (`--review-before <label>`) | Modern | Retro. The header of the tool
+documents every flag and the `stats.json` fields.
 
 `npm run regress` writes one PNG per map and hour, a contact sheet per hour
 (`_sheet_h11.png`, `_sheet_h21.png`) and render stats (`stats.json`: draw calls, triangles,
@@ -130,6 +169,13 @@ headless; the smoke tests need the ROM.
 `&weather=`, `&flash=` change the conditions; `&actors=1` adds the map's object events from
 their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one of them, and
 `&style=retro`, `&quality=`, `&spriteFilter=pixel` override the settings).
+
+`/?battle=<kind>` opens a static battle in any arena kind (`grass`, `longGrass`, `sand`, …
+`rayquaza`; the list is in `src/game/battle/arenaKind.ts`) straight from the ROM. `&player=` and
+`&enemy=` pick the Pokémon by internal species id (Torchic vs Zigzagoon by default),
+`&double=1&player2=…&enemy2=…` makes a double battle, and `&hour=`, `&style=retro`,
+`&quality=`, `&yaw=`, `&spriteFilter=pixel` work as in the map preview. Drag turns the camera.
+`npx tsx tools/shot3d.ts --query "battle=gym&player=281&enemy=74"` screenshots one.
 
 ## Notes and limitations
 
@@ -143,4 +189,39 @@ their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one o
 - The two largest multi-piece world sprites, the S.S. Tidal and the submarine's shadow, are still
   drawn from their base sprite shape (garbled) in both 3D styles; the moving truck is composed
   correctly.
+- Battle effects, in both 3D styles:
+  - Sprites the GBA rotates show unrotated, and the mosaic (pixelate) effect isn't drawn.
+  - Move effects the GBA draws semi-transparent or brightened show opaque at normal brightness.
+  - Full-screen background move effects stay a flat 2D layer over the 3D scene.
+  - A few moves (Dig, Memento, Mimic) can show a flat copy of the Pokémon beside its 3D sprite.
+  - During full-screen fades (a battle starting or ending) the Pokémon darken a little more than
+    the rest of the scene for a moment.
+- Battle arenas (Modern), what they don't do:
+  - The sky shows only in water reflections and cloud shadows: the camera never frames the horizon.
+  - Double battles reuse the two single-battle platforms: a side's two Pokémon share one, and
+    their feet can sink into it.
+  - Every Battle Frontier facility uses the same hall.
+  - The trainers' intro pictures are inflated sprites like the Pokémon, not modelled figures.
+- Battle arenas (Modern), the look:
+  - At night the exposure only partly follows the dark, and the moonlit field is dim.
+  - At night slab tops and sides differ in tone, islets and long grass are too saturated, and
+    rocks on grass look moonlit.
+  - Long grass is too saturated by day too, and its nearest blades look flat.
+  - Palms come in one height only.
+  - Underwater, the kelp's shape is simple and the light shafts are faint against the haze.
+  - On the sea, the glint near the camera is heavy.
+  - Mountain scree is paler than the GBA's darker pebbles.
+  - Phoebe's room reads mid-purple rather than gloomy.
+  - The Sky Pillar's broken edge reads as a step, not a jagged break.
+  - With the camera turned part way, Groudon's lava pools can sit behind the Pokémon.
+  - Groudon's lava glows with bloom (about 1–1.2 ms extra on an integrated GPU); Team Magma's lava
+    and Phoebe's candles skip the glow halo to stay within budget.
+- Battle camera edge cases (Modern):
+  - Zoomed fully in when a battle starts, the opening sweep can show bare tree trunks for about
+    half a second (the zoom carries over from the last battle).
+  - Zoomed fully in, the palms on the sea's islets are above the top of the screen.
+  - Windows wider than 21:9 can show unfinished scenery at the sides, such as the Sky Pillar's haze.
+- Code-level open items with no visible effect today (the order of equal-priority sprites in the
+  battle preview, the height of the overworld's flat ground decals, rock walls modelled taller
+  than any view shows) are tracked in the progress log.
 - Audio needs one key press or click before it can start (a browser requirement).

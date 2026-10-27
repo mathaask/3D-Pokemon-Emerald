@@ -18,6 +18,7 @@ import { inflateMax } from './inflateMath';
 import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
 import { SpriteColorCache, type SpritePixelSource, type SpriteSample } from './spriteColors';
 import { ObjectModels, type ModelInstance } from './objectModels';
+import { aoPrepassMaterial } from '../aoPrepass';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
 /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. The saved
@@ -139,16 +140,22 @@ function placeCard(out: BillboardSpec, s: SpriteSnap, kind: SpriteKind, slot: Sl
 
 /**
  * Leaves an instanced mesh whose own shader places its instances (cards, their blob shadows, inflated actors, contact
- * shadows) out of the passes that draw the scene with an override material — GTAO's normal/depth prepass at High
- * quality: without the mesh's shader every instance is the bare quad / grid at the world origin, a dark AO patch
- * there. That pass draws 0 instances of it (onBeforeRender sees the override material; onAfterRender restores the
- * count). Shadow passes call onBeforeShadow instead, so the mesh keeps casting.
+ * shadows; the battle's cards and battlers) out of the passes that draw the scene with an override material — GTAO's
+ * normal/depth prepass at High quality: without the mesh's shader every instance is the bare quad / grid at the world
+ * origin, a dark AO patch there. That pass draws 0 instances of it (onBeforeRender sees the scene's override material;
+ * onAfterRender restores the count), on the mesh's own material (allowOverride off: its own program, the main pass's).
+ * Three picks an override material's program for a draw by its full key only when the previous draw's program fails one
+ * of setProgram's checks — vertex normals are not among them —, so which variant a normal-less mesh needs depends on
+ * the draw order: the cards compiled one mid-battle (b8b384e) and mid-walk (cross_lr, Modern High: Task 12). A mesh with
+ * a prepass material of its own (aoPrepass.ts: the inflated actors) draws with it there. Shadow passes call
+ * onBeforeShadow instead, so the mesh keeps casting.
  */
 export function skipOverridePasses(mesh: THREE.Mesh): void {
+  (mesh.material as THREE.Material).allowOverride = false;
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   let saved = -1;
-  mesh.onBeforeRender = (_r, _s, _c, _g, material) => {
-    if (material === mesh.material) return;
+  mesh.onBeforeRender = (_r, scene, _c, _g, material) => {
+    if (!(scene as THREE.Scene).overrideMaterial || material === aoPrepassMaterial(mesh)) return;
     saved = geometry.instanceCount;
     geometry.instanceCount = 0;
   };

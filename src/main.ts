@@ -11,6 +11,7 @@ import { keyMask } from './input/keyNames';
 import { timeGpuFrames, type GpuTiming } from './render/gpuTiming';
 import { frameGuard } from './render/frameGuard';
 import { parseSpriteFilter } from './render/actors/actorLayer';
+import { ARENA_KINDS, type ArenaKind } from './game/battle/arenaKind';
 
 const EXPECTED_SHA1 = 'f3ae088181bf583e55daf962a92bb46f4f1d07b7';
 const FRAME_MS = 1000 / 59.7275;
@@ -47,7 +48,8 @@ async function loadRom(shell: Shell): Promise<Uint8Array> {
  * Manual mode: no frame loop; `emu.step(keys, frames)` emulates and renders frame by frame with a
  * fixed 1/60 s timestep (returns each frame's renderer.render CPU ms), `emu.gpuFrames(n, keys?)` times n
  * frames on the GPU, idle or with `keys` held (EXT_disjoint_timer_query_webgl2, medians: render/gpuTiming.ts);
- * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames.
+ * `emu.selfTest()` / `emu.fieldDump()` check / dump the inflation field between frames; `emu.gbaPng()` is the GBA's own
+ * frame (the PPU's composite of the last emulated frame) as a PNG data URL, 2× nearest (480×320).
  */
 function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>): void {
   renderer.setFixedTimestep(1 / 60);
@@ -74,7 +76,21 @@ function exposeManual(gba: Gba, renderer: Renderer, emu: Record<string, unknown>
     const mask = keyMask(keys);
     return timeGpuFrames(gl, n, render, () => emulate(mask));
   };
-  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames };
+  // (the framebuffer's words are RGBA8 bytes, as ScreenView uploads them)
+  const gbaPng = (): string => {
+    const frame = document.createElement('canvas');
+    frame.width = 240;
+    frame.height = 160;
+    frame.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(gba.ppu.framebuffer.buffer.slice(0)), 240, 160), 0, 0);
+    const out = document.createElement('canvas');
+    out.width = 480;
+    out.height = 320;
+    const g = out.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(frame, 0, 0, 480, 320);
+    return out.toDataURL();
+  };
+  (window as unknown as { emu: unknown }).emu = { ...emu, step, gpuFrames, gbaPng };
 }
 
 function debounce(fn: () => void, ms: number): () => void {
@@ -99,6 +115,22 @@ async function boot(): Promise<void> {
     shell.hideLoader();
     // (no wall-clock toast in manual mode: harness shots stay deterministic)
     if (previewParams.get('manual') !== '1') shell.toast(`Preview: ${app.name}`);
+    (window as unknown as { preview: unknown }).preview = app;
+    return;
+  }
+  // Battle preview mode (?battle=<arena kind>&player=<species>&enemy=<species>…): a static battle straight from the ROM.
+  const battle = new URLSearchParams(location.search).get('battle');
+  if (battle) {
+    if (!(ARENA_KINDS as readonly string[]).includes(battle)) {
+      shell.toast(`Unknown arena kind "${battle}"`, 5000);
+      throw new Error(`?battle=${battle}: no such arena kind (${ARENA_KINDS.join(', ')})`);
+    }
+    const { BattlePreviewApp } = await import('./render/battlePreview');
+    const previewParams = new URLSearchParams(location.search);
+    const app = new BattlePreviewApp(document.getElementById('view') as HTMLCanvasElement, rom, battle as ArenaKind, previewParams);
+    shell.hideLoader();
+    // (no wall-clock toast in manual mode: harness shots stay deterministic)
+    if (previewParams.get('manual') !== '1') shell.toast(`Battle preview: ${battle}`);
     (window as unknown as { preview: unknown }).preview = app;
     return;
   }

@@ -3,30 +3,42 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static]
-//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade] [--ab-aa]]
+//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--review [--review-before <label>]]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
 // ({ [entry_style]: { calls, triangles, programs, stepMsMax | buildMs, gpuMs?, gpuP90?, cpuMs?, diff?,
-// selftest?, selftestMid?, crossing? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames after its first,
-// cold one; static entries report the preview's cold world build ms instead; `crossing`: the map-crossing entries' walk,
-// gated — see crossingMargin).
-// --static adds the static map-preview entries (object events from ROM templates; STATIC below);
+// selftest?, selftestMid?, crossing?, sceneChange? } }; stepMsMax = the largest renderer.render CPU ms of the entry's frames
+// after its first, cold one; static entries report the preview's cold world build ms instead (a battle preview: its ROM
+// decode and setup); `crossing`: the map-crossing
+// entries' walk, gated — see crossingMargin; `sceneChange`: a battle entry's or exit's walk — see SCENE_CHANGE_MS).
+// Live battle entries also save the GBA's own frame after their steps (emu.gbaPng(): the PPU's composite, 2× nearest) as
+// gba_<entry>.png, one per entry (the emulation is the same in both styles); static battle entries (STATIC_BATTLE) save the
+// GBA's picture of their scratch hardware (preview.referencePng(): BG3 + the battler sprites) as ref_<entry>.png.
+// --static adds the static preview entries (the map previews with object events from ROM templates, STATIC, and the battle
+// previews, STATIC_BATTLE); --battles the battle entries (isBattleEntry: live battle*, static b_*): alone it runs only
+// those, with --static every entry;
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
-// pixels (-1: sizes differ) }). --gpu times 60 more frames on the GPU after the screenshot (timer
+// pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png / ref_<entry>.png too, reported with the diffs, not in
+// stats; a missing reference fails the run as a shot's does).
+// --review writes _review_battle.png: one row per battle entry of the run, columns GBA (gba_ / ref_<entry>.png) | before
+// (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots).
+// --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
 // (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
-// --selftest runs the inflation-field self-test (emu/preview.selfTest(): the GPU field vs its CPU reference
-// on the current atlas, the bleed fixture, the GPU ms of one update) on the entries marked `selftest`, in
-// Modern (Retro computes no field), after their steps; it goes into stats and the field's slots into
-// _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
+// --selftest runs the inflation-field self-test (emu/preview.selfTest(): the presented view's GPU field — the overworld's
+// or, in a battle, the battlers' — vs its CPU reference on the current atlas, the bleed fixture, the GPU ms of one
+// update) on the entries marked `selftest`, in Modern (Retro computes no field), after their steps; it goes into stats
+// and the field's slots into _field_<entry>.png (grey = height / max, blue tint = transparent in the atlas). An entry's
 // `selftestAfter: n` adds a self-test point right after step n (`selftestMid`, _field_<entry>_mid.png; an n naming no
 // step fails the entry; an entry without one leaves no older _mid dump behind).
-// Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax()) px (SELFTEST_TOL: half-float
-// rounding grows with the field's height). The same call checks the HD sprite-edge shader (XBR_GLSL) against
-// its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL).
+// Gated: slots > 0, maxErr and fixtureMaxErr ≤ max(0.02, 0.003·inflateMax) px with the field's own inflateMax (the
+// result's: selfTestTol — half-float rounding grows with the field's height). The same call checks the HD sprite-edge
+// shader (XBR_GLSL) against its CPU reference on a fixture: xbr.maxErr ≤ 2/255 (XBR_TOL), and its baked path (XbrBake +
+// xbrSampleBaked, the battlers') likewise: xbr.bakedMaxErr ≤ 2/255 — and byte for byte the live shader's inside the
+// fixture's rectangle: xbr.bakedVsLive = 0 (XBR_BAKED_VS_LIVE).
 // --ab (live entries, Modern) measures what the Phase 2 actors (inflated characters, object models) cost over the
 // same build with them off (every sprite a card, the pre-Task-5 path; the inflation field's passes run in both): after
 // the steps it snapshots the emulator (both modes emulate the same frames), then, by --ab-method:
@@ -49,8 +61,14 @@
 // +0.5 ms CPU (the Phase 2 budgets; reported, not gated). --ab-aa runs both arms on (A/A: the method's noise floor).
 // --ab-feature npcfade switches the NPC occlusion fade instead (Task 11: the player's circle only as the baseline;
 // flagged over +0.3 ms GPU), on the live entries and, idle only, the static ones with a stand-in player (&focus; the
-// preview's same frames, no snapshot).
-// Actor luminance (every run with both styles): after each screenshot the actors are drawn flat magenta
+// preview's same frames, no snapshot). --ab-feature battle switches the battle's world style (Phase 3: the Modern battle
+// over the Retro one, flagged over +3.0 ms GPU / +0.5 ms CPU) on the live battle entries and the static battle previews
+// (run it with --only <battle entries>: elsewhere both arms draw the same frames). --ab-feature battlers switches the
+// Modern battle's inflated battlers (with their field passes, the flat enemy shadow, the skipped OBJ-window masks) against
+// today's cards (Phase 3 Task 5, flagged over Phase 2's actor budget +1.0 ms GPU / +0.5 ms CPU), likewise on the battle
+// entries.
+// Actor luminance (every run with both styles): after each screenshot the actors (both views' on the live page:
+// emu.renderer.setActorMask; the preview's) are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
 // Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table. A mask that is not the
@@ -58,7 +76,8 @@
 // flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary).
 // A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
-// entry's reference): lr_truck_switch toggles the world style and the sprite edges mid-steps.
+// entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
+// lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -67,7 +86,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer, { type Page } from 'puppeteer-core';
-import { inflateMax } from '../src/render/actors/inflateMath';
 
 interface LiveEntry {
   /** `steps`: keys held for n frames each; a step's third element is evaluated in the page before its frames (a
@@ -81,9 +99,15 @@ interface LiveEntry {
   /** The entry must look exactly like this one (0 px against its shot of the same style in this run's folder: run it
    *  first) and --compare diffs it against that entry's reference. */
   sameAs?: string;
+  /** With `sameAs`: the entry must also end with as many shader programs as that entry in this run (the same state and
+   *  frames: a mid-steps switch that compiled a program shows as more). */
+  samePrograms?: boolean;
   /** A map-crossing walk: its steps after the first (an idle settle of ≥ 30 frames) cross this many map connections.
    *  See CROSSING below: what it records and gates. */
   crossings?: number;
+  /** A walk between scenes (battle entry or exit), run as a crossing's walk: 'record' its frames and programs, or also
+   *  'gate' them. See SCENE_CHANGE_MS below. */
+  sceneChange?: 'record' | 'gate';
 }
 
 /**
@@ -102,8 +126,29 @@ interface LiveEntry {
  *  and the programs and builds gates catch a compile or a second build on their own. */
 const crossingMargin = (buildMs: number) => Math.max(40, 0.5 * buildMs);
 
+/**
+ * Scene-change entries (`sceneChange`: a battle's entry from the overworld, or its exit back to it) walk exactly as the
+ * crossing entries do (the first step an idle settle of ≥ 30 frames, every frame drained) and record the same
+ * CrossingStats, into stats (`sceneChange`). 'record' gates nothing (today's cost, reported); 'gate' fails the run (the
+ * shot stays) when a program compiles from the entry's eval on — the settle included: an entry's eval finishes the boot
+ * precompile (PRECOMPILED), and battle_enter's settle already draws the wild battle transition (frames 1-86 of its state;
+ * its effect's programs are the renderer's screen precompile's), so the programs count from right after the eval (from the
+ * settle's end for an entry without one) — or a frame of the walk takes longer than SCENE_CHANGE_MS (spec §10's rebuild
+ * budget) — except the frame that makes the session's first world build (`firstBuildAt`): a save state that starts in a
+ * battle builds the overworld for the first time on its way back, which play, having walked into the battle, does not.
+ * (The frame times and that exemption still count from the settle's end: its first frame is the page's first.)
+ */
+const SCENE_CHANGE_MS = 150;
+
+/** `steps` n times over (a scripted key pattern). */
+const repeat = (n: number, steps: [string, number][]): [string, number][] => Array.from({ length: n }, () => steps).flat();
+
 /** A step's switch: the world style to the other one (Modern ↔ Retro; the world rebuilds on the next sync). */
 const TOGGLE_STYLE = "emu.renderer.setWorldStyle(emu.renderer.overworld.worldStyle === 'modern' ? 'retro' : 'modern')";
+
+/** An entry's eval: the boot precompile finished (both views' parallel compiles, then Renderer.finishPrecompile: their
+ *  frames and the screen programs), as play's loader does before the start gesture. */
+const PRECOMPILED = 'emu.renderer.precompiled().then(() => emu.renderer.finishPrecompile())';
 
 // Frame counts are tuned so each scene matches its comment (emu.step frames at 1/60 s; a walk
 // takes 16 frames per cell). r101: standing still, the youngster stays off-screen left, so the
@@ -130,7 +175,45 @@ const LIVE: LiveEntry[] = [
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
-  { name: 'battle', state: 'out/battle1.state', steps: [['', 30]] },                          // gated 0.00 % in Retro only
+  // Battles (Phase 3; frames counted from the state's load, probed with GameState: scene, animActive, sprites). The
+  // first battle (Route 101, environment 9 PLAIN): Torchic vs Zigzagoon at the move menu; its intro (s28: from frame
+  // 59 Zigzagoon slides in from the left, from 69 the player's back picture from the right, under the intro's palette
+  // darkening; they pass each other at 144 — the 3D view puts a battler centred left of GBA x 120 at the player's depth,
+  // so before that each stands at the other side's depth — and stop at 164). battle_intro at 155: both on screen, each on
+  // its own side, sliding.
+  { name: 'battle', state: 'out/battle1.state', steps: [['', 30]], selftest: true },          // PLAIN: Torchic vs Zigzagoon, move menu
+  // battle with the world style switched to the other one and back (Modern → Retro → Modern in the Modern run, Retro →
+  // Modern → Retro in the Retro run: a Retro session's first Modern battle frames) and the sprite edges HD → Pixel → HD,
+  // mid-steps: no page error, the same 30 frames end exactly as battle (0 px) with as many programs (the switch compiled
+  // nothing: the Modern battlers' programs and field passes are precompiled)
+  { name: 'battle_switch', state: 'out/battle1.state', sameAs: 'battle', samePrograms: true, steps: [['', 6], ['', 6, TOGGLE_STYLE],
+    ['', 6, TOGGLE_STYLE], ['', 6, "emu.renderer.setSpriteFilter('pixel')"], ['', 6, "emu.renderer.setSpriteFilter('smooth')"]] },
+  { name: 'battle_intro', state: 'out/s28.state', steps: [['', 155]] },                      // intro: both battlers sliding in
+  { name: 'battle_grass', state: 'out/fuzz.state', steps: [['', 30]] },                      // GRASS (environment 0): wild Wurmple
+  // Scratch at frame 80: the claw effect sprite (frames 67-86, semi-transparent OBJ, its 4th of 5 claw frames) on Zigzagoon,
+  // whose sprite monbg hides meanwhile (it is drawn on a BG layer: the 2D overlay); animActive 61-91; Torchic does not move
+  { name: 'battle_move', state: 'out/battle1.state', steps: [['', 20], ['A', 2], ['', 58]] },
+  // Zigzagoon's Tackle (the A presses of battle_exit up to it; animActive 691-730): its sprite lunges 16 px towards Torchic
+  // (gHorizontalLungeSpriteTemplate: x 144 → 128 over 697-700, held to 702, back by 706) while monbg moves Torchic onto a BG
+  // layer (695-715: the 2D overlay draws it). At 702 the lunge is at its peak in both the 3D view (gSprites) and the GBA's
+  // frame (its OAM shows a frame or two later). The hit splat comes after the lunge: in gSprites 705-714, on the GBA's
+  // screen 707-715 (battle_hit)
+  { name: 'battle_lunge', state: 'out/battle1.state', steps: [['', 30], ...repeat(16, [['A', 2], ['', 38]]), ['A', 2], ['', 30]] },
+  // the same Tackle at 708: the hit splat (gBasicHitSplatSpriteTemplate, semi-transparent, affine 0.69) on Torchic, an
+  // effect card at the player's depth; Zigzagoon back in place
+  { name: 'battle_hit', state: 'out/battle1.state', steps: [['', 30], ...repeat(16, [['A', 2], ['', 38]]), ['A', 2], ['', 36]] },
+  // the wild battle transition on Route 101 (frames 1-86) → screen2d 87-93 → a GRASS battle (wild Wurmple) from 94: at 360
+  // the battlers have slid in (171-274), the HUD is up (275), Wurmple's entry wobble is over (341). Gated (Phase 3 Task 4):
+  // no program compiles on the way and no frame takes > 150 ms. The eval finishes the boot precompile first, as play's
+  // loader does (in manual mode nothing waits for it: the gate measures play, not boot)
+  { name: 'battle_enter', state: 'out/wild_transition.state', eval: PRECOMPILED, steps: [['', 30], ['', 330]], sceneChange: 'gate' },
+  // the first battle played to its end (Scratch until Zigzagoon faints), the battle fades out (1262-1293), transition from
+  // 1299, Route 101 from 1308 (faded in at 1324; Birch walks up, 1333-1348): 63 overworld frames at the shot (the 30th A
+  // press, frames 1191-1192, is the last one the battle needs; a press after 1308 would run Birch's dialogue on to the
+  // warp into his lab, 1706). Gated as battle_enter (frame 1308, the session's first world build, has no frame gate).
+  // Its self-test (Modern) checks the overworld's field back on Route 101: nothing of the battle's field leaks into it
+  { name: 'battle_exit', state: 'out/battle1.state', eval: PRECOMPILED, steps: [['', 30], ...repeat(30, [['A', 2], ['', 38]]), ['', 140]],
+    sceneChange: 'gate', selftest: true },
   { name: 'transition', state: 'out/wild_transition.state', steps: [['', 40]] },             // gated 0.00 % in Retro only
   // Map crossings (hitch fix): Route 101 → Littleroot after 30 idle frames (that crossing's frame ends inside the game's
   // map load, CameraMove: the new map's header over the old map's grid — built twice before the fix), and Route 101 →
@@ -186,7 +269,64 @@ const STATIC: StaticEntry[] = [
   { name: 'woods_npc_yaw', q: 'map=24.11&x=32.5&y=34.5&focus=1&yaw=3.1416' },
 ];
 
+/**
+ * Static battle scenes, run with --static or --battles (or named by --only): the battle preview (src/render/battlePreview.ts,
+ * `/?battle=<kind>&manual=1&<q>&style=…`) lays the arena kind's BG3 picture and the battlers' ROM pictures into scratch
+ * hardware as the game does and drives the live battle view: one entry per arena kind (no save state reaches most of
+ * them), plus night, a double battle and a floating enemy (Zubat: the shadow sprite). 150 frames at 1/60 s (the battle
+ * camera's 2.2 s intro sweep has ended), hour 11 unless q sets one; ref_<entry>.png is the GBA's own picture of it.
+ */
+const BATTLE_FRAMES = 150;
+const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/constants/species.h)
+  { name: 'b_grass', q: 'battle=grass&player=280&enemy=288', selftest: true }, // Torchic vs Zigzagoon
+  // b_grass with the Modern arena's ground part made to throw: the battle falls back to today's arena (warned once). Until
+  // Task 6 it equals b_grass in both styles (checked when its p3-base reference was captured, Task 4); from then on Modern
+  // b_grass draws the Modern arena and this one today's, so it has its own reference, not a sameAs
+  { name: 'b_grass_fail', q: 'battle=grass&player=280&enemy=288&arenaFail=ground' },
+  { name: 'b_grass_night', q: 'battle=grass&player=280&enemy=288&hour=21' },
+  { name: 'b_double', q: 'battle=grass&double=1&player=280&player2=277&enemy=288&enemy2=286' },
+  { name: 'b_longgrass', q: 'battle=longGrass&player=277&enemy=286' },  // Treecko vs Poochyena
+  { name: 'b_plain', q: 'battle=plain&player=280&enemy=288' },
+  { name: 'b_sand', q: 'battle=sand&player=283&enemy=332' },            // Mudkip vs Trapinch
+  // (Task 7 fix round: the desert at night — dunes, hills, tufts and rocks moonlit as the sand field; its p3-base reference
+  // was captured from the base code, Task 4's 1e30bd6, which renders p3-base exactly)
+  { name: 'b_sand_night', q: 'battle=sand&player=283&enemy=332&hour=21' },
+  { name: 'b_water', q: 'battle=water&player=283&enemy=72' },           // vs Tentacool
+  { name: 'b_water_night', q: 'battle=water&player=283&enemy=309&hour=21' }, // vs Wingull
+  { name: 'b_pond', q: 'battle=pond&player=277&enemy=311' },            // vs Surskit
+  { name: 'b_underwater', q: 'battle=underwater&player=283&enemy=330' }, // vs Carvanha
+  { name: 'b_mountain', q: 'battle=mountain&player=280&enemy=74' },     // vs Geodude
+  { name: 'b_cave', q: 'battle=cave&player=280&enemy=41' },             // vs Zubat (floating: shadow sprite)
+  { name: 'b_cavepond', q: 'battle=cavePond&player=283&enemy=129' },    // vs Magikarp
+  { name: 'b_building', q: 'battle=building&player=277&enemy=337' },    // vs Electrike
+  { name: 'b_gym', q: 'battle=gym&player=281&enemy=74' },
+  { name: 'b_leader', q: 'battle=leader&player=281&enemy=320' },        // vs Nosepass
+  { name: 'b_frontier', q: 'battle=frontier&player=400&enemy=397' },    // Metagross vs Salamence
+  { name: 'b_magma', q: 'battle=magma&player=284&enemy=340' },          // vs Camerupt
+  { name: 'b_aqua', q: 'battle=aqua&player=281&enemy=331' },            // vs Sharpedo
+  { name: 'b_sidney', q: 'battle=sidney&player=281&enemy=287' },        // vs Mightyena
+  { name: 'b_phoebe', q: 'battle=phoebe&player=281&enemy=361' },        // vs Duskull
+  { name: 'b_glacia', q: 'battle=glacia&player=281&enemy=341' },        // vs Spheal
+  { name: 'b_drake', q: 'battle=drake&player=281&enemy=397' },          // vs Salamence
+  { name: 'b_champion', q: 'battle=champion&player=281&enemy=329' },    // vs Milotic
+  { name: 'b_groudon', q: 'battle=groudon&player=284&enemy=405' },
+  { name: 'b_kyogre', q: 'battle=kyogre&player=284&enemy=404' },
+  { name: 'b_rayquaza', q: 'battle=rayquaza&player=284&enemy=406' },
+  // (Phase 3 final review: the Sky Pillar at night — its fog's pull to the backdrop fades with the daylight, 3619ce4; its
+  // p3-base reference was captured from the base code, Task 4's 1e30bd6, which renders p3-base exactly)
+  { name: 'b_rayquaza_night', q: 'battle=rayquaza&player=284&enemy=406&hour=21' },
+];
+
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
+
+/** A static battle entry (STATIC_BATTLE: the battle preview) rather than a map preview. */
+const isStaticBattle = (e: Entry): boolean => e.kind === 'static' && e.q.startsWith('battle=');
+
+/** The entries --battles runs: the live ones named battle* and the static battle previews. */
+const isBattleEntry = (e: Entry): boolean => (e.kind === 'live' && e.name.startsWith('battle')) || isStaticBattle(e);
+
+/** The GBA's own picture of a battle entry (the review's GBA column): live gba_<entry>, static ref_<entry> (no .png). */
+const gbaName = (e: Entry): string => `${e.kind === 'live' ? 'gba' : 'ref'}_${e.name}`;
 
 const CHROME = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -197,17 +337,21 @@ const VIEW_H = 800;
 const CROP_W = 320;
 const CROP_H = 400;
 
-/** Inflation-field self-test parity tolerance (sprite px: half-float rounding grows with the height) and the
- *  field update's GPU target (ms, reported). */
-const SELFTEST_TOL = Math.max(0.02, 0.003 * inflateMax());
+/** Inflation-field self-test parity tolerance (sprite px: half-float rounding grows with the height) of a field whose
+ *  highest point is `max` px (the self-test result's inflateMax: the overworld's or the battlers' field), and the field
+ *  update's GPU target (ms, reported). */
+const selfTestTol = (max: number) => Math.max(0.02, 0.003 * max);
 /** xBR self-test parity tolerance (RGBA 0..1: the RGBA8 target's rounding plus float differences). */
 const XBR_TOL = 2 / 255;
+/** The baked xBR path (the battlers' HD edges) against the live shader, RGBA8 bytes: the same decisions, the same
+ *  blend — identical. */
+const XBR_BAKED_VS_LIVE = 0;
 const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
- *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5. `previewWhen`: the static
- *  entries (by query) where the switch changes anything (the NPC fade needs a stand-in player, &focus; elsewhere both
- *  arms would be the same frames). */
+ *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5, the Modern battle (Phase 3)
+ *  +3.0 / +0.5. `previewWhen`: the static entries (by query) where the switch changes anything (the NPC fade needs a
+ *  stand-in player, &focus; the battle style a battle preview; elsewhere both arms would be the same frames). */
 interface AbFeature {
   what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string;
   previewWhen?: (q: string) => boolean;
@@ -222,9 +366,25 @@ const AB_FEATURES: Record<string, AbFeature> = {
     live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
     previewWhen: (q) => /(^|&)focus=/.test(q),
   },
+  // (Phase 3: the battle's world style alone — the live page's PostFX keeps its style's tilt-shift; the preview's
+  // setStyle switches both, as Renderer.setWorldStyle does)
+  battle: {
+    what: 'Modern vs Retro battle (BattleView world style)', gpuMs: 3.0, cpuMs: 0.5,
+    live: (on) => `emu.renderer.battle.setWorldStyle('${on ? 'modern' : 'retro'}')`,
+    preview: (on) => `preview.setStyle('${on ? 'modern' : 'retro'}')`,
+    previewWhen: (q) => q.startsWith('battle='),
+  },
+  // (Phase 3 Task 5: the Modern battle's inflated battlers and their field passes against today's cards, same arena)
+  battlers: {
+    what: 'Modern battlers inflated (+ their field passes) vs cards', gpuMs: 1.0, cpuMs: 0.5,
+    live: (on) => `emu.renderer.battle.inflation = ${on}`,
+    preview: (on) => `preview.setInflation(${on})`,
+    previewWhen: (q) => q.startsWith('battle='),
+  },
 };
 
-interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; xbr: { maxErr: number } }
+interface SelfTest { slots: number; maxErr: number; fixtureMaxErr: number; gpuMs: number; inflateMax: number;
+  xbr: { maxErr: number; bakedMaxErr: number; bakedVsLive: number } }
 interface Diff { pct: number; bbox: { x: number; y: number; w: number; h: number } | null; pixels: number }
 /** Actor luminance of an entry's Modern shot relative to its Retro shot, over the visible actor pixels. `maskMismatch`:
  *  the share of the frame, away from the actors, where a mask re-render differs from its shot (the worse style);
@@ -255,23 +415,82 @@ interface EntryStats {
   actorLum?: ActorLum;
   /** Crossing entries: the walk's frames (CROSSING). */
   crossing?: CrossingStats;
+  /** Scene-change entries: the walk's frames (SCENE_CHANGE_MS). */
+  sceneChange?: CrossingStats;
 }
 
-/** A crossing entry's walk (the steps after the settle): frame CPU ms with the GPU drained, builds and programs after the
- *  settle → at the end (null: the page exposes no build counter), the last world build's ms. */
+/** A crossing or scene-change entry's walk (the steps after the settle): frame CPU ms with the GPU drained (`maxAt` and
+ *  `slowest`, [frame, ms] × 5, count frames of the walk: frame f of the walk is frame `settle` + f from the state's load),
+ *  the session's world builds after the settle → at the end (null: the page exposes no build counter), its programs from
+ *  `programsFrom` → at the end (a crossing's and an entry's without an eval: after the settle; a scene change's with one:
+ *  right after its eval, see SCENE_CHANGE_MS), the last world build's ms, and the walk frame that made the session's
+ *  first world build (null: one was made before the walk, or none). */
 interface CrossingStats {
   frames: number; maxMs: number; maxAt: number; medianMs: number; slowest: [number, number][];
-  builds: [number | null, number | null]; programs: [number, number]; lastBuildMs: number | null;
+  builds: [number | null, number | null]; programs: [number, number]; programsFrom: 'eval' | 'settle'; lastBuildMs: number | null;
+  settle: number; firstBuildAt: number | null;
 }
 
-/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms. */
-const drainedStep = (keys: string, frames: number) => `(() => {
-  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), out = [];
-  for (let i = 0; i < ${frames}; i++) {
-    out.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+/** The renderer's stats() fields a walk reads. */
+interface WalkPoint { programs: number; builds?: number; lastBuildMs?: number }
+
+/** The walk an entry makes (crossings, sceneChange), or null. */
+const walkOf = (e: LiveEntry): 'crossing' | 'sceneChange' | null => (e.crossings ? 'crossing' : e.sceneChange ? 'sceneChange' : null);
+
+/** A walk's CrossingStats from its frames' ms and the session's builds after each, the settle's length and the renderer's
+ *  stats after the settle and at the end; `evaluated`: its stats right after the entry's eval (a scene change's programs
+ *  count from there; none: from the settle). */
+function walkStats(walk: number[], walkBuilds: (number | undefined)[], settle: number, settled: WalkPoint, end: WalkPoint,
+  evaluated?: WalkPoint): CrossingStats {
+  const order = walk.map((t, i) => [i + 1, round(t, 2)] as [number, number]).sort((a, b) => b[1] - a[1]);
+  const first = settled.builds === 0 ? walkBuilds.findIndex((b) => (b ?? 0) > 0) : -1;
+  return {
+    frames: walk.length, maxMs: order[0][1], maxAt: order[0][0], medianMs: round(median(walk), 2), slowest: order.slice(0, 5),
+    builds: [settled.builds ?? null, end.builds ?? null], programs: [(evaluated ?? settled).programs, end.programs],
+    programsFrom: evaluated ? 'eval' : 'settle', lastBuildMs: end.lastBuildMs ?? null, settle, firstBuildAt: first >= 0 ? first + 1 : null,
+  };
+}
+
+/** A walk's report line and the gates it broke (none: passed, or a scene change that only records). */
+function walkReport(e: LiveEntry, c: CrossingStats): { line: string; broken: string[] } {
+  const broken: string[] = [];
+  if (e.crossings) {
+    const [b0, b1] = c.builds;
+    const builds = b0 !== null && b1 !== null ? b1 - b0 : null;
+    const limit = c.lastBuildMs !== null ? round(c.lastBuildMs + crossingMargin(c.lastBuildMs), 2) : null;
+    if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
+    if (builds !== e.crossings) broken.push(`${builds ?? 'no build counter:'} builds for ${e.crossings} crossing(s)`);
+    if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > ${limit ?? '?'} ms (build ${c.lastBuildMs ?? '?'} + margin)`);
+    const line = ` | walk ${c.frames} frames after a ${c.settle}-frame settle: max ${c.maxMs} ms (walk frame ${c.maxAt}, build`
+      + ` ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms), median ${c.medianMs}, builds ${builds ?? '?'}, programs`
+      + ` ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
+    return { line, broken };
   }
-  return out;
+  // (frames from the state's load, as the entries' comments count them)
+  const at = (f: number) => c.settle + f;
+  if (e.sceneChange === 'gate') {
+    if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
+    // (the slowest frame but the session's first world build's: `slowest` holds five)
+    const [f, ms] = c.slowest.find(([w]) => w !== c.firstBuildAt) ?? [0, 0];
+    if (ms > SCENE_CHANGE_MS) broken.push(`frame ${at(f)}: ${ms} ms > ${SCENE_CHANGE_MS} ms`);
+  }
+  const line = ` | scene change, frames ${at(1)}-${at(c.frames)}: max ${c.maxMs} ms @${at(c.maxAt)}, median ${c.medianMs},`
+    + ` slowest ${c.slowest.map(([f, ms]) => `${ms}@${at(f)}`).join(' ')}, programs ${c.programs.join(' → ')}${c.programsFrom === 'eval' ? ' (from the eval)' : ''}, builds`
+    + ` ${c.builds.map((b) => b ?? '?').join(' → ')}${c.firstBuildAt !== null ? ` (the session's first @${at(c.firstBuildAt)}${e.sceneChange === 'gate' ? ': no frame gate' : ''})` : ''}`
+    + (e.sceneChange === 'gate' ? (broken.length ? ` SCENE-CHANGE GATES FAILED: ${broken.join('; ')}` : ' (gated: passed)') : ' (recorded)');
+  return { line, broken };
+}
+
+/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms and the
+ *  session's world builds after each (stats().builds). */
+const drainedStep = (keys: string, frames: number) => `(() => {
+  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), ms = [], builds = [];
+  for (let i = 0; i < ${frames}; i++) {
+    ms.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    builds.push(emu.renderer.stats().builds);
+  }
+  return { ms, builds };
 })()`;
 
 function arg(name: string, def: string): string {
@@ -425,7 +644,7 @@ const CAPTION = 'figcaption{position:absolute;left:4px;top:2px;color:#ff0;font:b
 
 /** Contact sheets (4 thumbnails per row, one per style) and the centre-crop sheet, from every PNG in `dir`. */
 async function buildSheets(page: Page, dir: string): Promise<void> {
-  const order = [...LIVE.map((e) => e.name), ...STATIC.map((e) => e.name)];
+  const order = [...LIVE, ...STATIC, ...STATIC_BATTLE].map((e) => e.name);
   const shots = new Map<string, Set<string>>();
   for (const f of fs.readdirSync(dir)) {
     const m = /^([^_].*)_(modern|retro)\.png$/.exec(f);
@@ -463,20 +682,60 @@ async function buildSheets(page: Page, dir: string): Promise<void> {
   path.join(dir, '_crops.png'), CROP_W * 4, scale);
 }
 
+/** Review sheet cells: 480×300, every picture letterboxed into it. */
+const REVIEW_W = 480;
+const REVIEW_H = 300;
+
+/**
+ * --review: _review_battle.png in `dir`, one row per battle entry of the run (`entries`, in run order): the GBA's picture
+ * (gba_ / ref_<entry>.png in this folder) | before (<entry>_modern.png in `beforeDir`; blank without one) | Modern | Retro
+ * (this run's shots). Each cell names its entry and column; a header row labels the columns. A missing picture is a
+ * blank cell marked "(missing)".
+ */
+async function buildReview(page: Page, dir: string, entries: Entry[], beforeDir: string, beforeLabel: string): Promise<void> {
+  const rows = entries.filter(isBattleEntry);
+  if (!rows.length) return;
+  // (the GBA's pictures scale nearest, the 3D shots smoothly)
+  const columns: { label: string; file: (e: Entry) => string | null; pixelated?: true }[] = [
+    { label: 'GBA', file: (e) => path.join(dir, `${gbaName(e)}.png`), pixelated: true },
+    // (an entry with `sameAs` ends as that entry: its before is that entry's)
+    { label: beforeLabel ? `before (${beforeLabel})` : 'before',
+      file: (e) => (beforeDir ? path.join(beforeDir, `${(e.kind === 'live' && e.sameAs) || e.name}_modern.png`) : null) },
+    { label: 'Modern', file: (e) => path.join(dir, `${e.name}_modern.png`) },
+    { label: 'Retro', file: (e) => path.join(dir, `${e.name}_retro.png`) },
+  ];
+  const head = columns.map((c) => `<div class="h">${c.label}</div>`).join('');
+  const cells = rows.flatMap((e) => columns.map((c) => {
+    const f = c.file(e);
+    const caption = `<figcaption>${e.name} · ${c.label}${f && !fs.existsSync(f) ? ' (missing)' : ''}</figcaption>`;
+    // (absolute file URLs: the before column lives in another run's folder)
+    return f && fs.existsSync(f) ? `<figure><img${c.pixelated ? ' class="px"' : ''} src="${pathToFileURL(f).href}">${caption}</figure>`
+      : `<figure>${caption}</figure>`;
+  }));
+  await shootHtml(page, dir, `<style>body{margin:0;background:#222;display:grid;grid-template-columns:repeat(4,${REVIEW_W}px)}
+    .h{height:28px;color:#fff;font:bold 18px sans-serif;line-height:28px;text-align:center;background:#000}
+    figure{margin:0;position:relative;width:${REVIEW_W}px;height:${REVIEW_H}px;background:#111;outline:1px solid #333}
+    img{width:${REVIEW_W}px;height:${REVIEW_H}px;display:block;object-fit:contain}.px{image-rendering:pixelated}${CAPTION}</style>
+    ${head}${cells.join('')}`, path.join(dir, '_review_battle.png'), REVIEW_W * 4, 1);
+}
+
 /**
  * One self-test point: `api`.selfTest() and the field dump (_field_<dump>.png). ok: some slots were
- * compared and both parity errors are finite and within SELFTEST_TOL (NaN arrives as null), and the xBR
- * shader's within XBR_TOL.
+ * compared and both parity errors are finite and within selfTestTol of the field's inflateMax (NaN arrives as null; a
+ * result without a finite inflateMax fails), the xBR shader's within XBR_TOL, and its baked path byte-equal to it
+ * (XBR_BAKED_VS_LIVE).
  */
 async function selfTestPoint(page: Page, api: string, outDir: string, dump: string): Promise<{ result: SelfTest; ok: boolean; text: string }> {
   const result = await page.evaluate(`${api}.selfTest()`) as SelfTest;
   const png = await page.evaluate(`${api}.fieldDump()`) as string;
   fs.writeFileSync(path.join(outDir, `_field_${dump}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
-  const within = (v: number) => Number.isFinite(v) && v <= SELFTEST_TOL;
-  const xbrOk = Number.isFinite(result.xbr?.maxErr) && result.xbr.maxErr <= XBR_TOL;
+  const tol = selfTestTol(result.inflateMax);
+  const within = (v: number) => Number.isFinite(v) && v <= tol;
+  const xbrOk = [result.xbr?.maxErr, result.xbr?.bakedMaxErr].every((v) => Number.isFinite(v) && v <= XBR_TOL)
+    && Number.isFinite(result.xbr?.bakedVsLive) && result.xbr.bakedVsLive <= XBR_BAKED_VS_LIVE;
   const ok = result.slots > 0 && within(result.maxErr) && within(result.fixtureMaxErr) && xbrOk;
-  let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} gpu ${round(result.gpuMs, 3)} ms`
-    + ` xbr maxErr ${result.xbr?.maxErr}`;
+  let text = `selftest ${result.slots} slots maxErr ${result.maxErr} fixture ${result.fixtureMaxErr} (tol ${round(tol, 4)})`
+    + ` gpu ${round(result.gpuMs, 3)} ms xbr maxErr ${result.xbr?.maxErr} baked ${result.xbr?.bakedMaxErr} baked vs live ${result.xbr?.bakedVsLive}`;
   if (!(result.gpuMs <= FIELD_GPU_MS)) text += ` (> ${FIELD_GPU_MS} ms target)`;
   return { result, ok, text };
 }
@@ -651,12 +910,16 @@ async function main(): Promise<void> {
   if (!abFeature) throw new Error(`unknown --ab-feature ${abFeatureName} (${Object.keys(AB_FEATURES).join(', ')})`);
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
-  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })), ...STATIC.map((e) => ({ ...e, kind: 'static' as const }))];
+  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
+    ...[...STATIC, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
-  // --only picks entries of both kinds by name; otherwise every live entry, and the static ones with --static
-  const entries = only.length ? all.filter((e) => only.includes(e.name)) : all.filter((e) => e.kind === 'live' || flag('static'));
+  // --only picks entries of both kinds by name; otherwise --static picks every entry, --battles the battle entries, and
+  // neither every live entry
+  const statics = flag('static'), battles = flag('battles');
+  const entries = only.length ? all.filter((e) => only.includes(e.name))
+    : all.filter((e) => statics || (battles ? isBattleEntry(e) : e.kind === 'live'));
   const outDir = path.join(root, 'out/regress-live', label);
   const refDir = compare ? path.join(root, 'out/regress-live', compare) : '';
   // (the same folder however spelled: ./p2, p2/, P2 on Windows' case-insensitive file system)
@@ -665,6 +928,11 @@ async function main(): Promise<void> {
     throw new Error('--compare must name another run than --label (it would diff a run against itself)');
   }
   if (refDir && !fs.existsSync(refDir)) throw new Error(`no reference run ${refDir}`);
+  // --review: the battle review sheet; --review-before <label>: its "before" column (implies --review)
+  const reviewBefore = arg('review-before', '');
+  const review = flag('review') || !!reviewBefore;
+  const beforeDir = reviewBefore ? path.join(root, 'out/regress-live', reviewBefore) : '';
+  if (beforeDir && !fs.existsSync(beforeDir)) throw new Error(`no --review-before run ${beforeDir}`);
   fs.mkdirSync(outDir, { recursive: true });
   const statsFile = path.join(outDir, 'stats.json');
   const stats: Record<string, EntryStats> = fs.existsSync(statsFile) ? JSON.parse(fs.readFileSync(statsFile, 'utf8')) : {};
@@ -680,10 +948,12 @@ async function main(): Promise<void> {
     defaultViewport: { width: VIEW_W, height: VIEW_H, deviceScaleFactor: dpr },
   });
   const failures: string[] = [];
+  const gbaDiffFailures: string[] = []; // GBA pictures whose diff against the reference failed (nothing is removed)
   const errored: string[] = []; // entries that logged page errors
   const missingRefs: string[] = [];
   const selftestFailures: string[] = [];
-  const crossingFailures: string[] = [];
+  const walkFailures: string[] = []; // crossing and scene-change gates
+  const gbaShots = new Set<string>(); // entries whose GBA picture (gba_ / ref_<entry>.png) this run wrote
   let pageErrors = 0;
   const diffs: string[] = [];
   try {
@@ -703,12 +973,14 @@ async function main(): Promise<void> {
         current = key;
         const errorsBefore = pageErrors;
         try {
-          // live entries drive the game page (window.emu), static ones the map preview (window.preview)
+          // live entries drive the game page (window.emu), static ones the map or battle preview (window.preview)
           const api = e.kind === 'live' ? 'emu' : 'preview';
           let q: string;
           if (e.kind === 'live') {
             if (!fs.existsSync(path.join(root, e.state))) throw new Error(`missing save state ${e.state}`);
             q = ['manual=1', `state=/${e.state}`, `style=${style}`, e.query, extra].filter(Boolean).join('&');
+          } else if (isStaticBattle(e)) {
+            q = ['manual=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           } else {
             q = ['autostart=1', 'manual=1', 'actors=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           }
@@ -724,9 +996,8 @@ async function main(): Promise<void> {
             console.log(`GPU: ${gpuName}`);
           }
           let stepMsMax: number | undefined;
-          // (crossing entries: the renderer's stats after the settle, and the walk's)
-          let settled: { programs: number; builds?: number; lastBuildMs?: number } | undefined;
-          let crossing: CrossingStats | undefined;
+          // (crossing and scene-change entries: their walk's stats)
+          let walked: CrossingStats | undefined;
           const selfTests = selftest && e.selftest === true && style === 'modern';
           let mid: { result: SelfTest; ok: boolean; text: string } | undefined;
           if (e.kind === 'live') {
@@ -734,33 +1005,52 @@ async function main(): Promise<void> {
             if (selfTests && after !== undefined && !(Number.isInteger(after) && after >= 0 && after < e.steps.length)) {
               throw new Error(`selftestAfter ${after} names no step (${e.steps.length} steps)`);
             }
+            const walkKind = walkOf(e);
+            if (e.crossings && e.sceneChange) throw new Error('an entry walks across maps (crossings) or between scenes (sceneChange), not both');
+            if (walkKind && (e.steps.length < 2 || e.steps[0][1] < 30 || e.steps[0][0] !== '' || e.steps[0][2])) {
+              throw new Error(`a ${walkKind} entry starts with an idle settle of ≥ 30 frames, then walks`);
+            }
             if (e.eval) await page.evaluate(e.eval);
+            // (a scene change's programs count from right after its eval: the settle's frames included, see SCENE_CHANGE_MS)
+            const evaluated = e.sceneChange && e.eval ? await page.evaluate('emu.renderer.stats()') as WalkPoint : undefined;
             // the entry's first frame builds the world and compiles programs (seconds, varying with
             // Chrome's program cache): stepMsMax is the largest frame time after it
             stepMsMax = 0;
-            const walk: number[] = [];
+            // (a walk: the renderer's stats after the settle, and the walk's frames with the session's builds after each)
+            let settled: WalkPoint | undefined;
+            const walk: number[] = [], walkBuilds: (number | undefined)[] = [];
             for (const [n, [keys, frames, before]] of e.steps.entries()) {
               if (before) await page.evaluate(before);
-              const times = await page.evaluate(e.crossings ? drainedStep(keys, frames) : `emu.step(${JSON.stringify(keys)}, ${frames})`) as number[];
+              const { ms: times, builds } = walkKind ? await page.evaluate(drainedStep(keys, frames)) as { ms: number[]; builds: (number | undefined)[] }
+                : { ms: await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[], builds: [] };
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
               if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
-              if (e.crossings && n === 0) settled = await page.evaluate('emu.renderer.stats()') as typeof settled;
-              if (n > 0) walk.push(...times);
+              if (walkKind && n === 0) settled = await page.evaluate('emu.renderer.stats()') as WalkPoint;
+              if (n > 0) {
+                walk.push(...times);
+                walkBuilds.push(...builds);
+              }
             }
-            if (e.crossings) {
-              if (e.steps[0][1] < 30 || e.steps.length < 2) throw new Error('a crossing entry starts with an idle settle of ≥ 30 frames, then walks');
-              const end = await page.evaluate('emu.renderer.stats()') as NonNullable<typeof settled>;
-              const order = walk.map((t, i) => [i + 1, round(t, 2)] as [number, number]).sort((a, b) => b[1] - a[1]);
-              crossing = {
-                frames: walk.length, maxMs: order[0][1], maxAt: order[0][0], medianMs: round(median(walk), 2), slowest: order.slice(0, 5),
-                builds: [settled!.builds ?? null, end.builds ?? null], programs: [settled!.programs, end.programs], lastBuildMs: end.lastBuildMs ?? null,
-              };
+            if (walkKind) {
+              walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint, evaluated);
+            }
+            // the GBA's own frame of a battle entry (the review's reference column)
+            if (isBattleEntry(e)) {
+              const png = await page.evaluate('emu.gbaPng()') as string;
+              fs.writeFileSync(path.join(outDir, `${gbaName(e)}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+              gbaShots.add(e.name);
             }
           } else {
             // a focus naming no template would frame the map centre instead: never a baseline
             const focusError = await page.evaluate('preview.focusError') as string | null;
             if (focusError) throw new Error(`preview: ${focusError}`);
-            await page.evaluate('preview.frames(60)');
+            await page.evaluate(`preview.frames(${isStaticBattle(e) ? BATTLE_FRAMES : 60})`);
+            // the GBA's own picture of a battle preview's hardware (the review's reference column)
+            if (isStaticBattle(e)) {
+              const png = await page.evaluate('preview.referencePng()') as string;
+              fs.writeFileSync(path.join(outDir, `${gbaName(e)}.png`), Buffer.from(png.slice(png.indexOf(',') + 1), 'base64'));
+              gbaShots.add(e.name);
+            }
           }
           // the page chrome's CSS transitions (the loader fading out) run on the wall clock: end them
           await page.evaluate(`document.getAnimations().forEach((a) => { try { a.finish(); } catch { /* infinite */ } })`);
@@ -770,24 +1060,19 @@ async function main(): Promise<void> {
             { calls: number; triangles: number; programs: number; buildMs?: number };
           const entry: EntryStats = { ...s };
           if (stepMsMax !== undefined) entry.stepMsMax = round(stepMsMax, 2);
-          let crossLine = '';
-          if (crossing && e.kind === 'live') {
-            entry.crossing = crossing;
-            const c = crossing, [b0, b1] = c.builds;
-            const builds = b0 !== null && b1 !== null ? b1 - b0 : null;
-            const limit = c.lastBuildMs !== null ? round(c.lastBuildMs + crossingMargin(c.lastBuildMs), 2) : null;
-            const broken: string[] = [];
-            if (c.programs[1] !== c.programs[0]) broken.push(`programs ${c.programs[0]} → ${c.programs[1]}`);
-            if (builds !== e.crossings) broken.push(`${builds ?? 'no build counter:'} builds for ${e.crossings} crossing(s)`);
-            if (limit === null || c.maxMs > limit) broken.push(`max frame ${c.maxMs} ms > ${limit ?? '?'} ms (build ${c.lastBuildMs ?? '?'} + margin)`);
-            crossLine = ` | walk ${c.frames} frames: max ${c.maxMs} ms (frame ${c.maxAt}, build ${c.lastBuildMs === null ? '?' : round(c.lastBuildMs, 1)} ms),`
-              + ` median ${c.medianMs}, builds ${builds ?? '?'}, programs ${c.programs.join(' → ')}${broken.length ? ` CROSSING GATES FAILED: ${broken.join('; ')}` : ''}`;
-            if (broken.length) crossingFailures.push(`${key} (${broken.join('; ')})`);
+          let walkLine = '';
+          if (walked && e.kind === 'live') {
+            if (e.crossings) entry.crossing = walked;
+            else entry.sceneChange = walked;
+            const r = walkReport(e, walked);
+            walkLine = r.line;
+            if (r.broken.length) walkFailures.push(`${key} (${r.broken.join('; ')})`);
           }
           // the actor mask of this frame: drawn again without advancing time, actors flat magenta
+          // (live: both views' actors — a battle entry's battlers too)
           const [maskOn, maskOff] = e.kind === 'live'
-            ? ['emu.renderer.overworld.setActorMask(true); emu.renderer.setFixedTimestep(0); emu.renderer.render(0)',
-              'emu.renderer.overworld.setActorMask(false); emu.renderer.render(0); emu.renderer.setFixedTimestep(1 / 60)']
+            ? ['emu.renderer.setActorMask(true); emu.renderer.setFixedTimestep(0); emu.renderer.render(0)',
+              'emu.renderer.setActorMask(false); emu.renderer.render(0); emu.renderer.setFixedTimestep(1 / 60)']
             : ['preview.setActorMask(true); preview.renderStill()', 'preview.setActorMask(false); preview.renderStill()'];
           await page.evaluate(maskOn);
           await page.screenshot({ path: path.join(outDir, `_mask_${key}.png`) as `${string}.png` });
@@ -826,7 +1111,7 @@ async function main(): Promise<void> {
           line += stepMsMax !== undefined ? ` stepMax ${entry.stepMsMax} ms` : ` build ${s.buildMs} ms`;
           if (gpu) line += ` | gpu ${entry.gpuMs} p90 ${entry.gpuP90} cpu ${entry.cpuMs} ms`;
           if (entry.ab) line += ` | ab idle ${abText(entry.ab.idle)}${entry.ab.walk ? `, walk ${abText(entry.ab.walk)}` : ''}`;
-          line += selfLine + crossLine;
+          line += selfLine + walkLine;
           // (diffs load the images into the page: after everything else of the entry)
           const sameAs = e.kind === 'live' ? e.sameAs : undefined;
           if (sameAs) {
@@ -836,6 +1121,12 @@ async function main(): Promise<void> {
             const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
             if (d.pixels !== 0) throw new Error(`differs from ${sameAs}_${style}: ${d.pixels} px (${d.pct.toFixed(2)} %), bbox ${b}`);
             line += ` | = ${sameAs} (0 px)`;
+            if (e.kind === 'live' && e.samePrograms) {
+              const want = stats[`${sameAs}_${style}`]?.programs;
+              if (want === undefined) throw new Error(`no ${sameAs}_${style} stats in this run to compare programs with (run ${sameAs} first)`);
+              if (s.programs !== want) throw new Error(`ends with ${s.programs} programs, ${sameAs}_${style} with ${want}: the switches compiled ${s.programs - want}`);
+              line += `, programs ${s.programs} = ${sameAs}'s`;
+            }
           }
           if (refDir) {
             const ref = path.join(refDir, `${sameAs ?? e.name}_${style}.png`);
@@ -862,10 +1153,35 @@ async function main(): Promise<void> {
           if (style === 'modern') {
             for (const d of [e.name, `${e.name}_mid`]) fs.rmSync(path.join(outDir, `_field_${d}.png`), { force: true });
           }
+          // (a GBA picture this run wrote after the entry's steps stays: it does not depend on the style)
+          if (!gbaShots.has(e.name)) fs.rmSync(path.join(outDir, `${gbaName(e)}.png`), { force: true });
           delete stats[key];
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
         }
         if (pageErrors > errorsBefore) errored.push(key);
+      }
+      // --compare: the entry's GBA picture (one per battle entry) against the reference run's too (the review's GBA column);
+      // an entry with `sameAs` emulates that entry's frames: against its reference
+      if (refDir && gbaShots.has(e.name)) {
+        const name = gbaName(e);
+        const ref = path.join(refDir, `${e.kind === 'live' && e.sameAs ? gbaName({ ...e, name: e.sameAs }) : name}.png`);
+        current = name;
+        const errorsBefore = pageErrors;
+        if (fs.existsSync(ref)) {
+          try {
+            const d = await diffPng(page, path.join(outDir, `${name}.png`), ref);
+            const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
+            diffs.push(`diff ${name.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
+            console.log(`gba  ${name.padEnd(24)} diff ${d.pct.toFixed(2)} % (${d.pixels} px)`);
+          } catch (err) {
+            gbaDiffFailures.push(name);
+            console.log(`[${name}] FAILED: ${(err as Error).message}`);
+          }
+        } else {
+          missingRefs.push(name);
+          diffs.push(`diff ${name.padEnd(24)} no reference in ${compare}`);
+        }
+        if (pageErrors > errorsBefore) errored.push(name);
       }
     }
     if (styles.includes('modern') && styles.includes('retro')) {
@@ -884,6 +1200,7 @@ async function main(): Promise<void> {
     }
     current = 'sheets';
     await buildSheets(page, outDir);
+    if (review) await buildReview(page, outDir, entries, beforeDir, reviewBefore);
   } finally {
     await browser.close();
     await server.close();
@@ -918,9 +1235,15 @@ async function main(): Promise<void> {
   if (pageErrors) console.log(`${pageErrors} page error(s) in: ${errored.join(', ') || 'sheets'}`);
   if (missingRefs.length) console.log(`no reference shot in ${compare} for: ${missingRefs.join(', ')}`);
   if (failures.length) console.log(`failed (shot and stats removed): ${failures.join(', ')}`);
-  if (selftestFailures.length) console.log(`self-test failed (no slots, field parity > ${SELFTEST_TOL} px or xbr > ${XBR_TOL.toFixed(4)}) in: ${selftestFailures.join(', ')}`);
-  if (crossingFailures.length) console.log(`crossing gates failed in: ${crossingFailures.join(', ')}`);
-  if (pageErrors || missingRefs.length || failures.length || selftestFailures.length || crossingFailures.length) process.exitCode = 1;
+  if (gbaDiffFailures.length) console.log(`GBA picture diff failed (the pictures and stats stay): ${gbaDiffFailures.join(', ')}`);
+  if (selftestFailures.length) {
+    console.log(`self-test failed (no slots, field parity > max(0.02, 0.003·inflateMax) px, xbr > ${XBR_TOL.toFixed(4)} or baked xbr `
+      + `> ${XBR_BAKED_VS_LIVE} bytes off the live one) in: ${selftestFailures.join(', ')}`);
+  }
+  if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
+  if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((e) => {

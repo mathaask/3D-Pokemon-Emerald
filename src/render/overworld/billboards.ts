@@ -4,6 +4,10 @@
 import * as THREE from 'three';
 import { put, markRange } from '../instanceUpload';
 
+/** The actors' render order (the cards here, the inflated actors: actors/inflatedActors.ts): after the opaque world at 0.
+ *  In a battle, the battlers and their cards (battle/parts/ground.ts lists the battle's orders). */
+export const ACTOR_RENDER_ORDER = 2;
+
 const MAX = 128;
 const WHITE = [1, 1, 1, 1] as const;
 
@@ -22,12 +26,14 @@ const VERT = /* glsl */ `
     vec2 local = position.xy; // x in [-0.5, 0.5], y in [0, 1]
     vec3 p;
     if (aSize.w > 0.5) {
-      // flat decal on the ground (ripples, footprints)
+      // flat decal on the ground (ripples, footprints) over footZ - height .. footZ: as the GBA draws it, the sprite's
+      // top row (v0) on the far edge (up the screen), its bottom row (v1) on the near one
       p = aFoot + vec3(local.x * aSize.x, 0.02, (local.y - 1.0) * aSize.y);
+      vUv = vec2(mix(aUv.x, aUv.z, local.x + 0.5), mix(aUv.y, aUv.w, local.y));
     } else {
       p = aFoot + uRight * (local.x * aSize.x) + vec3(0.0, local.y * aSize.y + aSize.z, 0.0);
+      vUv = vec2(mix(aUv.x, aUv.z, local.x + 0.5), mix(aUv.w, aUv.y, local.y));
     }
-    vUv = vec2(mix(aUv.x, aUv.z, local.x + 0.5), mix(aUv.w, aUv.y, local.y));
     vTint = aTint;
     vWorld = p;
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
@@ -136,7 +142,7 @@ export class Billboards {
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.mesh.customDepthMaterial = this.depthMaterial;
-    this.mesh.renderOrder = 2;
+    this.mesh.renderOrder = ACTOR_RENDER_ORDER;
   }
 
   /** A geometry sharing this mesh's instance attributes (used by BlobShadows). */

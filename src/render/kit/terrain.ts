@@ -219,13 +219,24 @@ vec3 kitGround(int mat, vec3 tint, vec2 p) {
 }
 `;
 
-const FRAG_COLOR = /* glsl */ `
-{
-  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
-  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them.
+/** The overworld terrain's border warp (GLSL: sets `vec2 warp` from `cell`, grid space), as it was before the battle
+ *  arenas (their ground has a cheaper warp of its own, with its own one-cell guard: battle/parts/ground.ts WARP_GLSL). */
+const TERRAIN_WARP = /* glsl */ `  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them.
   vec2 warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
             + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
-  vec2 g = cell + warp - uGridMin;
+`;
+
+/** The terrain's colour hook with a border warp of the caller's (the battle ground's is cheaper: arenaGroundMaterial). */
+export function terrainFragColor(warp: string): string {
+  return FRAG_COLOR_HEAD + warp + FRAG_COLOR_REST;
+}
+
+const FRAG_COLOR_HEAD = /* glsl */ `
+{
+  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
+`;
+
+const FRAG_COLOR_REST = /* glsl */ `  vec2 g = cell + warp - uGridMin;
   ivec2 ic = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGridSize) - 1);
   int mat = int(texelFetch(tCells, ic, 0).a * 255.0 + 0.5) >> 4;
   // Tint blends only in a narrow band at cell borders: soft edges that still hold their shape.
@@ -235,18 +246,26 @@ const FRAG_COLOR = /* glsl */ `
   // Banks (45° S slopes, vertical E faces: |n.y| <= 0.71) are all soil; tops (n.y = 1) none.
   vec3 nW = inverseTransformDirection(vNormal, viewMatrix);
   float steep = 1.0 - smoothstep(0.75, 0.95, abs(nW.y));
-  // A bank's soil is that of the cell owning it, the higher side: bank normals point at the lower
-  // cell, so step half a cell against them (unwarped, so it holds steady along the bank).
-  vec2 own = cell - nW.xz / max(length(nW.xz), 1e-4) * 0.5;
-  vec4 od = texelFetch(tCells, clamp(ivec2(floor(own - uGridMin)), ivec2(0), ivec2(uGridSize) - 1), 0);
-  int omat = int(od.a * 255.0 + 0.5) >> 4;
-  vec3 otint = kitSrgbToLinear(od.rgb);
-  // Earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
-  vec3 earth = (omat == 3 || omat == 6 || omat == 7) ? otint * 0.68 : mix(otint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
-  vec3 soil = earth * (0.85 + 0.3 * kitFbm2(vec2(vKitWorld.x + vKitWorld.z, vKitWorld.y) * 3.0));
-  diffuseColor.rgb *= mix(col, soil, steep);
+  // (the soil only where there is a bank: elsewhere steep is 0 and mix(col, soil, 0.0) is col — the same pixels, without
+  // the soil's cell fetch and fbm on every flat fragment)
+  vec3 ground = col;
+  if (steep > 0.0) {
+    // A bank's soil is that of the cell owning it, the higher side: bank normals point at the lower
+    // cell, so step half a cell against them (unwarped, so it holds steady along the bank).
+    vec2 own = cell - nW.xz / max(length(nW.xz), 1e-4) * 0.5;
+    vec4 od = texelFetch(tCells, clamp(ivec2(floor(own - uGridMin)), ivec2(0), ivec2(uGridSize) - 1), 0);
+    int omat = int(od.a * 255.0 + 0.5) >> 4;
+    vec3 otint = kitSrgbToLinear(od.rgb);
+    // Earthy soil under soft ground, a darker edge of the same stone/planks under hard ground.
+    vec3 earth = (omat == 3 || omat == 6 || omat == 7) ? otint * 0.68 : mix(otint * 0.75, vec3(0.32, 0.19, 0.1), 0.75);
+    vec3 soil = earth * (0.85 + 0.3 * kitFbm2(vec2(vKitWorld.x + vKitWorld.z, vKitWorld.y) * 3.0));
+    ground = mix(col, soil, steep);
+  }
+  diffuseColor.rgb *= ground;
 }
 `;
+
+const FRAG_COLOR = terrainFragColor(TERRAIN_WARP);
 
 /** The terrain's material (`tex`: its cells' looks, over the grid from `gridMin`, `gridSize` cells): its only definition
  *  (the program catalogue, kit/catalogue.ts, precompiles it). */

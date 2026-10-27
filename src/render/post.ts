@@ -8,7 +8,9 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { SimplexNoise } from 'three/examples/jsm/math/SimplexNoise.js';
 import type { WorldStyle } from './overworld/world';
+import { withAoPrepassMaterials } from './aoPrepass';
 
 export type Quality = 'low' | 'medium' | 'high';
 
@@ -91,6 +93,52 @@ const GradeShader = {
   `,
 };
 
+/** A seeded generator in [0, 1) (mulberry32). */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), a | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The seed of GTAO's denoise noise (any fixed value). */
+const GTAO_NOISE_SEED = 0x3d9e2a51;
+
+/**
+ * GTAOPass's denoise noise texture as it makes it (its _generateNoise: 64×64 RGBA of SimplexNoise, repeat-wrapped), from a
+ * seeded generator: three's SimplexNoise draws its permutation from Math.random, a new pattern on every page load, so High
+ * frames differed between loads (Task 12: 1.8 % px Modern) and no High shot was comparable.
+ */
+export function gtaoDenoiseNoise(seed = GTAO_NOISE_SEED, size = 64): THREE.DataTexture {
+  const simplex = new SimplexNoise({ random: seededRandom(seed) });
+  const data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < size; i++) {
+    for (let j = 0; j < size; j++) {
+      const k = (i * size + j) * 4;
+      data[k] = (simplex.noise(i, j) * 0.5 + 0.5) * 255;
+      data[k + 1] = (simplex.noise(i + size, j) * 0.5 + 0.5) * 255;
+      data[k + 2] = (simplex.noise(i, j + size) * 0.5 + 0.5) * 255;
+      data[k + 3] = (simplex.noise(i + size, j + size) * 0.5 + 0.5) * 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** GTAOPass whose depth/normal prepass draws the meshes with a prepass material of their own (aoPrepass.ts: the inflated
+ *  actors) with it — their depth and normal, so the AO of what lies behind them is not composited over them. */
+class ActorGTAOPass extends GTAOPass {
+  override render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget,
+    deltaTime: number, maskActive: boolean): void {
+    withAoPrepassMaterials(this.scene, () => super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive));
+  }
+}
+
 export class PostFX {
   readonly composer: EffectComposer;
   private renderPass: RenderPass;
@@ -116,7 +164,11 @@ export class PostFX {
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
     if (quality === 'high') {
-      this.ao = new GTAOPass(scene, camera, size.x, size.y);
+      this.ao = new ActorGTAOPass(scene, camera, size.x, size.y);
+      // (the same denoise noise on every page load)
+      this.ao.pdNoiseTexture.dispose();
+      this.ao.pdNoiseTexture = gtaoDenoiseNoise();
+      this.ao.pdMaterial.uniforms.tNoise.value = this.ao.pdNoiseTexture;
       this.ao.blendIntensity = 0.75;
       this.ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0 });
       this.composer.addPass(this.ao);

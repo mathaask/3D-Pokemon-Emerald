@@ -3,7 +3,7 @@
 
 import type { Bus } from '../gba/bus';
 import { Mem } from './mem';
-import { SYM } from './symbols';
+import { SYM, SYM_SIZE } from './symbols';
 import { OBJ_SIZES, SUBSPRITE_TABLE_SIZE, applyComposition, readSubsprites, type PlacedPiece, type SubspritePiece } from './subsprites';
 
 export { OBJ_SIZES };
@@ -122,6 +122,10 @@ export interface BattlerSnap {
 
 const SPRITE_SIZE = 0x44;
 const OBJECT_EVENT_SIZE = 0x24;
+const TRAINER_SIZE = 0x28; // struct Trainer: partyFlags u8, trainerClass u8, …
+/** struct Task: func u32, isActive u8, prev u8, next u8, priority u8, data s16[16]; gTasks holds 16. */
+const TASK_SIZE = 40;
+const TASK_COUNT = 16;
 
 const OVERWORLD_CB2 = new Set<number>([SYM.CB2_Overworld]);
 const TRANSITION_CB2 = new Set<number>([
@@ -185,6 +189,10 @@ export class GameState {
   fadeActive = false;
   fadeY = 0;
   fadeColor = 0;
+  /** The palettes a normal palette fade blends (gPaletteFade.selectedPalettes: bits 0–15 the BG palettes, 16–31 the OBJ
+   *  palettes) and the fade's mode (0 normal, 1 fast: every palette, 2 hardware: the blend registers). */
+  fadePalettes = 0;
+  fadeMode = 0;
 
   hours = 12;
   minutes = 0;
@@ -192,10 +200,38 @@ export class GameState {
   battleType = 0;
   battlersCount = 0;
   battleEnvironment = 0;
+  /** gTrainers[gTrainerBattleOpponent_A].trainerClass in a trainer battle, else 0 (DrawMainBattleBackground's Leader /
+   *  Champion test). */
+  trainerClass = 0;
+  /** The map's battle scene (MapHeader.battleType: MAP_BATTLE_SCENE_*) and type (MAP_TYPE_*), read in battle. */
+  mapBattleScene = 0;
+  mapType = 0;
   battlers: BattlerSnap[] = [];
   attacker = 0;
   target = 0;
   animActive = false;
+  /**
+   * The battler sprites (gSprites indices) whose copy on a BG layer the frame's BG0–2 overlay shows: a move animation's
+   * monbg (battle_anim.c) draws the battler onto BG1 / BG2 and hides its sprite while its update task
+   * (Task_UpdateMonBg, sMonAnimTaskIdArray) lives; clearmonbg shows the sprite again three frames before the task goes.
+   * Measured on Scratch (battle1.state, frames from the load): task 65–91, sprite hidden 65–87, the copy on the overlay
+   * 66–90 — the overlay shows it a frame after the task appears and stops a frame before the task goes. So: a battler
+   * whose task lives now and appeared at least one emulated frame ago (66–91: never a frame with the copy outside it;
+   * frame 91 shows neither, as 65 does). Counted in emulated frames (gMain.vblankCounter1), not syncs: a sync after
+   * several frames (below 60 fps, fast-forward, the harness's steps) takes a task first seen as appeared on the frame
+   * after the last sync's (its copy may already show: never a duplicate), and a resync on the same frame changes nothing.
+   * (On the GBA the copy lies exactly under the sprite; the 3D view places the battler elsewhere: Modern hides it
+   * meanwhile — no duplicate. monbg_static, which makes no task and keeps the sprite, is not covered.)
+   */
+  battlerCopies: number[] = [];
+  /** The sprites of the monbg tasks seen at the last battle sync and, for each, the earliest emulated frame its task can
+   *  have appeared on (two pairs of arrays, swapped each sync); that sync's emulated frame (-1: none since the battle
+   *  began, or the counter went back). */
+  private monBgSprites: number[] = [];
+  private monBgSince: number[] = [];
+  private monBgSpritesNext: number[] = [];
+  private monBgSinceNext: number[] = [];
+  private monBgFrame = -1;
 
   /** Subsprite tables read so far, by table address (ROM tables only: they never change). */
   private subspriteCache = new Map<number, SubspritePiece[] | null>();
@@ -216,6 +252,45 @@ export class GameState {
     this.readSprites();
     if (this.scene === 'overworld' || this.scene === 'transition' || this.scene === 'battleTransition') this.readOverworld();
     if (this.scene === 'battle') this.readBattle();
+    else {
+      this.battlerCopies.length = this.monBgSprites.length = this.monBgSince.length = 0;
+      this.monBgFrame = -1;
+    }
+  }
+
+  /** The battler copies the overlay shows (battlerCopies): the sprites of the live monbg tasks that appeared at least one
+   *  emulated frame ago. */
+  private readMonBg(): void {
+    const m = this.mem;
+    // gMain.vblankCounter1: +1 every VBlank (main.c VBlankIntr), so every emulated frame
+    const frame = m.u32(SYM.gMain + 0x20);
+    // (gone back: a loaded save state — the history restarts)
+    if (frame < this.monBgFrame) {
+      this.monBgSprites.length = this.monBgSince.length = 0;
+      this.monBgFrame = -1;
+    }
+    // a task first seen now appeared on a frame since the last sync's: at the earliest the one after it (this one on the
+    // battle's first sync, or a resync on the same frame)
+    const earliest = this.monBgFrame >= 0 && frame > this.monBgFrame ? this.monBgFrame + 1 : frame;
+    const sprites = this.monBgSpritesNext, since = this.monBgSinceNext, copies = this.battlerCopies;
+    sprites.length = since.length = copies.length = 0;
+    for (let k = 0; k < 2; k++) {
+      const id = m.u8(SYM.sMonAnimTaskIdArray + k);
+      if (id >= TASK_COUNT) continue; // TASK_NONE
+      const t = SYM.gTasks + id * TASK_SIZE;
+      if (m.u8(t + 4) === 0 || ((m.u32(t) & ~1) >>> 0) !== SYM.Task_UpdateMonBg) continue;
+      const s = m.u16(t + 8); // t2_SpriteId (data[0])
+      const seen = this.monBgSprites.indexOf(s);
+      const from = seen >= 0 ? this.monBgSince[seen] : earliest;
+      sprites.push(s);
+      since.push(from);
+      if (frame > from) copies.push(s);
+    }
+    this.monBgSpritesNext = this.monBgSprites;
+    this.monBgSinceNext = this.monBgSince;
+    this.monBgSprites = sprites;
+    this.monBgSince = since;
+    this.monBgFrame = frame;
   }
 
   private readFade(): void {
@@ -225,6 +300,8 @@ export class GameState {
     this.fadeY = (w >>> 6) & 0x1f;
     this.fadeColor = (w >>> 16) & 0x7fff;
     this.fadeActive = (w >>> 31) !== 0;
+    this.fadePalettes = m.u32(a) >>> 0; // multipurpose1 (selectedPalettes)
+    this.fadeMode = (m.u16(a + 8) >>> 8) & 3; // multipurpose2:6, yDec:1, bufferTransferDisabled:1, mode:2
   }
 
   private readOverworld(): void {
@@ -399,9 +476,15 @@ export class GameState {
     this.battleType = m.u32(SYM.gBattleTypeFlags);
     this.battlersCount = m.u8(SYM.gBattlersCount);
     this.battleEnvironment = m.u8(SYM.gBattleEnvironment);
+    const opponent = m.u16(SYM.gTrainerBattleOpponent_A);
+    this.trainerClass = (this.battleType & 8) !== 0 && opponent < SYM_SIZE.gTrainers / TRAINER_SIZE
+      ? m.u8(SYM.gTrainers + opponent * TRAINER_SIZE + 1) : 0;
+    this.mapBattleScene = m.u8(SYM.gMapHeader + 0x1b);
+    this.mapType = m.u8(SYM.gMapHeader + 0x17);
     this.attacker = m.u8(SYM.gBattlerAttacker);
     this.target = m.u8(SYM.gBattlerTarget);
     this.animActive = m.u8(SYM.gAnimScriptActive) !== 0;
+    this.readMonBg();
     this.battlers.length = 0;
     for (let b = 0; b < Math.min(4, this.battlersCount); b++) {
       const a = SYM.gBattleMons + b * 0x58;

@@ -41,12 +41,22 @@ const WANTED = [
   'gBattleCommunication', 'gAnimScriptActive', 'gBattleScripting', 'gMoveSelectionCursor',
   'gPlayerParty', 'gEnemyParty', 'gPlayerPartyCount', 'gEnemyPartyCount', 'gTrainerBattleOpponent_A',
   'gBattleAnimBgCntSet', 'gBattleBgsHidden', 'gBattleMonForms', 'gMultiuseSpriteTemplate', 'gBattlerSpriteTemplates',
+  // a battler copied onto a BG layer by a move animation (battle_anim.c Cmd_monbg: its update task, per flank)
+  'sMonAnimTaskIdArray', 'Task_UpdateMonBg',
   // ROM data tables
   'gMonFrontPicTable', 'gMonBackPicTable', 'gMonPaletteTable', 'gMonShinyPaletteTable',
   'gSpeciesNames', 'gMoveNames', 'gSpeciesInfo', 'gBattleMoves', 'gTrainerFrontPicTable',
   'gTrainerFrontPicPaletteTable', 'gTrainerBackPicTable', 'gTrainerBackPicPaletteTable',
   'gMonIconTable', 'gMonIconPaletteIndices', 'gMonIconPaletteTable', 'gRegionMapEntries',
   'gTrainers', 'gItems', 'gBattleTerrainTable', 'gBattleEnvironmentInfo',
+  // battle backgrounds (battle_bg.c DrawMainBattleBackground), battler placement and the enemy shadow
+  ...['TallGrass', 'LongGrass', 'Sand', 'Underwater', 'Water', 'PondWater', 'Rock', 'Cave', 'Building', 'Stadium', 'Rayquaza']
+    .flatMap((n) => [`gBattleEnvironmentTiles_${n}`, `gBattleEnvironmentTilemap_${n}`]),
+  ...['TallGrass', 'LongGrass', 'Sand', 'Underwater', 'Water', 'PondWater', 'Rock', 'Cave', 'Building', 'Plain', 'Frontier',
+    'BuildingGym', 'BuildingLeader', 'StadiumMagma', 'StadiumAqua', 'StadiumSidney', 'StadiumPhoebe', 'StadiumGlacia',
+    'StadiumDrake', 'StadiumWallace', 'Groudon', 'Kyogre', 'Rayquaza'].map((n) => `gBattleEnvironmentPalette_${n}`),
+  'gMonFrontPicCoords', 'gMonBackPicCoords', 'gEnemyMonElevation', 'gSpriteTemplate_EnemyShadow', 'gEnemyMonShadow_Gfx',
+  'gBattleInterface_BallStatusBarPal',
   // misc
   'UpdateObjectReflectionSprite', 'sCloudSpriteTemplate', 'sRainSpriteTemplate', 'sSnowflakeSpriteTemplate',
   'sFogHorizontalSpriteTemplate', 'sAshSpriteTemplate', 'sFogDiagonalSpriteTemplate', 'sSandstormSpriteTemplate',

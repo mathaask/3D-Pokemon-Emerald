@@ -1,0 +1,284 @@
+import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import {
+  groundCells, groundDisc, groundHeight, CAVE_POND, POND, POND_BANK, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
+  CLOUD_SHADOW, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS, nearerPlatformGlsl, platformsGlsl,
+} from '../src/render/battle/parts/ground';
+import type { ArenaContext } from '../src/render/battle/modernArena';
+import { arenaLook } from '../src/render/battle/look';
+import type { RGB } from '../src/render/kit/palette';
+import { arenaPalette } from '../src/render/battle/palette';
+import { STAGE, Stage, GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
+import { PLATFORM_PART, rippleMaterial } from '../src/render/battle/parts/platforms';
+import { hallFloorMaterial } from '../src/render/battle/parts/floor';
+import { GroundMat } from '../src/render/kit/terrain';
+import { ModernArena } from '../src/render/battle/modernArena';
+import { defaultArenaColors } from '../src/render/battle/bgSample';
+import { createKitUniforms } from '../src/render/kit/materials';
+import type { ArenaKind } from '../src/render/battle/arenaKind';
+
+const matAt = (g: ReturnType<typeof groundCells>, x: number, z: number) =>
+  g.data[((Math.floor(z - g.min[1])) * g.w + Math.floor(x - g.min[0])) * 4 + 3] >> 4;
+describe('arena ground', () => {
+  it('paints the field, the worn ring and the platform tops', () => {
+    const p = arenaPalette('grass', null), g = groundCells('grass', p, STAGE);
+    expect(g.w).toBe(GROUND_GRID);
+    expect(matAt(g, STAGE.centre.x + 25, STAGE.centre.z - 20)).toBe(GroundMat.Grass);
+    // (fix rounds 1–2: the platform tops paint themselves over cells of their own and the worn ring is the ground
+    // shader's — 'the worn ring' below —: the field's cells run on under both; platform cells here showed past the slabs'
+    // plinths and behind the sand mounds)
+    expect(matAt(g, STAGE.player.x, STAGE.player.z)).toBe(p.groundMat);
+    expect(matAt(g, STAGE.player.x + 2.1 * 1.4, STAGE.player.z)).toBe(p.groundMat);
+  });
+  it('keeps the stage flat, rolls outdoor fields, lays indoor floors level', () => {
+    for (const [dx, dz] of [[0, 0], [5, -3], [-6, 2]]) expect(groundHeight('grass', STAGE.centre.x + dx, STAGE.centre.z + dz, STAGE)).toBe(GROUND_Y);
+    const far = [...Array(40)].map((_, i) => groundHeight('grass', STAGE.centre.x + 30 * Math.cos(i), STAGE.centre.z + 30 * Math.sin(i), STAGE));
+    expect(Math.max(...far) - Math.min(...far)).toBeGreaterThan(0.3);
+    expect(groundHeight('gym', STAGE.centre.x + 30, STAGE.centre.z - 20, STAGE)).toBe(GROUND_Y);
+  });
+  it('digs the pond under the water', () => {
+    expect(groundHeight('pond', STAGE.centre.x, STAGE.centre.z + POND.dz - 6, STAGE)).toBeLessThan(WATER_Y - 0.3);
+  });
+  it("raises the pond's bank into a sandy lip over the water: its waterline analytic, its profile without kinks", () => {
+    // (along rays from the POND ellipse's centre, every 5°: up to the ellipse the ground crosses WATER_Y once,
+    // POND_BANK.waterline inside it, and stands over the water from there — a lip before the reeds (at the ellipse; behind
+    // it the bank falls back to the field, the water there long transparent); the slope changes smoothly all the way; the
+    // cells on the beach and the lip are sand. Before, the bank met the ellipse at GROUND_Y, under the water)
+    const cx = STAGE.centre.x, cz = STAGE.centre.z + POND.dz, p = arenaPalette('pond', defaultArenaColors('pond'));
+    const cells = groundCells('pond', p, STAGE), step = 0.01;
+    for (let k = 0; k < 72; k++) {
+      const a = (k / 72) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+      const R = 1 / Math.hypot(c / POND.rx, s / POND.rz);
+      const h = (d: number) => groundHeight('pond', cx + c * d, cz + s * d, STAGE);
+      const from = R - POND_BANK.waterline - 3, to = R + POND_BANK.back + 1;
+      const crossings: number[] = [];
+      let crest = -Infinity, lastSlope = NaN;
+      for (let d = from; d < to; d += step) {
+        const h0 = h(d), h1 = h(d + step), slope = (h1 - h0) / step;
+        if (d < R && (h0 - WATER_Y) * (h1 - WATER_Y) <= 0 && h0 !== h1) crossings.push(d + step * (WATER_Y - h0) / (h1 - h0));
+        crest = Math.max(crest, h0);
+        if (!Number.isNaN(lastSlope)) expect(Math.abs(slope - lastSlope), `angle ${k * 5}°: a kink at ${d.toFixed(2)}`).toBeLessThan(0.02);
+        lastSlope = slope;
+      }
+      expect(crossings.length, `angle ${k * 5}°: crossings`).toBe(1);
+      expect(crossings[0] - (R - POND_BANK.waterline), `angle ${k * 5}°: the waterline`).toBeCloseTo(0, 3);
+      expect(h(R), `angle ${k * 5}°: the lip's crest`).toBeGreaterThanOrEqual(WATER_Y + 0.08);
+      expect(crest, `angle ${k * 5}°: the lip's crest`).toBeCloseTo(h(R), 6);
+      // (the terrain's cells in its cell space: (x, z − y))
+      for (const d of [R - POND_BANK.waterline, R - POND_BANK.waterline / 2, R]) {
+        const x = cx + c * d, z = cz + s * d;
+        expect(matAt(cells, x, z - h(d)), `angle ${k * 5}°: sand at ${(d - R).toFixed(2)}`).toBe(GroundMat.Sand);
+      }
+    }
+    // (the cave pond keeps its basin: GROUND_Y at its shore)
+    expect(groundHeight('cavePond', STAGE.centre.x, STAGE.centre.z + CAVE_POND.dz - CAVE_POND.rz, STAGE)).toBe(GROUND_Y);
+  });
+  it("builds the pond's ground with its waterline where the profile has it (the disc's own triangles)", () => {
+    // (every disc edge crossing WATER_Y inside the ellipse — the water's side of the lip's crest — crosses it within 0.06 of the
+    // analytic waterline, measured along the ray: the default disc's rings missed it by up to 0.4)
+    const g = groundDisc('pond', STAGE), pos = g.getAttribute('position'), idx = g.getIndex()!;
+    const cx = STAGE.centre.x, cz = STAGE.centre.z + POND.dz;
+    let n = 0;
+    for (let t = 0; t < idx.count; t += 3) {
+      for (let q = 0; q < 3; q++) {
+        const i = idx.getX(t + q), j = idx.getX(t + (q + 1) % 3);
+        const yi = pos.getY(i) - WATER_Y, yj = pos.getY(j) - WATER_Y;
+        if (yi * yj >= 0) continue;
+        const f = yi / (yi - yj), x = pos.getX(i) + (pos.getX(j) - pos.getX(i)) * f, z = pos.getZ(i) + (pos.getZ(j) - pos.getZ(i)) * f;
+        const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz), R = d / Math.hypot(dx / POND.rx, dz / POND.rz);
+        if (d >= R) continue;
+        expect(Math.abs(d - (R - POND_BANK.waterline)), `crossing at (${x.toFixed(2)}, ${z.toFixed(2)})`).toBeLessThan(0.06);
+        n++;
+      }
+    }
+    expect(n).toBeGreaterThan(96);
+  });
+  it("ends the Sky Pillar's floor at its broken edge (r 14); every other kind's runs on to 64", () => {
+    expect(groundHeight('rayquaza', STAGE.centre.x, STAGE.centre.z - 13, STAGE)).toBe(GROUND_Y);
+    /** The ground mesh GROUND_PART builds for `kind`: its furthest vertex from the stage centre. */
+    const reach = (kind: ArenaKind) => {
+      const palette = arenaPalette(kind, defaultArenaColors(kind)), cells = groundCells(kind, palette, STAGE);
+      const tex = new THREE.DataTexture(cells.data, cells.w, cells.h);
+      const ctx: ArenaContext = { uniforms: createKitUniforms(), quality: 'medium', disposables: [tex], kind, colors: defaultArenaColors(kind),
+        stage: STAGE, palette, ground: { tex, min: new THREE.Vector2(cells.min[0], cells.min[1]), size: new THREE.Vector2(cells.w, cells.h) },
+        look: arenaLook(kind, palette, 12) };
+      const mesh = GROUND_PART.build(ctx) as THREE.Mesh, p = mesh.geometry.getAttribute('position');
+      let r = 0;
+      for (let i = 0; i < p.count; i++) r = Math.max(r, Math.hypot(p.getX(i) - STAGE.centre.x, p.getZ(i) - STAGE.centre.z));
+      return r;
+    };
+    expect(reach('rayquaza')).toBeLessThanOrEqual(14.5);
+    expect(reach('rayquaza')).toBeGreaterThanOrEqual(GROUND_RADIUS.rayquaza! - 1e-4);
+    for (const kind of ['grass', 'magma', 'gym', 'cave'] as ArenaKind[]) expect(reach(kind), kind).toBeCloseTo(GROUND_RADIUS.default, 3);
+  });
+});
+
+// (the ground's draw order — the platform tops after the battlers and before the ground, whatever their material ids,
+// Task 7b — is held with the battle's whole order, three's group order included: tests/battleRenderOrder.test.ts)
+
+describe('groundNightScale (GROUND_COLOR\'s moonlit earth as a colour factor)', () => {
+  // the ground shader's own night lines (GROUND_COLOR), evaluated: its warmth test, then mix(gc, luminance × lift, t)
+  const color = arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0).fragColor!;
+  const warmLine = /float warm = ([^;]*);/.exec(color)![1];
+  const nightLine = /diffuseColor\.rgb = mix\(gc, vec3\(dot\(gc, vec3\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)\) \* ([-\d.]+)\), ([^;]*)\);/.exec(color);
+  const shader = (c: RGB, uNight: number): RGB => {
+    const m = nightLine!;
+    const warm = glslEval(warmLine.replace(/gc\.([rgb])/g, 'gc_$1'), { gc_r: c[0], gc_g: c[1], gc_b: c[2] });
+    const l = (Number(m[1]) * c[0] + Number(m[2]) * c[1] + Number(m[3]) * c[2]) * Number(m[4]);
+    const t = glslEval(m[5], { uNight, warm });
+    return c.map((v) => v + (l - v) * t) as RGB;
+  };
+  it("is the ground shader's moonlit earth as a factor on the colour (its night lines evaluated): 1 by day and on cool colours", () => {
+    expect(nightLine, "GROUND_COLOR's night line").not.toBeNull();
+    const out: RGB = [0, 0, 0];
+    const colours: RGB[] = [[0.5, 0.35, 0.2], [0.2, 0.5, 0.15], [0.86, 0.78, 0.56], [0.45, 0.45, 0.45], [0.55, 0.3, 0.35], [0.3, 0.32, 0.29],
+      [0.42, 0.4, 0.36], [0.6, 0.62, 0.3]];
+    let moonlit = 0;
+    for (const c of colours) for (const uNight of [0, 0.4, 1]) {
+      const k = groundNightScale(c, uNight, out), want = shader(c, uNight);
+      for (let i = 0; i < 3; i++) expect(c[i] * k[i], `${c} at night ${uNight}`).toBeCloseTo(want[i], 12);
+      if (k.some((v) => v !== 1)) moonlit++;
+    }
+    expect(moonlit).toBeGreaterThan(4);
+    expect(groundNightScale([0.5, 0.35, 0.2], 0, out)).toEqual([1, 1, 1]);
+    expect(groundNightScale([0.2, 0.5, 0.15], 1, out)).toEqual([1, 1, 1]);
+    expect(groundNightScale([0.5, 0, 0.1], 1, out)[1]).toBe(1);   // (a channel at 0 keeps 1)
+  });
+  it('moonlitAsGround hooks warm colours only and follows uNight through the material colour', () => {
+    const night = { value: 0 };
+    const mat = new THREE.MeshStandardMaterial(), mesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+    const plain = mesh.onBeforeRender;
+    moonlitAsGround(mesh, mat, [0.2, 0.5, 0.15], night);
+    expect(mesh.onBeforeRender).toBe(plain);
+    const earth: RGB = [0.5, 0.35, 0.2];
+    moonlitAsGround(mesh, mat, earth, night);
+    const draw = () => mesh.onBeforeRender(undefined as never, undefined as never, undefined as never, undefined as never, mat, undefined as never);
+    for (const v of [0, 0.7, 1]) {
+      night.value = v;
+      draw();
+      const k = groundNightScale(earth, v, [0, 0, 0]);
+      expect([mat.color.r, mat.color.g, mat.color.b].map((c, i) => c - k[i]).every((d) => Math.abs(d) < 1e-6)).toBe(true);
+    }
+  });
+});
+
+/** Evaluates a plain arithmetic GLSL expression of our own shader in JS (scalars, mix, smoothstep: the subset the worn
+ *  ring's lines use; anything else is refused before it runs) — as tests/inflatedActors.test.ts's glslEval. */
+function glslEval(expr: string, env: Record<string, number>): number {
+  const names = new Set([...Object.keys(env), 'mix', 'smoothstep']);
+  const ids = expr.match(/[A-Za-z_][A-Za-z_0-9]*/g) ?? [];
+  if (!/^[A-Za-z_0-9.+\-*/(), \n]+$/.test(expr) || ids.some((id) => !names.has(id))) {
+    throw new Error(`not a plain arithmetic GLSL expression: ${expr}`);
+  }
+  const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+  const smoothstep = (e0: number, e1: number, x: number) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  return new Function(...Object.keys(env), 'mix', 'smoothstep', `return ${expr};`)(...Object.values(env), mix, smoothstep) as number;
+}
+
+describe('the worn ring (the ground shader)', () => {
+  const opts = arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0, wornRing(arenaPalette('grass', null)));
+  const head = opts.fragHead!, color = opts.fragColor!;
+  // the shader's own constants: the stage's two platforms as it measures them (x, z, rx, rz)
+  const platforms = [...head.matchAll(/vec4\(([-\d.]+), ([-\d.]+), ([-\d.]+), ([-\d.]+)\)/g)].map((m) => m.slice(1, 5).map(Number));
+  // its `re`: the elliptical distance from the nearer of them (the line checked below)
+  const re = (x: number, z: number) => Math.min(...platforms.map(([px, pz, rx, rz]) => Math.hypot((x - px) / rx, (z - pz) / rz)));
+  const line = (name: string) => new RegExp(`float ${name} = ([^;]*);`).exec(color)![1];
+  const worn = (x: number, z: number, fray: number, wear: number, uNight = 0) =>
+    glslEval(line('worn'), { re: re(x, z), outer: glslEval(line('outer'), { fray }), wear, uRing: 1, uNight });
+
+  it('measures from the stage\'s own platforms', () => {
+    expect(platforms).toHaveLength(2);
+    for (const [c, f] of [[STAGE.player, PLATFORM_FOOTPRINT.player], [STAGE.enemy, PLATFORM_FOOTPRINT.enemy]] as const) {
+      expect(head).toContain(`vec4(${c.x.toFixed(4)}, ${c.z.toFixed(4)}, ${f.rx.toFixed(4)}, ${f.rz.toFixed(4)})`);
+    }
+    expect(color).toContain('float re = min(length((rp - ARENA_PLATFORMS[0].xy) / ARENA_PLATFORMS[0].zw), length((rp - ARENA_PLATFORMS[1].xy) / ARENA_PLATFORMS[1].zw));');
+  });
+  it('wears a band from just outside each platform to a frayed edge, fainter at night (the shader\'s lines, evaluated)', () => {
+    const P = STAGE.player, E = STAGE.enemy, fp = PLATFORM_FOOTPRINT.player, fe = PLATFORM_FOOTPRINT.enemy;
+    for (const fray of [0, 0.5, 1]) for (const wear of [0, 1]) {
+      // e ≈ 1.15 east of the player and in front of the enemy: worn whatever the noise
+      expect(worn(P.x + 1.15 * fp.rx, P.z, fray, wear)).toBeGreaterThan(0.65);
+      expect(worn(E.x, E.z + 1.15 * fe.rz, fray, wear)).toBeGreaterThan(0.65);
+      // under the platform and well past the frayed edge: none
+      expect(worn(P.x + 0.9 * fp.rx, P.z, fray, wear)).toBe(0);
+      expect(worn(P.x + (WORN_RING.outer[1] + 0.05) * fp.rx, P.z, fray, wear)).toBe(0);
+      // at night it fades 40 % into the field
+      expect(worn(P.x + 1.15 * fp.rx, P.z, fray, wear, 1)).toBeCloseTo(0.6 * worn(P.x + 1.15 * fp.rx, P.z, fray, wear), 9);
+    }
+  });
+  it("darkens the ground under a cloud by CLOUD_SHADOW at most, soft (the shader's line evaluated); not at all without clouds", () => {
+    const cloud = /diffuseColor\.rgb \*= (1\.0 - uClouds \* [^;]*);/.exec(color)![1];
+    expect(glslEval(cloud, { uClouds: 1, vArenaCloud: 1 })).toBeCloseTo(1 - CLOUD_SHADOW, 12);
+    expect(glslEval(cloud, { uClouds: 1, vArenaCloud: 0.5 })).toBeCloseTo(1 - CLOUD_SHADOW / 2, 12);
+    expect(glslEval(cloud, { uClouds: 0, vArenaCloud: 1 })).toBe(1);
+    expect(CLOUD_SHADOW).toBeLessThanOrEqual(0.15);
+  });
+  it('lies on the outdoor kinds\' field only, in the path\'s browner tint', () => {
+    const uRing = (kind: ArenaKind) => {
+      const a = new ModernArena(createKitUniforms());
+      a.build(kind, defaultArenaColors(kind), 'medium');
+      const m = (a.group.getObjectByName('ground') as THREE.Mesh).material as THREE.Material;
+      const s = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+      m.onBeforeCompile(s as unknown as THREE.WebGLProgramParametersWithUniforms, undefined as unknown as THREE.WebGLRenderer);
+      // (a hall's floor — floor.ts, the gym's — has no worn ring at all: no uRing)
+      const v = (s.uniforms as Record<string, { value: number } | undefined>).uRing?.value ?? 0;
+      a.dispose();
+      return v;
+    };
+    expect(uRing('grass')).toBe(1); expect(uRing('sand')).toBe(1); expect(uRing('gym')).toBe(0); expect(uRing('cave')).toBe(0);
+    const w = wornRing(arenaPalette('grass', null));
+    expect(w.strength).toBe(1);
+    expect(w.tint[0]).toBeGreaterThan(w.tint[1]); expect(w.tint[1]).toBeLessThan(1);   // green field → brown earth
+  });
+});
+
+describe("the stage's platforms in the battle shaders (platformsGlsl: the worn ring, the ripple rings, the hall floor's stage tops)", () => {
+  /** The fragment shader a kit material compiles to (onBeforeCompile on a stub). */
+  const frag = (m: THREE.Material) => {
+    const s = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    m.onBeforeCompile(s as unknown as THREE.WebGLProgramParametersWithUniforms, undefined as unknown as THREE.WebGLRenderer);
+    return s.fragmentShader;
+  };
+  /** A stage of its own: the platforms moved off STAGE's. */
+  const moved = new Stage();
+  moved.player.x += 1.5;
+  moved.enemy.z -= 0.75;
+
+  it("carries each platform's place and footprint, and measures the nearer one alike in the ground and the ripples", () => {
+    for (const stage of [STAGE, moved]) {
+      for (const [c, f] of [[stage.player, PLATFORM_FOOTPRINT.player], [stage.enemy, PLATFORM_FOOTPRINT.enemy]] as const) {
+        expect(platformsGlsl('P', stage)).toContain(`vec4(${c.x.toFixed(4)}, ${c.z.toFixed(4)}, ${f.rx.toFixed(4)}, ${f.rz.toFixed(4)})`);
+      }
+      expect(arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0, undefined, stage).fragHead)
+        .toContain(platformsGlsl('ARENA_PLATFORMS', stage));
+      expect(rippleMaterial(stage).fragHead).toContain(platformsGlsl('RIPPLE_PLATFORMS', stage));
+      expect(hallFloorMaterial('stage', [1, 1, 1], null, stage).fragHead).toContain(platformsGlsl('FLOOR_PLATFORMS', stage));
+      // (a court's stage is the floor's)
+      expect(hallFloorMaterial('tiles', [1, 1, 1], { stage, color: [1, 0, 0] }).fragHead).toContain(platformsGlsl('FLOOR_PLATFORMS', stage));
+    }
+    expect(rippleMaterial(moved).fragHead).not.toBe(rippleMaterial(STAGE).fragHead);
+    expect(rippleMaterial().fragHead).toBe(rippleMaterial(STAGE).fragHead);
+    expect(rippleMaterial().fragColor).toContain(`float e = ${nearerPlatformGlsl('RIPPLE_PLATFORMS', 'rp')};`);
+    expect(arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0).fragColor)
+      .toContain(`float re = ${nearerPlatformGlsl('ARENA_PLATFORMS', 'rp')};`);
+  });
+
+  it("builds them on the build's stage (ArenaContext.stage): the ripples round its platforms, a hall's floor and stage tops", () => {
+    const build = (kind: ArenaKind, part: typeof GROUND_PART) => {
+      const palette = arenaPalette(kind, defaultArenaColors(kind)), cells = groundCells(kind, palette, moved);
+      const tex = new THREE.DataTexture(cells.data, cells.w, cells.h);
+      const ctx: ArenaContext = { uniforms: createKitUniforms(), quality: 'medium', disposables: [tex], kind, colors: defaultArenaColors(kind),
+        stage: moved, palette, ground: { tex, min: new THREE.Vector2(cells.min[0], cells.min[1]), size: new THREE.Vector2(cells.w, cells.h) },
+        look: arenaLook(kind, palette, 12) };
+      return part.build(ctx)!;
+    };
+    const ripples = build('water', PLATFORM_PART).getObjectByName('platformRipples') as THREE.Mesh;
+    expect(frag(ripples.material as THREE.Material)).toContain(platformsGlsl('RIPPLE_PLATFORMS', moved));
+    const tops = build('gym', PLATFORM_PART).getObjectByName('platformTops') as THREE.Mesh;
+    expect(frag(tops.material as THREE.Material)).toContain(platformsGlsl('FLOOR_PLATFORMS', moved));
+    const floor = build('gym', GROUND_PART) as THREE.Mesh;
+    expect(frag(floor.material as THREE.Material)).toContain(platformsGlsl('FLOOR_PLATFORMS', moved));
+    const field = build('grass', GROUND_PART) as THREE.Mesh;
+    expect(frag(field.material as THREE.Material)).toContain(platformsGlsl('ARENA_PLATFORMS', moved));
+  });
+});

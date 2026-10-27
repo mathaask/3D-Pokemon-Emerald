@@ -9,7 +9,8 @@ import { SLOT, type SpriteAtlas } from '../spriteAtlas';
 import { SpriteField } from './spriteField';
 import { heights, inflateMax, type InflateParams } from './inflateMath';
 import { timeGpuFrames } from '../gpuTiming';
-import { XBR_GLSL } from './xbr.glsl';
+import { XBR_GLSL, XBR_BAKED_GLSL } from './xbr.glsl';
+import { XbrBake } from './xbrBake';
 import { xbrSample } from '../kit/upscale';
 
 export interface FieldSelfTest {
@@ -21,6 +22,9 @@ export interface FieldSelfTest {
   fixtureMaxErr: number;
   /** Median GPU ms of one field update over the live atlas (timer queries). */
   gpuMs: number;
+  /** The field's highest height (sprite px), inflateMax(field.params): the harness's parity tolerance grows with it
+   *  (half-float rounding), max(0.02, 0.003 · inflateMax). */
+  inflateMax: number;
 }
 
 /** Updates timed for gpuMs (median). */
@@ -107,26 +111,38 @@ function fixtureMaxErr(renderer: THREE.WebGLRenderer, like: SpriteField): number
   }
 }
 
+/** The atlas slots a field covers: slot rectangles in the atlas's layout (slot x, slot y, width, height) and how many. */
+export interface FieldSlots { rects: THREE.InstancedBufferAttribute; count: number }
+
 /**
  * Checks the field as the last frame left it against the CPU reference of the atlas as the last frame
- * left it (call between frames, after the field was updated), then the fixture, then times updates.
+ * left it (call between frames, after the field was updated), then the fixture, then times updates — over `slots`, the
+ * slots the field covers (default every used slot of the atlas: the overworld's; the battlers' field covers theirs).
  */
-export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): Promise<FieldSelfTest> {
+export async function fieldSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField,
+  slots: FieldSlots = { rects: atlas.slotRects, count: atlas.slotCount }): Promise<FieldSelfTest> {
   const { width: W, height: H } = atlas.target;
   if (field.target.width !== W || field.target.height !== H) throw new Error('self-test: the field and the atlas differ in size');
-  const count = atlas.slotCount;
+  const { rects, count } = slots;
   const rgba = readPixels(renderer, atlas.target, new Uint8Array(W * H * 4));
-  const maxErr = compareSlots(rgba, readField(renderer, field), W, H, atlas.slotRects, count, field.params);
+  const maxErr = compareSlots(rgba, readField(renderer, field), W, H, rects, count, field.params);
   const fixture = fixtureMaxErr(renderer, field);
   // (re-running the update over the unchanged atlas leaves the same field)
   const t = await timeGpuFrames(renderer.getContext() as WebGL2RenderingContext, TIMED_UPDATES,
-    () => field.update(renderer, atlas.target.texture, atlas.slotRects, count));
-  return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs };
+    () => field.update(renderer, atlas.target.texture, rects, count));
+  return { slots: count, maxErr, fixtureMaxErr: fixture, gpuMs: t.gpuMs, inflateMax: inflateMax(field.params) };
 }
 
 export interface XbrSelfTest {
   /** Max |GPU − CPU| (RGBA, 0..1) over the fixture's sample points. */
   maxErr: number;
+  /** The same with the decisions baked (XbrBake + xbrSampleBaked: the battlers'), over the points whose texel lies in
+   *  the fixture's rectangle (XBR_FIX_RECT: the bake covers only a slot's rectangle, as the battlers' — outside it, in
+   *  the opaque neighbour columns, the baked path reads no decisions; the live one sees the rectangle's edge there). */
+  bakedMaxErr: number;
+  /** Max |live − baked| (RGBA8 bytes) over those points: the baked decisions are the live shader's own (Phase 3 Task 5:
+   *  "line by line"), so the battlers' HD edges are byte for byte the live xBR's — the harness gates it at 0. */
+  bakedVsLive: number;
 }
 
 /** The actors' whole self-test: the field's, and the xBR shader's (`xbr`). */
@@ -136,7 +152,7 @@ export interface ActorSelfTest extends FieldSelfTest {
 
 /** The xBR fixture's size (texels), the sample grid over it (points per side) and the fixed blend half-width. */
 const XBR_FIX = 16;
-const XBR_POINTS = 64;
+export const XBR_POINTS = 64;
 const XBR_DELTA = 0.1;
 /** The fixture's sprite rectangle [x0, y0, x1, y1): columns 14-15 are an opaque neighbour no read may reach. */
 export const XBR_FIX_RECT: [number, number, number, number] = [0, 0, 14, XBR_FIX];
@@ -187,10 +203,25 @@ void main() {
 }
 `;
 
+const XBR_BAKED_FRAG = /* glsl */ `
+precision highp float;
+precision highp int;
+uniform sampler2D tFix;
+uniform sampler2D tBake;
+uniform vec4 uRect;
+out vec4 fragColor;
+${XBR_GLSL}
+${XBR_BAKED_GLSL}
+void main() {
+  fragColor = xbrSampleBaked(tFix, tBake, gl_FragCoord.xy * ${(XBR_FIX / XBR_POINTS).toFixed(4)}, uRect, ${XBR_DELTA.toFixed(2)});
+}
+`;
+
 /**
  * XBR_GLSL against xbrSample: the fixture as an RGBA8 texture, sampled through the shader at a 64×64 grid of
  * points ((i + 0.5) / 4 texels) into an RGBA8 target with delta 0.1, read back and compared with the CPU
- * reference at the same points (NaN-sticky max). Frees everything it made.
+ * reference at the same points (NaN-sticky max); then the same through the baked path (XbrBake over the fixture's
+ * rectangle, xbrSampleBaked) at the points inside it. Frees everything it made.
  */
 export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
   const src = xbrFixture();
@@ -201,48 +232,77 @@ export function xbrSelfTest(renderer: THREE.WebGLRenderer): XbrSelfTest {
   const target = new THREE.WebGLRenderTarget(XBR_POINTS, XBR_POINTS, {
     depthBuffer: false, generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
   });
-  const material = new THREE.RawShaderMaterial({
-    glslVersion: THREE.GLSL3, vertexShader: XBR_VERT, fragmentShader: XBR_FRAG,
-    uniforms: { tFix: { value: tex }, uRect: { value: new THREE.Vector4(...XBR_FIX_RECT) } },
-    depthTest: false, depthWrite: false,
-  });
+  const bake = new XbrBake(XBR_FIX, XBR_FIX);
+  // (the fixture's rectangle as one slot of the atlas layout: slot (0, 0), its width and height)
+  const slots = new THREE.InstancedBufferAttribute(new Float32Array([0, 0, XBR_FIX_RECT[2], XBR_FIX_RECT[3]]), 4);
   const quad = new THREE.PlaneGeometry(2, 2);
-  const mesh = new THREE.Mesh(quad, material);
-  mesh.frustumCulled = false;
-  const scene = new THREE.Scene().add(mesh);
+  const materials: THREE.RawShaderMaterial[] = [];
   const prev = renderer.getRenderTarget();
-  try {
+  // the fixture drawn through a fragment shader into the 64×64 target, read back
+  const draw = (fragmentShader: string, uniforms: Record<string, THREE.IUniform>): Uint8Array => {
+    const material = new THREE.RawShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader: XBR_VERT, fragmentShader, uniforms,
+      depthTest: false, depthWrite: false });
+    materials.push(material);
+    const mesh = new THREE.Mesh(quad, material);
+    mesh.frustumCulled = false;
     renderer.setRenderTarget(target);
-    renderer.render(scene, new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+    renderer.render(new THREE.Scene().add(mesh), new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
     renderer.setRenderTarget(prev);
-    const gpu = readPixels(renderer, target, new Uint8Array(XBR_POINTS * XBR_POINTS * 4));
-    let maxErr = 0;
-    for (let j = 0; j < XBR_POINTS; j++) {
-      for (let i = 0; i < XBR_POINTS; i++) {
-        const k = XBR_FIX / XBR_POINTS;
-        const want = xbrSample(src, XBR_FIX, XBR_FIX, (i + 0.5) * k, (j + 0.5) * k, XBR_DELTA, XBR_FIX_RECT);
-        for (let c = 0; c < 4; c++) maxErr = Math.max(maxErr, Math.abs(gpu[(j * XBR_POINTS + i) * 4 + c] / 255 - want[c]));
-      }
-    }
-    return { maxErr };
+    return readPixels(renderer, target, new Uint8Array(XBR_POINTS * XBR_POINTS * 4));
+  };
+  try {
+    const rect = new THREE.Vector4(...XBR_FIX_RECT);
+    const gpu = draw(XBR_FRAG, { tFix: { value: tex }, uRect: { value: rect } });
+    bake.update(renderer, tex, slots, 1);
+    const baked = draw(XBR_BAKED_FRAG, { tFix: { value: tex }, tBake: { value: bake.texture }, uRect: { value: rect } });
+    return xbrErrors(src, gpu, baked);
   } finally {
     renderer.setRenderTarget(prev);
     target.dispose();
-    material.dispose();
+    for (const m of materials) m.dispose();
     quad.dispose();
+    bake.dispose(true);
     tex.dispose();
   }
 }
 
-/** Both self-tests: the field's (as fieldSelfTest) and the xBR shader's. */
-export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): Promise<ActorSelfTest> {
-  const f = await fieldSelfTest(renderer, atlas, field);
+/**
+ * The xBR self-test's errors from its two read-backs (`gpu`: the live shader, `baked`: the baked path; RGBA8, the
+ * XBR_POINTS² sample grid over the fixture `src`): each against the CPU reference xbrSample at the same points (the baked
+ * one inside XBR_FIX_RECT only), and the two against each other there, in bytes (NaN-sticky maxima).
+ */
+export function xbrErrors(src: Uint32Array, gpu: Uint8Array, baked: Uint8Array): XbrSelfTest {
+  let maxErr = 0, bakedMaxErr = 0, bakedVsLive = 0;
+  const k = XBR_FIX / XBR_POINTS;
+  for (let j = 0; j < XBR_POINTS; j++) {
+    for (let i = 0; i < XBR_POINTS; i++) {
+      const x = (i + 0.5) * k, y = (j + 0.5) * k;
+      const want = xbrSample(src, XBR_FIX, XBR_FIX, x, y, XBR_DELTA, XBR_FIX_RECT);
+      const inside = x >= XBR_FIX_RECT[0] && x < XBR_FIX_RECT[2] && y >= XBR_FIX_RECT[1] && y < XBR_FIX_RECT[3];
+      for (let c = 0; c < 4; c++) {
+        const o = (j * XBR_POINTS + i) * 4 + c;
+        maxErr = Math.max(maxErr, Math.abs(gpu[o] / 255 - want[c]));
+        if (inside) {
+          bakedMaxErr = Math.max(bakedMaxErr, Math.abs(baked[o] / 255 - want[c]));
+          bakedVsLive = Math.max(bakedVsLive, Math.abs(baked[o] - gpu[o]));
+        }
+      }
+    }
+  }
+  return { maxErr, bakedMaxErr, bakedVsLive };
+}
+
+/** Both self-tests: the field's (as fieldSelfTest, over `slots`) and the xBR shader's. */
+export async function actorSelfTest(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField,
+  slots?: FieldSlots): Promise<ActorSelfTest> {
+  const f = await fieldSelfTest(renderer, atlas, field, slots);
   return { ...f, xbr: xbrSelfTest(renderer) };
 }
 
 /**
- * The field's used slot rows as a PNG data URL (2×, sprites upright): grey = height / inflateMax();
- * texels transparent in the atlas get a blue tint, so the silhouettes show.
+ * The field over the atlas's used slot rows as a PNG data URL (2×, sprites upright): grey = height / inflateMax();
+ * texels transparent in the atlas get a blue tint, so the silhouettes show. The battle's field covers only its battlers'
+ * slots (BattleView.fieldSlots): the atlas's other used slots (HUD, move effects) show black there, their silhouettes blue.
  */
 export function fieldDump(renderer: THREE.WebGLRenderer, atlas: SpriteAtlas, field: SpriteField): string {
   const { width: W, height: H } = field.target;

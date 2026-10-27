@@ -129,6 +129,43 @@ export class ScreenView {
     this.material.uniforms.uScreenRect.value.set(Math.floor(240 * scale), Math.floor(160 * scale));
   }
 
+  /**
+   * Compiles the view's programs in parallel, without drawing (compileAsync; Renderer's constructor): the blur pass for a
+   * render target (a scratch 1×1 one, as it draws into its 60×40 ones) and the screen quad for the current target (the
+   * canvas, as render() draws it). Resolves when they are ready.
+   */
+  compile(r: THREE.WebGLRenderer): Promise<void> {
+    const prev = r.getRenderTarget();
+    const target = new THREE.WebGLRenderTarget(1, 1);
+    let blur: Promise<unknown>;
+    try {
+      r.setRenderTarget(target);
+      blur = r.compileAsync(this.blurScene, this.camera);
+    } finally {
+      r.setRenderTarget(prev);
+      target.dispose();
+    }
+    return Promise.all([blur, r.compileAsync(this.scene, this.camera)]).then(() => undefined);
+  }
+
+  /**
+   * Compiles the view's programs without a frame of its own (Renderer.finishPrecompile): the blur pass into a scratch 1×1
+   * target (as it draws into its 60×40 ones) and the screen quad on the current target (the canvas, as render() draws it:
+   * a render target would compile another variant). Neither the backdrop nor the refresh cadence changes.
+   */
+  precompile(r: THREE.WebGLRenderer): void {
+    const prev = r.getRenderTarget();
+    const target = new THREE.WebGLRenderTarget(1, 1);
+    try {
+      r.setRenderTarget(target);
+      r.render(this.blurScene, this.camera);
+    } finally {
+      r.setRenderTarget(prev);
+      target.dispose();
+    }
+    r.render(this.scene, this.camera);
+  }
+
   render(r: THREE.WebGLRenderer): void {
     // Refresh the blurred backdrop every few frames (it changes slowly anyway).
     if (this.dirty && this.frame++ % 3 === 0) {

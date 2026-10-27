@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+import { aoPrepassMaterial } from '../src/render/aoPrepass';
 import {
   InflatedActors, ACTOR_GRID, LAMP_CEILING, SHADOW_PUSH, SHADE_GAIN, SHADE_STEP, MASK_GLSL, MAX_ACTORS, INST_UNIFORM_VECTORS,
-  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed,
+  INST_UNIFORMS_MIN_VERTEX_VECTORS, instanceUniformsFit, instanceUniformsFailed, BATTLE_VARIANT,
 } from '../src/render/actors/inflatedActors';
 import { heights, INFLATE } from '../src/render/actors/inflateMath';
 import { XBR_GLSL } from '../src/render/actors/xbr.glsl';
@@ -13,6 +14,95 @@ const spec = (x: number) => ({ footX: x, footY: 0, footZ: 3, width: 1, height: 2
 const make = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() });
 /** The attribute fallback (a device with too few vertex uniform vectors). */
 const makeAttributes = () => new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, false);
+/** The main material's shaders: its onBeforeCompile applied to three's standard shaders. */
+const patched = (a: InflatedActors) => {
+  const s = { vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+    uniforms: {} } as unknown as THREE.WebGLProgramParametersWithUniforms;
+  (a.mesh.material as THREE.MeshStandardMaterial).onBeforeCompile(s, null as unknown as THREE.WebGLRenderer);
+  return s;
+};
+
+describe('InflatedActors variants (battle)', () => {
+  it('a battle variant has its own program keys and full relief to the feet', () => {
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
+    expect((a.mesh.material as THREE.Material).customProgramCacheKey()).toBe('actor:inflated-battle:1:uniforms');
+    expect((a.mesh.customDepthMaterial as THREE.Material).customProgramCacheKey()).toBe('actor:inflated-battle-depth:1:uniforms');
+    expect(patched(a).vertexShader).toContain('float relief = 1.0;');
+  });
+  it('the overworld variant keeps its keys and its relief fade', () => {
+    const a = make();
+    expect((a.mesh.material as THREE.Material).customProgramCacheKey()).toBe('actor:inflated:1:uniforms');
+    expect(patched(a).vertexShader).toContain('smoothstep(0.15, 0.55, local.y)');
+  });
+  it('checks the uniform-array programs of the variant it is asked about', () => {
+    const failed = [{ cacheKey: 'x,actor:inflated-battle:1:uniforms', diagnostics: { runnable: false } }];
+    expect(instanceUniformsFailed(failed)).toBe(false);
+    expect(instanceUniformsFailed(failed, 'battle')).toBe(true);
+  });
+  it('samples the battle variant\'s HD edges through baked xBR decisions (tXbr), main and twin; the overworld\'s per fragment', () => {
+    const bake = new THREE.Texture();
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT, bake);
+    const s = patched(a), depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial;
+    for (const f of [s.fragmentShader, depth.fragmentShader]) expect(f).toContain('t = xbrSampleBaked(tAtlas, tXbr, p, rect, delta);');
+    expect((s.uniforms as Record<string, THREE.IUniform>).tXbr.value).toBe(bake);
+    expect(depth.uniforms.tXbr.value).toBe(bake);
+    const o = patched(make());
+    expect(o.fragmentShader).not.toContain('xbrSampleBaked');
+    expect('tXbr' in o.uniforms).toBe(false);
+  });
+  it('keeps a zero-width actor finite (a battler growing from nothing at send-out): the battle shader guards its texel size', () => {
+    // (set() only copies finite spec numbers: a NaN could only arise in the shader, dividing by the slot's texel width)
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT);
+    expect(patched(a).vertexShader).toContain('float pxWorld = aSize.x / max((aUv.z - aUv.x) * uAtlasSize.x, 1.0);');
+  });
+});
+
+describe('InflatedActors in GTAO\'s depth/normal prepass (High)', () => {
+  const prepassOf = (a: InflatedActors) => aoPrepassMaterial(a.mesh) as THREE.ShaderMaterial;
+  it('draws its own prepass material there: the relief on the actors\' vertex path, alpha-tested, the relief\'s normal packed', () => {
+    const a = make(), ao = prepassOf(a);
+    expect(ao).toBeInstanceOf(THREE.ShaderMaterial);
+    expect(ao.allowOverride).toBe(false);
+    // the main pass's relief (rising along the ray to the eye), not the shadow twin's push
+    expect(ao.vertexShader).toContain('normalize(uEye - card) * (fieldH(auv, vRect) * pxWorld * relief)');
+    expect(ao.vertexShader).toContain('smoothstep(0.15, 0.55, local.y)');
+    expect(ao.vertexShader).not.toContain('mvPosition.z -=');
+    expect(ao.fragmentShader).toContain('if (actorSample(vAtlasUv, vRect).a < 0.5) discard;');
+    // the relief's own normal (its height's gradient, faded as the relief) on the card's frame — right and up, raised along
+    // the ray to the eye (a flat sprite faces level, not the eye) —, view space, as MeshNormalMaterial packs it
+    expect(ao.fragmentShader).toContain(`fieldGrad(vAtlasUv, vRect, ${SHADE_STEP}.0) * vRelief`);
+    expect(ao.fragmentShader).toContain('normalize(cross(uRight + f * g.x, vec3(0.0, 1.0, 0.0) + f * g.y))');
+    expect(ao.fragmentShader).not.toContain('actorNormal(normalize(vFacing)');
+    expect(ao.fragmentShader).toContain('* 0.5 + 0.5, 1.0);');
+    expect(ao.fragmentShader).not.toContain('shadeSlope(vAtlasUv');
+  });
+  it('shares the actors\' uniforms and faces (the shadow pass of its frame sets the twin\'s side from it)', () => {
+    const a = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, true, BATTLE_VARIANT,
+      new THREE.Texture());
+    const ao = prepassOf(a), depth = a.mesh.customDepthMaterial as THREE.ShaderMaterial, main = a.mesh.material as THREE.Material;
+    for (const k of ['tAtlas', 'tField', 'uRight', 'uEye', 'uAtlasSize', 'uSmooth', 'uInst', 'tXbr']) expect(ao.uniforms[k], k).toBe(depth.uniforms[k]);
+    expect(ao.fragmentShader).toContain('xbrSampleBaked');
+    expect(ao.vertexShader).toContain('float relief = 1.0;');
+    expect([ao.side, ao.shadowSide]).toEqual([main.side, main.shadowSide]);
+  });
+  it('has a program key per variant and instance-data path, and frees it with the actors', () => {
+    expect(prepassOf(make()).customProgramCacheKey()).toBe('actor:inflated-ao:1:uniforms');
+    expect(prepassOf(makeAttributes()).customProgramCacheKey()).toBe('actor:inflated-ao:1:attributes');
+    expect(prepassOf(makeAttributes()).vertexShader).toMatch(/attribute vec3 aFoot;\s*attribute vec4 aSize;\s*attribute vec4 aUv;/);
+    const b = new InflatedActors(new THREE.Texture(), new THREE.Texture(), { value: new THREE.Color() }, undefined, false, BATTLE_VARIANT);
+    expect(prepassOf(b).customProgramCacheKey()).toBe('actor:inflated-battle-ao:1:attributes');
+    const a = make(), freed = vi.fn();
+    prepassOf(a).addEventListener('dispose', freed);
+    a.dispose();
+    expect(freed).toHaveBeenCalledOnce();
+  });
+  it('counts a prepass program that did not link as the uniform array\'s failure (the actors then take the attributes)', () => {
+    const p = (key: string) => ({ cacheKey: `shader,1,${key}`, diagnostics: { runnable: false } });
+    expect(instanceUniformsFailed([p('actor:inflated-ao:1:uniforms')])).toBe(true);
+    expect(instanceUniformsFailed([p('actor:inflated-battle-ao:1:uniforms')], 'battle')).toBe(true);
+    expect(instanceUniformsFailed([p('actor:inflated-ao:1:attributes')])).toBe(false);
+  });
+});
 
 describe('InflatedActors', () => {
   it('draws one instanced 16x32 grid per actor, its instance data in a uniform array (no instance vertex buffer)', () => {
@@ -224,8 +314,51 @@ describe('InflatedActors', () => {
   });
 });
 
+/** Evaluates a GLSL expression of the cards' vertex shader in JS (vec components, mix: the subset those lines use). Only
+ *  arithmetic on the given names and mix() is accepted (the expression is our own shader's, checked before it runs). */
+function glslEval(expr: string, env: Record<string, unknown>): number {
+  const names = new Set([...Object.keys(env), 'mix']);
+  const ids = expr.match(/[A-Za-z_][A-Za-z_0-9]*/g) ?? [];
+  if (!/^[A-Za-z_0-9.+\-*/(), ]+$/.test(expr) || ids.some((id) => !names.has(id) && !/^[xyzw]$/.test(id))) {
+    throw new Error(`not a plain arithmetic GLSL expression: ${expr}`);
+  }
+  const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+  return new Function(...Object.keys(env), 'mix', `return ${expr};`)(...Object.values(env), mix) as number;
+}
+/** The arguments of a GLSL call `name(a, b, …)` in `src` (top-level commas). */
+function glslArgs(src: string, call: string): string[] {
+  const at = src.indexOf(call + '(');
+  if (at < 0) throw new Error(`no ${call}( in ${src}`);
+  const args: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of src.slice(at + call.length + 1)) {
+    if (ch === '(') depth++;
+    if (ch === ')' && depth-- === 0) break;
+    if (ch === ',' && depth === 0) { args.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  args.push(cur.trim());
+  return args;
+}
+
 describe('Billboards', () => {
   const card = (x: number, tint?: [number, number, number, number]) => ({ ...spec(x), tint });
+  it('lays a flat decal as the GBA draws it: its far edge (up the screen, −Z) samples the sprite\'s top row (v0)', () => {
+    const b = new Billboards({ target: { texture: new THREE.Texture() } });
+    for (const vs of [b.material.vertexShader, (b.mesh.customDepthMaterial as THREE.ShaderMaterial).vertexShader]) {
+      const flat = /if \(aSize\.w > 0\.5\) \{([^]*?)\} else \{/.exec(vs)![1];
+      // (the uv line of the flat branch, else the one both branches share)
+      const uvLine = /vUv = vec2\(.*\);/.exec(flat)?.[0] ?? /vUv = vec2\(.*\);/.exec(vs)![0];
+      const zExpr = glslArgs(flat, 'vec3')[2], vExpr = glslArgs(uvLine, 'vec2')[1];
+      const aUv = { x: 0, y: 0.75, z: 1, w: 0.25 }, aSize = { x: 1, y: 2, z: 0, w: 1 }; // v0 (top) 0.75, v1 (bottom) 0.25
+      const corner = (ly: number) => ({ z: glslEval(zExpr, { local: { x: 0, y: ly }, aSize, aUv }), v: glslEval(vExpr, { local: { x: 0, y: ly }, aSize, aUv }) });
+      const [a, c] = [corner(0), corner(1)];
+      const far = a.z < c.z ? a : c, near = a.z < c.z ? c : a;
+      expect(far.v).toBeCloseTo(aUv.y, 6);   // the sprite's top row
+      expect(near.v).toBeCloseTo(aUv.w, 6);  // its bottom row nearest the camera
+      expect(near.z - far.z).toBeCloseTo(aSize.y, 6);
+    }
+  });
   it('re-uploads only the instance attributes that changed', () => {
     const b = new Billboards({ target: { texture: new THREE.Texture() } });
     const g = b.mesh.geometry as THREE.InstancedBufferGeometry;

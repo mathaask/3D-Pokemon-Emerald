@@ -65,6 +65,28 @@ export class BattleTransitionFx {
     return this.progress;
   }
 
+  /** Compiles the effect's program in parallel, without drawing (compileAsync, for the current target: the canvas, as at a
+   *  battle's start — Renderer's constructor). Resolves when it is ready. */
+  compile(r: THREE.WebGLRenderer): Promise<void> {
+    return r.compileAsync(this.scene, this.camera).then(() => undefined);
+  }
+
+  /** Compiles the effect's program (Renderer.finishPrecompile): drawn once on the current target (the canvas, as at a
+   *  battle's start) at its first frame's progress, which draws nothing visible; the effect's state is left as it was. */
+  precompile(r: THREE.WebGLRenderer): void {
+    const u = this.material.uniforms.uProgress;
+    const was = u.value;
+    u.value = 0;
+    const auto = r.autoClear;
+    r.autoClear = false;
+    try {
+      r.render(this.scene, this.camera);
+    } finally {
+      r.autoClear = auto;
+      u.value = was;
+    }
+  }
+
   render(r: THREE.WebGLRenderer): void {
     if (this.progress <= 0) return;
     const auto = r.autoClear;
