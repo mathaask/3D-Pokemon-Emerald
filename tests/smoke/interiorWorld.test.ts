@@ -4,10 +4,11 @@
 //   npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/interiorWorld.test.ts
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import * as THREE from 'three';
 import { loadStaticMap } from './helpers/staticMap';
 import { MetatileAtlas } from '../../src/render/overworld/metatileAtlas';
 import { World, type WorldStyle } from '../../src/render/overworld/world';
-import { createWorldMaterials } from '../../src/render/overworld/materials';
+import { createHdWorldMaterials, createWorldMaterials } from '../../src/render/overworld/materials';
 import { createKitUniforms } from '../../src/render/kit/materials';
 import { gridEvents } from '../../src/render/kit/events';
 import { analyze } from '../../src/render/overworld/analyze';
@@ -17,7 +18,8 @@ import { FURNITURE_KINDS, type FurnitureKind } from '../../src/render/kit/tables
 
 const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
 const u = createKitUniforms();
-const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u);
+// (the view's: today's legacy materials, with their HD twins for the cells the interior kit leaves — Task 11)
+const world = new World(atlas, { ...createWorldMaterials(atlas.target.texture, u), hd: createHdWorldMaterials(atlas.target.texture, u) }, u);
 let warn: ReturnType<typeof vi.spyOn>;
 beforeAll(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
 afterAll(() => { warn.mockRestore(); world.dispose(); });
@@ -27,6 +29,8 @@ const build = (g: number, n: number, style: WorldStyle, interiorKit = true) => {
   world.build(s.grid, s.opts, { style, events: gridEvents(s.map.events, 0), quality: 'medium', mapKey: `${g}.${n}`, interiorKit });
   return s;
 };
+/** The world's legacy pixel-geometry meshes (World.addMesh: the ones carrying aGlow). */
+const legacyMeshes = (w: World) => w.group.children.filter((o): o is THREE.Mesh => (o as THREE.Mesh).isMesh && !!(o as THREE.Mesh).geometry.getAttribute('aGlow'));
 const report = (g: number, n: number, style: WorldStyle, interiorKit = true) => {
   build(g, n, style, interiorKit);
   return world.kitReport.map((r) => `${r.name}:${r.ok}`);
@@ -89,5 +93,15 @@ describe('interior kit in the World', () => {
     expect(chairs.map((p) => p.facing)).toEqual(['E', 'W', 'E', 'W']);
     for (const c of chairs) expect(c.foot.height).toBeLessThanOrEqual(WALKABLE_SEAT);
     expect(pieces.filter((p) => p.kind === 'table').map((p) => p.xy)).toEqual([[[3, 6], [4, 6], [3, 7], [4, 7]]]);
+  });
+
+  it('draws unknown interior cells with the HD legacy materials, everything else with today\'s', () => {
+    const mats = (g: number, n: number, style: WorldStyle) => { build(g, n, style); return legacyMeshes(world).map((m) => (m.material as THREE.Material).customProgramCacheKey()); };
+    const pc = mats(2, 2, 'modern');
+    expect(pc.length).toBeGreaterThan(0);
+    expect(pc.every((k) => k.endsWith('-hd') || k === 'world-water')).toBe(true);
+    expect(mats(2, 2, 'retro').some((k) => k.endsWith('-hd'))).toBe(false);
+    expect(mats(8, 1, 'modern').some((k) => k.endsWith('-hd'))).toBe(false);
+    expect(mats(0, 10, 'modern').some((k) => k.endsWith('-hd'))).toBe(false);
   });
 });

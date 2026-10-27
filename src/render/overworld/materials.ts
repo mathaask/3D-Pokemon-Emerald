@@ -1,8 +1,12 @@
 // World materials: lit pixel-art surfaces, alpha-tested cut-outs, glossy animated water, and
-// night-time window glow on building walls (shader injection into MeshStandardMaterial).
+// night-time window glow on building walls (shader injection into MeshStandardMaterial); their HD twins (xBR-smoothed
+// pixels) for the cells an in-scope Modern interior's kit leaves legacy.
 
 import * as THREE from 'three';
 import { WARM_GLOW_GLSL } from '../kit/materials';
+import { XBR_GLSL } from '../actors/xbr.glsl';
+import { afterChunk, glslFloat } from '../actors/glsl';
+import { CELL } from './metatileAtlas';
 
 export interface WorldUniforms {
   uNight: { value: number };
@@ -38,15 +42,58 @@ function injectWater(shader: THREE.WebGLProgramParametersWithUniforms, u: WorldU
       }`);
 }
 
-export function createWorldMaterials(atlas: THREE.Texture, u: WorldUniforms) {
+/**
+ * HD pixels (Phase 4: the cells an in-scope interior's kit leaves legacy): after `<map_fragment>`, the atlas colour is
+ * xBR-smoothed at the fragment's continuous texel position inside its metatile's 24×24 atlas cell (the padding
+ * replicates the edge texels, so a metatile's border reads as running on: no blend across it, no seam), blended over
+ * about one screen pixel as the inflated actors' HD edges. Only where the texel footprint is under one screen pixel
+ * (magnified: the pixel staircases show); minified, the plain mipmapped lookup stands. The derivatives stay outside
+ * the branch (uniform control flow). Transparent texels are black: a blend with them comes out premultiplied.
+ */
+function injectHd(shader: THREE.WebGLProgramParametersWithUniforms): void {
+  shader.fragmentShader = XBR_GLSL + afterChunk(shader.fragmentShader, 'map_fragment', `#ifdef USE_MAP
+  {
+    vec2 hdP = vMapUv * vec2(textureSize(map, 0));
+    vec2 hdW = fwidth(hdP);
+    float hdDelta = clamp(0.5 * fwidth(hdP.x + hdP.y), 0.02, 0.5);
+    if (max(hdW.x, hdW.y) < 1.0) {
+      vec2 hdCell = floor(hdP / ${glslFloat(CELL)}) * ${glslFloat(CELL)};
+      vec4 hd = xbrSample(map, hdP, vec4(hdCell, hdCell + ${glslFloat(CELL)}), hdDelta);
+      hd.rgb /= max(hd.a, 1e-4);
+      diffuseColor = vec4(diffuse, opacity) * hd;
+    }
+  }
+#endif`);
+}
+
+export interface WorldMaterialOptions {
+  /** HD pixels (injectHd): the legacy quads of the cells an in-scope Modern interior's kit leaves. Program keys
+   *  `world-opaque-hd`, `world-cutout-hd` (without: today's materials and keys). */
+  hd?: boolean;
+}
+
+export function createWorldMaterials(atlas: THREE.Texture, u: WorldUniforms, opts: WorldMaterialOptions = {}) {
+  const hd = opts.hd ?? false;
   const opaque = new THREE.MeshStandardMaterial({ map: atlas, vertexColors: true, roughness: 0.92, metalness: 0 });
-  opaque.onBeforeCompile = (s) => injectGlow(s, u);
-  opaque.customProgramCacheKey = () => 'world-opaque';
+  opaque.onBeforeCompile = (s) => { injectGlow(s, u); if (hd) injectHd(s); };
+  opaque.customProgramCacheKey = () => (hd ? 'world-opaque-hd' : 'world-opaque');
   const cutout = new THREE.MeshStandardMaterial({
     map: atlas, vertexColors: true, roughness: 0.9, metalness: 0, alphaTest: 0.5, side: THREE.DoubleSide,
   });
+  if (hd) {
+    cutout.onBeforeCompile = injectHd;
+    cutout.customProgramCacheKey = () => 'world-cutout-hd';
+  }
   const water = new THREE.MeshStandardMaterial({ map: atlas, vertexColors: true, roughness: 0.45, metalness: 0 });
   water.onBeforeCompile = (s) => injectWater(s, u);
   water.customProgramCacheKey = () => 'world-water';
   return { opaque, cutout, water };
+}
+
+/** The HD twins of the legacy opaque and cut-out materials (createWorldMaterials with `hd`; the water stays today's):
+ *  World draws the legacy quads with them where the interior kit ran (WorldMaterials.hd). */
+export function createHdWorldMaterials(atlas: THREE.Texture, u: WorldUniforms): { opaque: THREE.MeshStandardMaterial; cutout: THREE.MeshStandardMaterial } {
+  const m = createWorldMaterials(atlas, u, { hd: true });
+  m.water.dispose();
+  return { opaque: m.opaque, cutout: m.cutout };
 }

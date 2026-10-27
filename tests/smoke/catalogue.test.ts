@@ -11,7 +11,7 @@ import { RomReader } from '../../src/game/rom/reader';
 import { loadAllMaps } from '../../src/game/rom/maps';
 import { MetatileAtlas } from '../../src/render/overworld/metatileAtlas';
 import { World, type WorldStyle } from '../../src/render/overworld/world';
-import { createWorldMaterials } from '../../src/render/overworld/materials';
+import { createHdWorldMaterials, createWorldMaterials } from '../../src/render/overworld/materials';
 import { createKitUniforms } from '../../src/render/kit/materials';
 import { gridEvents } from '../../src/render/kit/events';
 import { meshesOf, programSignature, worldCatalogue } from '../../src/render/kit/catalogue';
@@ -21,8 +21,10 @@ describe('world program catalogue (drift guard)', () => {
   it('holds exactly the program variants the world draws on every map, in both styles, at every quality', () => {
     const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
     const u = createKitUniforms();
+    // (as OverworldView: the legacy materials with their HD twins, which World draws where the interior kit ran)
     const legacy = createWorldMaterials(atlas.target.texture, u);
-    const world = new World(atlas, legacy, u);
+    const legacyHd = createHdWorldMaterials(atlas.target.texture, u);
+    const world = new World(atlas, { ...legacy, hd: legacyHd }, u);
     // (a family failing on some map is the semantics test's business: quiet here)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const used = new Map<string, string>();
@@ -42,7 +44,7 @@ describe('world program catalogue (drift guard)', () => {
     warn.mockRestore();
     expect(maps.length).toBeGreaterThan(500);
 
-    const catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy, atlas: atlas.target.texture });
+    const catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy, legacyHd, atlas: atlas.target.texture });
     const meshes = meshesOf(catalogue.root);
     const have = new Set(meshes.map(programSignature));
     catalogue.dispose();

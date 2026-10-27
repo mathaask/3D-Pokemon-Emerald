@@ -19,7 +19,7 @@ import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
 import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
-import { createWorldMaterials } from './materials';
+import { createHdWorldMaterials, createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
@@ -144,7 +144,7 @@ export class OverworldView {
   };
 
   /** The legacy pixel-geometry materials (the World's; the program catalogue draws with them too). */
-  private worldMats: WorldMaterials;
+  private worldMats: Required<WorldMaterials>;
   /** The precompile (started once): what it compiles besides the actors, whether its frame was drawn. */
   private pre: PrecompileState | null = null;
   /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel, off the main thread), the frame
@@ -159,10 +159,13 @@ export class OverworldView {
   constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
     instanceUniforms = true) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
-    const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
+    // (with their HD twins: World draws the cells an in-scope Modern interior's kit leaves with them; the catalogue
+    // precompiles both)
+    const legacy = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
+    const mats: Required<WorldMaterials> = { ...legacy, hd: createHdWorldMaterials(this.atlas.target.texture, this.kitUniforms) };
     this.worldMats = mats;
-    this.opaqueMat = mats.opaque;
-    this.cutoutMat = mats.cutout;
+    this.opaqueMat = legacy.opaque;
+    this.cutoutMat = legacy.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
     this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms, instanceUniforms });
     this.scene.add(this.world.group);
@@ -300,7 +303,7 @@ export class OverworldView {
     // (an async body: a synchronous throw becomes the rejection)
     pre.compiled = (async () => {
       // the catalogue's kit materials pool apart: a build never takes them (their ids, the opaque draw order, stay)
-      pre.catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy: this.worldMats, atlas: this.atlas.target.texture });
+      pre.catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy: this.worldMats, legacyHd: this.worldMats.hd, atlas: this.atlas.target.texture });
       const target = new THREE.WebGLRenderTarget(1, 1);
       const prev = renderer.getRenderTarget();
       let ready: Promise<unknown>;

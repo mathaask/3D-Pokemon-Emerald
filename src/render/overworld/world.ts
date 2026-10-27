@@ -52,6 +52,9 @@ export interface WorldMaterials {
   opaque: THREE.Material;
   cutout: THREE.Material;
   water: THREE.Material;
+  /** The HD twins of opaque and cutout (materials.ts createHdWorldMaterials): the legacy quads of a build where the
+   *  interior kit ran (the cells it leaves: smooth-edged pixels). Unset: today's everywhere. */
+  hd?: Pick<WorldMaterials, 'opaque' | 'cutout'>;
 }
 
 interface QuadBatch {
@@ -258,8 +261,10 @@ export class World {
       baseMat.color.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace);
     }
 
-    this.addMesh(opaque, this.materials.opaque, true);
-    this.addMesh(cutout, this.materials.cutout, true);
+    // (an in-scope Modern interior: the cells the kit leaves in HD pixels; everything else as today)
+    const legacy = (this.interiorKitRan && this.materials.hd) || this.materials;
+    this.addMesh(opaque, legacy.opaque, true);
+    this.addMesh(cutout, legacy.cutout, true);
     this.addMesh(water, this.materials.water, false);
   }
 
