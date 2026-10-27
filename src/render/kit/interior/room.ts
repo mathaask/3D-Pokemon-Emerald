@@ -5,9 +5,12 @@
 // non-void cells [t, b] has a *back line*: its first room row. Rows t … backLine − 1 are the band (the back wall's art),
 // the rest is the room (inside). The 3D back wall's inner face stands RECESS north of the back line, so furniture drawn in
 // the wall rows (fridges, sinks, bookcases) stands in the recess without reaching the walkable row. Side and front walls
-// follow every boundary between room cells and the rest (void, band). A dividing wall drawn across a room (1–3 rows of
-// wall art with room on both sides: the Weather Institute, Rustboro's flats) is a band too: a front wall for the room
-// north of it, a back wall for the room south of it.
+// follow every boundary between room cells and the rest (void, band).
+//
+// Partitions (`RoomLayout.partition`, a subset of the band; their runs carry `partition: true`): a dividing wall drawn
+// across a room (1–3 rows of wall art with room on both sides: the Weather Institute, Rustboro's flats) and a wall-art
+// strip standing in the room (a north–south partition: Dewford Hall, Wanda's house). Their runs follow the partition
+// cells' own outline (no recess), so the shell can build them as half-height partitions with thickness.
 //
 // Lines are in grid units: world x for E/W runs, world z at floor height 0 for N/S runs (the builder adds `floorY`).
 
@@ -21,8 +24,9 @@ export const WALL_H = 2.6;     // wall height over the room floor
 export const WALL_T = 0.3;     // wall thickness (outwards)
 export const BAND_MAX = 3;     // at most this many wall-art rows under the void
 export type WallDir = 'N' | 'E' | 'S' | 'W';   // the side of the room the wall closes (N = back wall, looks south)
-/** A straight wall: its inner face on `line` (world z for N/S, world x for E/W), from `from` to `to` along the other axis. */
-export interface WallRun { dir: WallDir; line: number; from: number; to: number; floorY: number }
+/** A straight wall: its inner face on `line` (world z for N/S, world x for E/W), from `from` to `to` along the other axis.
+ *  `partition`: the face of a partition (a dividing wall in the room), present only then. */
+export interface WallRun { dir: WallDir; line: number; from: number; to: number; floorY: number; partition?: true }
 /** Wall art on a back wall: columns [x0, x1), art rows row0..row1 (0 = the band's top) of a band `rows` tall. */
 export interface WallFeature { kind: 'window' | 'clock' | 'decor'; x0: number; x1: number; row0: number; row1: number; rows: number; cells: number[] }
 /** An exit's opening in the wall of direction `dir`: on its run's `line`, from `from` to `to` along the run. */
@@ -30,28 +34,63 @@ export interface DoorGap { dir: WallDir; line: number; from: number; to: number 
 export interface RoomLayout {
   rooms: number;
   inside: Uint8Array;    // per analysis cell: room floor area (walkable, furniture, stairs, mats)
-  band: Uint8Array;      // per cell: back-wall art (non-void, above the back line)
+  band: Uint8Array;      // per cell: back-wall art (non-void, above the back line), partitions included
+  partition: Uint8Array; // per cell: a partition's cell (a subset of `band`)
   backLine: Int32Array;  // per column (x − a.minX): grid row of the first room row of its northernmost room; −1 none
   runs: WallRun[]; features: WallFeature[]; doors: DoorGap[];
   floorTile: number;     // the most common walkable floor metatile (boards / tiles / carpet)
 }
 
+/** The layout's rules, each switchable for the mutation check (tests/smoke/interiorRooms.test.ts: switching any one off
+ *  changes a pinned map). Test seam only: the app never switches them; a layout already memoised is not rebuilt. */
+export const ROOM_RULES = {
+  /** A column deeper than the mode takes the mode when its extra rows are furniture (F8). */
+  furnitureMode: true,
+  /** The mode is voted by the columns whose band is plain wall art. */
+  plainVote: true,
+  /** Only each column's northernmost segment in its room votes; the others take mode 0. */
+  firstSegment: true,
+  /** Walkable furniture tops (a plant's leaves over the wall rows) are no room row. */
+  furnitureTops: true,
+  /** Wall art left in the room (dividing walls, north–south strips) is partitions. */
+  partitions: true,
+  /** A top row's E/W run reaches into the recess only when no room lies beside it there. */
+  corner: true,
+};
+
 const FURNITURE = new Set<InteriorId>(FURNITURE_KINDS);
 const DIR_ORDER: Record<WallDir, number> = { N: 0, E: 1, S: 2, W: 3 };
+const DIRS: readonly WallDir[] = ['N', 'E', 'S', 'W'];
 
-/** Per feature: the z of the back wall it hangs on (its column's back line − RECESS). */
+/** Per feature: the z of the wall it hangs on (by reference: a copied feature falls back in `windowRect`). */
 const featureZ = new WeakMap<WallFeature, number>();
-const memo = new WeakMap<MapAnalysis, RoomLayout>();
+const memo = new WeakMap<MapAnalysis, { ids: readonly (InteriorId | null)[]; warps: readonly GridWarp[]; L: RoomLayout }>();
 
-/** Room material: non-void, or a block of metatile 0x3FF the classifier reads as the border (`real3ff`: Sootopolis'
- *  houses floor parts of their rooms with it). */
+/** Room material: an in-map cell (a map whose border is no void, the Department Store's rooftop, ends at its edge)
+ *  that is non-void, or a block of metatile 0x3FF the classifier reads as the border (`real3ff`: Sootopolis' houses
+ *  floor parts of their rooms with it). */
 function nonVoid(a: MapAnalysis, i: number): boolean {
+  const m = a.opts.margin, x = a.cellX(i), y = a.cellY(i);
+  if (x < a.minX + m || y < a.minY + m || x >= a.maxX - m || y >= a.maxY - m) return false;
   return a.kind[i] !== K.Void || a.real3ff[i] > 0;
 }
 
 /** Walkable: room material the game lets the player stand on. */
 function walkable(a: MapAnalysis, i: number): boolean {
   return a.kind[i] !== K.Void ? a.col[i] === 0 : a.real3ff[i] === 1;
+}
+
+/** Walkable and not a piece of furniture's top that the game lets one stand on (a plant's leaves drawn over the wall
+ *  rows, out of reach behind its pot); stairs are room (they open an alcove). */
+function standable(a: MapAnalysis, ids: readonly (InteriorId | null)[], i: number): boolean {
+  const id = ids[i];
+  return walkable(a, i) && !(ROOM_RULES.furnitureTops && id != null && FURNITURE.has(id) && id !== 'stairsUp' && id !== 'stairsDown');
+}
+
+/** Wall art: a blocked cell with a wall-part id. */
+function isArt(a: MapAnalysis, ids: readonly (InteriorId | null)[], i: number): boolean {
+  const id = ids[i];
+  return !walkable(a, i) && (id === 'wall' || id === 'window' || id === 'clock' || id === 'decor');
 }
 
 /** Wall art's feature kind for a band cell's id: window / clock / decor; unknown cells (null, `legacy`) are decals too
@@ -62,47 +101,45 @@ function featureKind(id: InteriorId | null): WallFeature['kind'] | null {
   return null;
 }
 
-/** A unit boundary edge of inside cell (x, y) towards `dir` (the run it needs), or null when the neighbour is room. */
-function edgeOf(a: MapAnalysis, inside: Uint8Array, band: Uint8Array, bl: Int32Array, x: number, y: number, dir: WallDir): { line: number; from: number; to: number } | null {
+interface Edge { line: number; from: number; to: number; partition: boolean }
+/** A unit boundary edge of inside cell (x, y) towards `dir` (the run it needs), or null when the neighbour is room.
+ *  `bl`: per cell, its segment's back line (for band cells: of the room rows below them). */
+function edgeOf(a: MapAnalysis, inside: Uint8Array, band: Uint8Array, part: Uint8Array, bl: Int32Array, x: number, y: number, dir: WallDir): Edge | null {
   const dx = dir === 'E' ? 1 : dir === 'W' ? -1 : 0, dy = dir === 'S' ? 1 : dir === 'N' ? -1 : 0;
   const nx = x + dx, ny = y + dy;
   const n = a.inside(nx, ny) ? a.idx(nx, ny) : -1;
   if (n >= 0 && inside[n]) return null;
-  if (dir === 'N') return { line: y - RECESS, from: x, to: x + 1 };
-  if (dir === 'S') return { line: y + 1, from: x, to: x + 1 };
+  const partition = n >= 0 && part[n] === 1;
+  // a partition's faces follow its cells' outline; the back wall stands in the recess
+  if (dir === 'N') return { line: partition ? y : y - RECESS, from: x, to: x + 1, partition };
+  if (dir === 'S') return { line: y + 1, from: x, to: x + 1, partition };
   const i = a.idx(x, y);
-  // the room's top row reaches back into the recess (unless room lies there beside it: its own wall closes the corner);
-  // beside band cells the run ends at the band's own back wall
+  // the room's top row reaches back into the recess under a back wall (unless room lies there beside it: its own wall
+  // closes the corner); beside a back wall's band the run ends at that band's own back wall
+  const up = a.inside(x, y - 1) ? a.idx(x, y - 1) : -1;
   const diag = a.inside(nx, y - 1) ? a.idx(nx, y - 1) : -1;
-  const from = y === bl[i] && !(diag >= 0 && inside[diag]) ? y - RECESS : y;
-  const to = n >= 0 && band[n] && y + 1 === bl[n] ? bl[n] - RECESS : y + 1;
-  return { line: dir === 'E' ? x + 1 : x, from, to };
+  const recess = y === bl[i] && !(up >= 0 && part[up]) && !(ROOM_RULES.corner && diag >= 0 && inside[diag]);
+  const to = n >= 0 && band[n] && !partition && y + 1 === bl[n] ? bl[n] - RECESS : y + 1;
+  return { line: dir === 'E' ? x + 1 : x, from: recess ? y - RECESS : y, to, partition };
 }
 
-/** Walkable and not a piece of furniture's top that the game lets one stand on (a plant's leaves drawn over the wall
- *  rows, out of reach behind its pot); stairs are room (they open an alcove). */
-function standable(a: MapAnalysis, ids: readonly (InteriorId | null)[], i: number): boolean {
-  const id = ids[i];
-  return walkable(a, i) && !(id != null && FURNITURE.has(id) && id !== 'stairsUp' && id !== 'stairsDown');
-}
-
-const DIRS: readonly WallDir[] = ['N', 'E', 'S', 'W'];
-
-/** Merges collinear adjacent spans (same dir and line, and floorY when present): sorted by dir, from, line. */
-function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: number; floorY?: number }>(spans: T[]): T[] {
-  spans.sort((p, q) => DIR_ORDER[p.dir] - DIR_ORDER[q.dir] || p.line - q.line || (p.floorY ?? 0) - (q.floorY ?? 0) || p.from - q.from);
+/** Merges collinear adjacent spans (same dir, line, floorY and partition flag): sorted by dir, from, line. */
+function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: number; floorY?: number; partition?: true }>(spans: T[]): T[] {
+  const same = (p: T, q: T) => p.dir === q.dir && p.line === q.line && p.floorY === q.floorY && p.partition === q.partition;
+  spans.sort((p, q) => DIR_ORDER[p.dir] - DIR_ORDER[q.dir] || p.line - q.line || (p.floorY ?? 0) - (q.floorY ?? 0)
+    || Number(p.partition ?? 0) - Number(q.partition ?? 0) || p.from - q.from);
   const out: T[] = [];
   for (const s of spans) {
     const last = out[out.length - 1];
-    if (last && last.dir === s.dir && last.line === s.line && last.floorY === s.floorY && s.from <= last.to) {
-      last.to = Math.max(last.to, s.to);
-    } else out.push({ ...s });
+    if (last && same(last, s) && s.from <= last.to) last.to = Math.max(last.to, s.to);
+    else out.push({ ...s });
   }
   return out.sort((p, q) => DIR_ORDER[p.dir] - DIR_ORDER[q.dir] || p.from - q.from || p.line - q.line);
 }
 
 /**
- * The room layout of an in-scope interior (memoised per analysis: `ids` and `warps` are the analysis' own).
+ * The room layout of an in-scope interior (memoised per analysis, ids and warps: pass the build's own `warps` from every
+ * caller, or the layout is rebuilt).
  * Per column, each maximal non-void segment [t, b]: its back line is the first walkable row in [t, min(b, t + BAND_MAX)]
  * (a walkable furniture cell other than stairs does not count: a plant's leaves drawn over the wall rows),
  * else t + the room's mode band height (a room = a 4-connected component of non-void cells; the mode is taken over the
@@ -110,11 +147,13 @@ function mergeSpans<T extends { dir: WallDir; line: number; from: number; to: nu
  * window has mode 0: all room). A column whose band is deeper than its room's mode takes the mode when every extra row
  * (below the mode) carries a furniture id (a bookcase drawn in and below the wall rows stands on the floor); otherwise
  * (wall art, unknown) it keeps its own back line (the back wall steps forward there). A segment below a void gap inside
- * its room (not its column's northernmost) takes mode 0: only wall art above its first room row is band.
+ * its room (not its column's northernmost) takes mode 0: only wall art above its first room row is band. Then the
+ * partitions (see the header).
  */
 export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], warps: readonly GridWarp[]): RoomLayout {
   const hit = memo.get(a);
-  if (hit) return hit;
+  if (hit && hit.ids === ids && hit.warps === warps) return hit.L;
+  const R = ROOM_RULES;
   const { N, GW, minX, minY, maxX, maxY } = a;
 
   // rooms: 4-connected components of non-void cells
@@ -137,7 +176,6 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     }
   }
 
-  const roomRow = (i: number) => standable(a, ids, i);
   // column segments and their own back lines (−1: no room row in the window)
   interface Seg { x: number; t: number; b: number; room: number; own: number; bl: number; first: boolean }
   const segs: Seg[] = [];
@@ -151,9 +189,9 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
       const b = y;
       y++;
       let own = -1;
-      for (let r = t; r <= Math.min(b, t + BAND_MAX); r++) if (roomRow(a.idx(x, r))) { own = r; break; }
+      for (let r = t; r <= Math.min(b, t + BAND_MAX); r++) if (standable(a, ids, a.idx(x, r))) { own = r; break; }
       const r = room[a.idx(x, t)];
-      segs.push({ x, t, b, room: r, own, bl: -1, first: !seen.has(r) });
+      segs.push({ x, t, b, room: r, own, bl: -1, first: !R.firstSegment || !seen.has(r) });
       seen.add(r);
     }
   }
@@ -172,50 +210,25 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
       return best;
     });
   };
-  const plainMode = votesOf(plain), anyMode = votesOf(() => true);
-  const mode = plainMode.map((m, r) => (m >= 0 ? m : anyMode[r]));
+  const plainMode = R.plainVote ? votesOf(plain) : [], anyMode = votesOf(() => true);
+  const mode = anyMode.map((m, r) => (plainMode[r] >= 0 ? plainMode[r] : m));
   for (const s of segs) {
     // a segment under a void gap has no back wall of its own: its band is only the wall art above its first room row
     const md = s.first ? mode[s.room] : 0;
     if (s.own < 0) s.bl = Math.min(s.t + Math.max(md, 0), s.b + 1);
-    else if (md >= 0 && s.own - s.t > md) {
+    else if (R.furnitureMode && md >= 0 && s.own - s.t > md) {
       let furniture = true;
       for (let r = s.t + md; r < s.own && furniture; r++) furniture = isFurniture(s.x, r);
       s.bl = furniture ? s.t + md : s.own;
     } else s.bl = s.own;
   }
 
-  // A dividing wall across a room (the Weather Institute's): a run of at most BAND_MAX wall-art rows below room rows with
-  // more of the segment after it is a band of its own: the room above gets its front wall there, the room below its
-  // back wall (pillars and other ids in the dividing wall stay room: the wall stops beside them).
-  const art = (x: number, y: number) => {
-    const i = a.idx(x, y), id = ids[i];
-    return !walkable(a, i) && (id === 'wall' || id === 'window' || id === 'clock' || id === 'decor');
-  };
-  /** A sub-segment: band rows t … bl − 1, room rows bl … b. */
-  interface Sub { x: number; t: number; bl: number; b: number }
-  const subs: Sub[] = [];
-  for (const s of segs) {
-    let cur: Sub = { x: s.x, t: s.t, bl: s.bl, b: s.b };
-    for (let y = s.bl; y <= s.b; y++) {
-      if (!art(s.x, y)) continue;
-      let e = y;
-      while (e + 1 <= s.b && art(s.x, e + 1)) e++;
-      if (e - y + 1 <= BAND_MAX && e < s.b) {
-        if (y === cur.bl) cur.bl = e + 1;     // the band itself runs on: its back line moves down
-        else { cur.b = y - 1; subs.push(cur); cur = { x: s.x, t: y, bl: e + 1, b: s.b }; }
-      }
-      y = e;
-    }
-    subs.push(cur);
-  }
-
-  const inside = new Uint8Array(N), band = new Uint8Array(N);
-  const bl = new Int32Array(N).fill(-1);       // per cell: its (sub-)segment's back line (−1: it has no room row)
-  const top = new Int32Array(N).fill(-1);      // per cell: its (sub-)segment's top row
-  const bot = new Int32Array(N).fill(-1);      // per cell: its (sub-)segment's bottom row
+  const inside = new Uint8Array(N), band = new Uint8Array(N), part = new Uint8Array(N);
+  const bl = new Int32Array(N).fill(-1);       // per cell: its segment's back line (−1: it has no room row)
+  const top = new Int32Array(N).fill(-1);      // per cell: its segment's (a partition cell: its partition's) top row
+  const bot = new Int32Array(N).fill(-1);      // per cell: its segment's (a partition cell: its partition's) bottom row
   const backLine = new Int32Array(GW).fill(-1);
-  for (const s of subs) {
+  for (const s of segs) {
     for (let y = s.t; y <= s.b; y++) {
       const i = a.idx(s.x, y);
       bl[i] = s.bl <= s.b ? s.bl : -1;
@@ -223,6 +236,23 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
       if (y < s.bl) band[i] = 1; else inside[i] = 1;
     }
     if (s.bl <= s.b && backLine[s.x - minX] < 0) backLine[s.x - minX] = s.bl;
+  }
+  // Partitions: wall art left in the room, a dividing wall drawn across it (1–3 rows with room on both sides: the
+  // Weather Institute, Rustboro's flats) or a north–south strip (Dewford Hall, Wanda's house). Pillars and other ids
+  // in a dividing wall stay room: the wall stops beside them. Per column, a partition's cells know its own rows.
+  if (R.partitions) {
+    for (let x = minX; x < maxX; x++) {
+      for (let y = minY; y < maxY; y++) {
+        if (!inside[a.idx(x, y)] || !isArt(a, ids, a.idx(x, y))) continue;
+        let e = y;
+        while (e + 1 < maxY && inside[a.idx(x, e + 1)] && isArt(a, ids, a.idx(x, e + 1))) e++;
+        for (let r = y; r <= e; r++) {
+          const i = a.idx(x, r);
+          inside[i] = 0; band[i] = 1; part[i] = 1; bl[i] = -1; top[i] = y; bot[i] = e;
+        }
+        y = e;
+      }
+    }
   }
 
   // each room's floor height: the mode of its walkable floor cells' heights
@@ -243,8 +273,11 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     if (!inside[i]) continue;
     const x = a.cellX(i), y = a.cellY(i);
     for (const dir of DIRS) {
-      const e = edgeOf(a, inside, band, bl, x, y, dir);
-      if (e) edges.push({ dir, ...e, floorY: floorY[room[i]] });
+      const e = edgeOf(a, inside, band, part, bl, x, y, dir);
+      if (!e) continue;
+      const run: WallRun = { dir, line: e.line, from: e.from, to: e.to, floorY: floorY[room[i]] };
+      if (e.partition) run.partition = true;
+      edges.push(run);
     }
   }
   const runs = mergeSpans(edges);
@@ -279,8 +312,10 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
         prev.y = y;
       } else {
         const f: WallFeature = { kind, x0, x1: x, row0: row, row1: row, rows, cells };
+        // the wall it hangs on: the back wall in the recess, a dividing wall's south face
         const c = a.idx(Math.min(x - 1, Math.floor((x0 + x) / 2)), y);
-        if (bl[c] >= 0) featureZ.set(f, bl[c] - RECESS);
+        if (part[c]) featureZ.set(f, bot[c] + 1);
+        else if (bl[c] >= 0) featureZ.set(f, bl[c] - RECESS);
         features.push(f);
         open.set(key, { f, y });
       }
@@ -318,15 +353,18 @@ export function roomLayout(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   };
   const floorTile = floorCount.size ? mostCommon(floorCount) : mostCommon(anyCount);
 
-  const L: RoomLayout = { rooms, inside, band, backLine, runs, features, doors, floorTile };
-  memo.set(a, L);
+  const L: RoomLayout = { rooms, inside, band, partition: part, backLine, runs, features, doors, floorTile };
+  memo.set(a, { ids, warps, L });
   return L;
 }
 
-/** Invariant findings (empty = sound): a run crossing a walkable cell (furniture tops one can stand on aside, as the
- *  back line reads them; the ids are `interiorIds(a)`), an inside boundary edge without a run, a run
- *  with from ≥ to, a door not on a run of its own direction and line. */
-export function checkRoomLayout(a: MapAnalysis, L: RoomLayout): string[] {
+/** Invariant findings (empty = sound); the ids are `interiorIds(a)`:
+ *  - runs: from ≥ to; a wall's body over a cell one can stand on (furniture tops aside, as the back line reads them);
+ *    a boundary edge of the room without a run; a door not on a run of its own direction and line;
+ *  - cells: a cell one can stand on that is not room; wall art left in the room; a back-wall band cell with room above
+ *    it (only a partition's may have); a back-wall band deeper than BAND_MAX;
+ *  - a window feature whose glass is on no N run; with `warps`: an exit mat in the room with no door on its edge. */
+export function checkRoomLayout(a: MapAnalysis, L: RoomLayout, warps?: readonly GridWarp[]): string[] {
   const out: string[] = [];
   const ids = interiorIds(a);
   const fmt = (r: { dir: WallDir; line: number; from: number; to: number }) => `${r.dir} ${r.line} [${r.from}, ${r.to})`;
@@ -344,44 +382,73 @@ export function checkRoomLayout(a: MapAnalysis, L: RoomLayout): string[] {
   }
   const covered = (dir: WallDir, line: number, from: number, to: number) =>
     L.runs.some((r) => r.dir === dir && r.line === line && r.from <= from && to <= r.to);
-  // per cell, its segment's back line (the run ends depend on it)
+  // per cell, its segment's back line (the run ends depend on it): an inside cell's is the first room row of its run of
+  // room cells, a band cell's that of the room cells under it
   const bl = new Int32Array(a.N).fill(-1);
   for (let x = a.minX; x < a.maxX; x++) {
     let cur = -1;
     for (let y = a.minY; y < a.maxY; y++) {
       const i = a.idx(x, y);
       if (!L.inside[i]) { cur = -1; continue; }
-      if (L.inside[i] && cur < 0) cur = y;
-      if (L.inside[i]) bl[i] = cur;
+      if (cur < 0) cur = y;
+      bl[i] = cur;
     }
     for (let y = a.maxY - 1, nb = -1; y >= a.minY; y--) {
       const i = a.idx(x, y);
       if (L.inside[i]) nb = bl[i];
-      else if (L.band[i]) bl[i] = nb;
+      else if (L.band[i] && !L.partition[i]) bl[i] = nb;
       else nb = -1;
     }
   }
   for (let i = 0; i < a.N; i++) {
-    if (!L.inside[i]) continue;
     const x = a.cellX(i), y = a.cellY(i);
+    if (!L.inside[i]) {
+      if (standable(a, ids, i)) out.push(`walkable cell (${x}, ${y}) not in the room`);
+      continue;
+    }
+    if (isArt(a, ids, i)) out.push(`wall art (${x}, ${y}) left in the room`);
     for (const dir of DIRS) {
-      const e = edgeOf(a, L.inside, L.band, bl, x, y, dir);
+      const e = edgeOf(a, L.inside, L.band, L.partition, bl, x, y, dir);
       if (e && !covered(dir, e.line, e.from, e.to)) out.push(`edge ${dir} of (${x}, ${y}) without a run`);
     }
   }
+  // the back wall's band hangs from the void: band or void above it, at most BAND_MAX rows
+  for (let x = a.minX; x < a.maxX; x++) {
+    let depth = 0;
+    for (let y = a.minY; y < a.maxY; y++) {
+      const i = a.idx(x, y);
+      if (!L.band[i] || L.partition[i]) { depth = 0; continue; }
+      if (depth === 0 && y > a.minY && L.inside[a.idx(x, y - 1)]) out.push(`band cell (${x}, ${y}) under room`);
+      if (++depth === BAND_MAX + 1) out.push(`band at (${x}, ${y}) deeper than ${BAND_MAX}`);
+    }
+  }
   for (const d of L.doors) if (!covered(d.dir, d.line, d.from, d.to)) out.push(`door ${fmt(d)} not on a run`);
+  for (const f of L.features) {
+    if (f.kind !== 'window') continue;
+    const w = windowRect(L, f);
+    if (!L.runs.some((r) => r.dir === 'N' && r.line === w.z && r.from <= w.x0 && w.x1 <= r.to)) out.push(`window at ${f.x0}…${f.x1} on no N run`);
+  }
+  for (const w of warps ?? []) {
+    if (!a.inside(w.x, w.y)) continue;
+    const i = a.idx(w.x, w.y);
+    if (ids[i] !== 'mat' || !L.inside[i]) continue;
+    const onDoor = L.doors.some((d) => (d.dir === 'N' || d.dir === 'S'
+      ? d.from <= w.x && w.x + 1 <= d.to && (d.line === w.y + 1 || d.line === w.y - RECESS)
+      : d.from <= w.y && w.y + 1 <= d.to && (d.line === w.x || d.line === w.x + 1)));
+    if (!onDoor) out.push(`exit mat (${w.x}, ${w.y}) without a door`);
+  }
   return out;
 }
 
 /** A window feature's glass rectangle on its back wall (shared by the shell's window and the floor family's shaft):
  *  x centred on the feature, width x1 − x0 − 0.3; its art rows stretched over 0.2 … WALL_H − 0.3:
- *  y0 = 0.2 + (row0 / rows)·(WALL_H − 0.5), y1 = 0.2 + ((row1 + 1) / rows)·(WALL_H − 0.5); z = the N run's line there. */
+ *  y0 = 0.2 + (row0 / rows)·(WALL_H − 0.5), y1 = 0.2 + ((row1 + 1) / rows)·(WALL_H − 0.5); z = the N run's line there.
+ *  Pass the feature itself (z is kept by reference); a copy falls back to the northernmost N run over its centre. */
 export function windowRect(L: RoomLayout, f: WallFeature): { x0: number; x1: number; y0: number; y1: number; z: number } {
   const cx = (f.x0 + f.x1) / 2, hw = (f.x1 - f.x0 - 0.3) / 2;
   const span = WALL_H - 0.5;
   let z = featureZ.get(f);
   if (z === undefined) {
-    // a feature not made by roomLayout: the northernmost N run over its centre
     const r = L.runs.filter((q) => q.dir === 'N' && q.from <= cx && cx < q.to).sort((p, q) => p.line - q.line)[0];
     z = r ? r.line : 0;
   }

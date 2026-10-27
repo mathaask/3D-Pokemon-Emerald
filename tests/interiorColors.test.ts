@@ -34,6 +34,32 @@ describe('part colours', () => {
     const c = partColors(plainInfo, [0x231]);            // one colour only
     expect(c.second).toEqual(c.main); expect(c.accent).toEqual(c.main); expect(c.dark).toEqual(scale(c.main, 0.5));
   });
+  it('takes an accent of 6 px or more, never a 5 px speck', () => {
+    const BLUE = c555(0, 0, 31);
+    const speck = (n: number) => {
+      const t = fakeInfo();
+      t.both.fill(BROWN, 0x240 * 256, 0x241 * 256);
+      t.both.fill(BLUE, 0x240 * 256, 0x240 * 256 + n);
+      return partColors(t, [0x240]);
+    };
+    expect(speck(5).accent).toEqual(bgr555ToSrgb(BROWN));   // (second = main: blue is no lit colour)
+    expect(speck(6).accent).toEqual(bgr555ToSrgb(BLUE));
+  });
+  it('breaks frequency ties by the lower BGR555 value and takes second among lit colours only', () => {
+    const tie = fakeInfo();
+    tie.both.fill(TAN, 0x241 * 256, 0x242 * 256);
+    tie.both.fill(RED, 0x241 * 256, 0x241 * 256 + 128);
+    const c = partColors(tie, [0x241]);
+    expect(c.main).toEqual(bgr555ToSrgb(RED));              // RED (0x109f) < TAN (0x431c), 128 px each
+    expect(c.second).toEqual(bgr555ToSrgb(TAN));
+    const dim = fakeInfo();
+    dim.both.fill(BROWN, 0x242 * 256, 0x243 * 256);
+    dim.both.fill(c555(5, 5, 5), 0x242 * 256, 0x242 * 256 + 150);   // the most frequent, but unlit
+    const d = partColors(dim, [0x242]);
+    expect(d.main).toEqual(bgr555ToSrgb(BROWN));
+    expect(d.second).toEqual(d.main);
+    expect(d.dark).toEqual(bgr555ToSrgb(c555(5, 5, 5)));
+  });
   it('reads the bottom layer when asked', () => {
     const two = fakeInfo();
     two.both.fill(RED, 0x232 * 256, 0x233 * 256);

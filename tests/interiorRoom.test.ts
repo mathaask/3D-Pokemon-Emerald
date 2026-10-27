@@ -122,15 +122,70 @@ describe('room layout', () => {
       ' ....M... ',
       '          ',
     ], { P: { mt: 0x210, blocked: true, id: 'legacy' } });
-    const L = roomLayout(a, ids, [{ x: 5, y: 8, dest: 'X' }]);
+    const warps = [{ x: 5, y: 8, dest: 'X' }];
+    const L = roomLayout(a, ids, warps);
     expect(L.rooms).toBe(1);
     expect(L.band[a.idx(1, 5)]).toBe(1); expect(L.band[a.idx(7, 6)]).toBe(1);
+    expect(L.partition[a.idx(1, 5)]).toBe(1); expect(L.partition[a.idx(1, 2)]).toBe(0);
     expect(L.inside[a.idx(3, 3)]).toBe(1);          // the pillar is no back wall
     expect(L.inside[a.idx(3, 5)]).toBe(1);          // nor a dividing wall
-    expect(runs(L, 'S').map((r) => [r.line, r.from, r.to])).toEqual([[5, 1, 3], [9, 1, 9], [5, 6, 9]]);   // by from, then line
-    expect(runs(L, 'N').map((r) => [r.line, r.from, r.to])).toEqual([[3 - RECESS, 1, 9], [7 - RECESS, 1, 3], [7 - RECESS, 6, 9]]);
-    expect(runs(L, 'E')).toContainEqual({ dir: 'E', line: 6, from: 5, to: 7 - RECESS, floorY: 0 });   // the opening's east side
-    expect(runs(L, 'W')).toContainEqual({ dir: 'W', line: 3, from: 5, to: 7 - RECESS, floorY: 0 });   // the pillar's west side
+    // the partition's faces on its cells' outline: S 5 (the room north of it), N 7 (the room south of it, no recess)
+    expect(runs(L, 'S').map((r) => [r.line, r.from, r.to, !!r.partition])).toEqual([[5, 1, 3, true], [9, 1, 9, false], [5, 6, 9, true]]);
+    expect(runs(L, 'N').map((r) => [r.line, r.from, r.to, !!r.partition])).toEqual([[3 - RECESS, 1, 9, false], [7, 1, 3, true], [7, 6, 9, true]]);
+    expect(runs(L, 'E')).toContainEqual({ dir: 'E', line: 6, from: 5, to: 7, floorY: 0, partition: true });   // the opening's east side
+    expect(runs(L, 'W')).toContainEqual({ dir: 'W', line: 3, from: 5, to: 7, floorY: 0, partition: true });   // the pillar's west side
+    expect(checkRoomLayout(a, L, warps)).toEqual([]);
+  });
+  // Dewford Hall, Wanda's house, Rustboro's flats: a north–south partition standing in the room from the back wall.
+  it('walls a north–south partition on both sides', () => {
+    const { a, ids } = fakeInterior([
+      '          ',
+      ' WWWWWWWW ',
+      ' WWWWWWWW ',
+      ' ...W.... ',
+      ' ...W.... ',
+      ' ...W.... ',
+      ' ........ ',
+      ' ....M... ',
+      '          ',
+    ]);
+    const warps = [{ x: 5, y: 7, dest: 'X' }];
+    const L = roomLayout(a, ids, warps);
+    for (let y = 3; y <= 5; y++) { expect(L.inside[a.idx(4, y)]).toBe(0); expect(L.partition[a.idx(4, y)]).toBe(1); }
+    expect(L.partition[a.idx(4, 2)]).toBe(0);       // the back wall above it is no partition
+    expect(runs(L, 'N')).toEqual([
+      { dir: 'N', line: 3 - RECESS, from: 1, to: 4, floorY: 0 },
+      { dir: 'N', line: 6, from: 4, to: 5, floorY: 0, partition: true },   // its south end
+      { dir: 'N', line: 3 - RECESS, from: 5, to: 9, floorY: 0 },
+    ]);
+    expect(runs(L, 'E')).toContainEqual({ dir: 'E', line: 4, from: 3 - RECESS, to: 6, floorY: 0, partition: true });
+    expect(runs(L, 'W')).toContainEqual({ dir: 'W', line: 5, from: 3 - RECESS, to: 6, floorY: 0, partition: true });
+    expect(checkRoomLayout(a, L, warps)).toEqual([]);
+  });
+  // Brendan's house 1F: kitchen counters drawn in the wall rows and below them in most columns.
+  it('keeps the back wall straight over kitchen counters in most of its columns', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' KKKKKWWW ', ' KKKKK... ', ' ........ ', '          '],
+      { K: { mt: 0x210, blocked: true, id: 'cabinet' } });
+    const L = roomLayout(a, ids, []);
+    expect(runs(L, 'N')).toEqual([{ dir: 'N', line: 3 - RECESS, from: 1, to: 9, floorY: 0 }]);   // the plain columns vote 2
+    expect(L.band[a.idx(1, 2)]).toBe(1);
+    expect(L.inside[a.idx(1, 3)]).toBe(1);
+    expect(checkRoomLayout(a, L)).toEqual([]);
+  });
+  // Sootopolis' houses (before metatile 0x3FF was room): a void gap under the back wall, room material beside it.
+  it('reads the back wall from the northernmost segments across a void gap in the room', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' W??????W ', ' .      . ', ' ..TT.... ', ' ........ ', '          ']);
+    const L = roomLayout(a, ids, []);
+    expect(L.band[a.idx(3, 1)]).toBe(1); expect(L.band[a.idx(3, 2)]).toBe(1);   // the mode 2 of columns 1 and 8, not 0
+    expect(L.inside[a.idx(3, 4)]).toBe(1);          // under the gap: mode 0, the table is room
+    expect(runs(L, 'N').map((r) => [r.line, r.from, r.to])).toEqual([[3 - RECESS, 1, 2], [4 - RECESS, 2, 8], [3 - RECESS, 8, 9]]);
+    expect(checkRoomLayout(a, L)).toEqual([]);
+  });
+  it('closes a corner with the wall of the room beside it, not the recess', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' WWWWWWWW ', ' .      . ', '  ...... ', '  ...... ', '          ']);
+    const L = roomLayout(a, ids, []);
+    expect(runs(L, 'W')).toContainEqual({ dir: 'W', line: 2, from: 4, to: 6, floorY: 0 });   // not from 3.5: (1, 3) is room
+    expect(runs(L, 'E')).toContainEqual({ dir: 'E', line: 2, from: 3 - RECESS, to: 4, floorY: 0 });
     expect(checkRoomLayout(a, L)).toEqual([]);
   });
   // Mossdeep's Game Corner B1F: a plant's leaves drawn over the wall rows are walkable (out of reach behind its pot).
@@ -150,6 +205,11 @@ describe('room layout', () => {
     expect(ids[a.idx(6, 2)]).toBe('fridge');
     expect(ids[a.idx(0, 0)]).toBe(null);
   });
+  it('rebuilds the layout for other warps (the memo keys on ids and warps)', () => {
+    const { a, ids } = fakeInterior(HOUSE);
+    expect(roomLayout(a, ids, []).doors).toEqual([]);
+    expect(roomLayout(a, ids, [{ x: 5, y: 7, dest: 'X' }]).doors).toHaveLength(1);
+  });
   it('flags a run over a walkable cell and a door off its run', () => {
     const { a, ids } = fakeInterior(HOUSE);
     const L = roomLayout(a, ids, [{ x: 5, y: 7, dest: 'LITTLEROOT_TOWN' }]);
@@ -157,5 +217,23 @@ describe('room layout', () => {
     const f = checkRoomLayout(a, bad);
     expect(f.some((s) => s.includes('walkable'))).toBe(true);
     expect(f.some((s) => s.includes('door'))).toBe(true);
+  });
+  it('flags a cell one can stand on outside the room, wall art in the room, a band under room, a lost door', () => {
+    const { a, ids } = fakeInterior(HOUSE);
+    const warps = [{ x: 5, y: 7, dest: 'X' }];
+    const L = roomLayout(a, ids, warps);
+    const inside = L.inside.slice(), band = L.band.slice();
+    inside[a.idx(2, 5)] = 0;                        // a walkable cell dropped from the room
+    inside[a.idx(4, 2)] = 1; band[a.idx(4, 2)] = 0; // the window's lower row taken for room
+    band[a.idx(6, 6)] = 1; inside[a.idx(6, 6)] = 0; // a band cell under room
+    const f = checkRoomLayout(a, { ...L, inside, band, doors: [] }, warps);
+    for (const s of ['walkable cell (2, 5) not in the room', 'wall art (4, 2) left in the room', 'band cell (6, 6) under room',
+      'exit mat (5, 7) without a door']) expect(f).toContain(s);
+  });
+  it('flags a window whose glass is on no N run', () => {
+    const { a, ids } = fakeInterior(HOUSE);
+    const L = roomLayout(a, ids, []);
+    const copy = { ...L.features[0] };              // a copy: z falls back to the northernmost N run over its centre
+    expect(checkRoomLayout(a, { ...L, features: [copy], runs: L.runs.filter((r) => r.dir !== 'N') })).toContain('window at 3…5 on no N run');
   });
 });

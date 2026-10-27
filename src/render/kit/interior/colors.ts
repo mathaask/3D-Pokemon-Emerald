@@ -55,11 +55,12 @@ export function partColors(info: TileInfo, metatiles: readonly number[], layer: 
 export function wallColors(a: MapAnalysis, L: RoomLayout, ids: readonly (InteriorId | null)[]): ShellColors {
   const upper: number[] = [], lowest: number[] = [], any: number[] = [];
   for (let i = 0; i < a.N; i++) {
-    if (!L.band[i]) continue;
+    if (!L.band[i] || L.partition[i]) continue;        // the back wall's band (partitions are no back wall)
     any.push(a.mt[i]);
     if (ids[i] !== 'wall') continue;
     const x = a.cellX(i), y = a.cellY(i);
-    const below = a.inside(x, y + 1) && L.band[a.idx(x, y + 1)] === 1;
+    const j = a.inside(x, y + 1) ? a.idx(x, y + 1) : -1;
+    const below = j >= 0 && L.band[j] === 1 && !L.partition[j];
     (below ? upper : lowest).push(a.mt[i]);
   }
   const mainOf = (mts: number[]) => (mts.length ? partColors(a.info, mts).main : null);
