@@ -13,10 +13,8 @@ import type { FurnitureKind } from '../tables/building';
 import { FURNITURE_SPEC, isLow, type FurnitureGenerator, type FurniturePiece } from './furniture';
 import { RECESS, type WallDir } from './room';
 import {
-  buildCounter, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects, type Rect,
+  OPPOSITE, buildCounter, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects, type Rect,
 } from './geom/serviceFurniture';
-
-const OPPOSITE: Readonly<Record<WallDir, WallDir>> = { N: 'S', S: 'N', E: 'W', W: 'E' };
 
 /** The direction a flight runs: away from the side it is entered from (none: north, into the back wall). */
 export const flightDir = (p: FurniturePiece): WallDir => (p.facing ? OPPOSITE[p.facing] : 'N');
@@ -45,7 +43,7 @@ export const SERVICE_GENERATORS: Partial<Record<FurnitureKind, FurnitureGenerato
   stairsUp: (p, out, q) => {
     const dir = flightDir(p), f = { ...p.foot };
     if (dir === 'N' && !againstWall(p)) f.z0 -= RECESS;     // up into the recess, to the back wall's face
-    buildStairsUp(out, f, dir, null, p.colors, q);
+    buildStairsUp(out, f, dir, p.colors, q);
   },
   stairsDown: (p, out, q) => buildStairsDown(out, cellsArea(p), flightDir(p), p.colors, q),
 };

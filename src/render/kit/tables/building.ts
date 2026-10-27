@@ -4,6 +4,12 @@
 // drawn with the secondaries' ids (0x200–0x3FF), one table per in-scope secondary in `./interior/`. An id no table labels
 // takes its behaviour's kind when that is an interaction behaviour (TV, PC, bookshelves, shop shelf, counter, trash can,
 // vase, region map, arrow-warp mats); else it is unknown (null: the legacy art).
+//
+// Walkable cells (one rule for every table): a walkable cell takes the object's kind only where the object itself stands
+// there in the game (a chair, a bed's head, stairs, mats); art that merely overhangs it (a shelf's top, a desk's legs) is
+// the room's floor. A plant's walkable leaf cell may be either (GenericBuilding keeps `plant`, Lab labels `tiles`): both
+// read the same, as the crown overhangs and the plant stands on its pot cell. Whatever the labels, furniture over a
+// walkable cell stays at most WALKABLE_SEAT high and never spills onto free floor (tests/smoke/interiorFitting.test.ts).
 
 import { MB } from '../../../game/behaviors';
 import { SYM } from '../../../game/symbols';

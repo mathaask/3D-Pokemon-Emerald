@@ -4,6 +4,8 @@ import { SERVICE_GENERATORS, againstWall, cellsArea, flightDir } from '../src/re
 import { FURNITURE_SPEC, fitFurniture, isLow } from '../src/render/kit/interior/furniture';
 import { RECESS } from '../src/render/kit/interior/room';
 import { BALL_RED } from '../src/render/kit/interior/geom/serviceFurniture';
+import { HOME_GENERATORS } from '../src/render/kit/interior/furnitureHome';
+import { FURNITURE_KINDS } from '../src/render/kit/tables/building';
 
 const KINDS = ['pc', 'healer', 'pcCounter', 'counter', 'martShelf'] as const;
 
@@ -22,21 +24,18 @@ describe('service furniture', () => {
   it('gives the healing machine six cradles and a lit panel', () => {
     const out = newOut(); SERVICE_GENERATORS.healer!(piece('healer'), out, 'medium');
     expect(out.glow.empty).toBe(false);
-    expect(countClusters(out.tall, [0.85, 0.15, 0.15])).toBe(6);       // six red ball halves (sRGB; the helper compares lin())
-    expect(BALL_RED).toEqual([0.85, 0.15, 0.15]);
+    expect(countClusters(out.tall, BALL_RED)).toBe(6);                 // six red ball halves (sRGB; the helper compares lin())
+  });
+
+  it('gives every furniture kind a generator (home + service = FURNITURE_KINDS, no kind left legacy unnoticed)', () => {
+    const home = Object.keys(HOME_GENERATORS), service = Object.keys(SERVICE_GENERATORS);
+    expect(home.filter((k) => service.includes(k))).toEqual([]);
+    expect([...home, ...service].sort()).toEqual([...FURNITURE_KINDS].sort());
   });
 
   it('lights the computer screen in the low glow (it never fades)', () => {
     const out = run(SERVICE_GENERATORS, 'pc');
     expect(out.glowLow.empty).toBe(false); expect(out.glow.empty).toBe(true);
-  });
-
-  it('follows an L-shaped counter cell by cell', () => {
-    const L = piece('pcCounter', { xy: [[2, 4], [3, 4], [3, 5]], cellFeet: [fitFurniture('pcCounter', 2, 2, 4, 4, 0, -Infinity),
-      fitFurniture('pcCounter', 3, 3, 4, 4, 0, -Infinity), fitFurniture('pcCounter', 3, 3, 5, 5, 0, -Infinity)] });
-    const out = newOut(); SERVICE_GENERATORS.pcCounter!(L, out, 'medium');
-    const p = out.low.geometry().getAttribute('position');
-    for (let i = 0; i < p.count; i++) expect(p.getX(i) < 3 - 1e-3 && p.getZ(i) > 5 + 1e-3).toBe(false);   // nothing over (2, 5)
   });
 
   it('builds a counter ring (Dept Store) round its walkable cells, its sides reaching the bar', () => {

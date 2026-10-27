@@ -24,6 +24,7 @@ import type { FurnitureKind } from '../../tables/building';
 import type { PartColors } from '../colors';
 import type { WallDir } from '../room';
 import { addShelf, wallFrameAt } from '../wallParts';
+import { FURNITURE_SPEC } from '../furniture';
 
 /** A footprint (world): x [x0, x1], z [z0, z1] on the floor at y, `height` tall (Task 6's Footprint). */
 export interface HomeRect { x0: number; x1: number; z0: number; z1: number; y: number; height: number }
@@ -40,7 +41,7 @@ export const HOME_KINDS = ['bed', 'table', 'chair', 'tv', 'bookshelf', 'plant', 
 export type HomeKind = (typeof HOME_KINDS)[number];
 
 /** Per quality: lathe / blob sides, and segments per rounded edge. */
-export const HOME_DETAIL: Readonly<Record<Quality, { sides: number; segs: number }>> = {
+const HOME_DETAIL: Readonly<Record<Quality, { sides: number; segs: number }>> = {
   low: { sides: 8, segs: 1 }, medium: { sides: 12, segs: 2 }, high: { sides: 16, segs: 3 },
 };
 /** A chair this high or lower is a low lounge seat (a walkable seat: the family caps it at WALKABLE_SEAT = 0.45). */
@@ -48,7 +49,7 @@ export const LOW_SEAT = 0.5;
 /** A full chair's seat height. */
 const SEAT_Y = 0.45;
 /** The bed's nominal height (FURNITURE_SPEC.bed): its parts' levels below are at this height, scaled to the piece's. */
-const BED_H = 0.55;
+const BED_H = FURNITURE_SPEC.bed.height;
 
 // ---------------------------------------------------------------- colours
 
@@ -68,7 +69,7 @@ const WHITE: RGB = [1, 1, 1];
 /** The GBA's dark blue-grey outline (0x424a6b, 0x52526b …): the most frequent colour of small objects, never a surface. */
 export const isOutline = (c: RGB) => luma(c) < 0.4 && saturation(c) < 0.3;
 /** Warm wood / yellow (red ≥ green ≥ blue, red well over blue). */
-export const isWood = (c: RGB) => c[0] >= c[1] - 0.02 && c[1] >= c[2] - 0.02 && c[0] - c[2] >= 0.15
+const isWood = (c: RGB) => c[0] >= c[1] - 0.02 && c[1] >= c[2] - 0.02 && c[0] - c[2] >= 0.15
   // (an orange-to-yellow hue: green at least 0.3 of the way from blue to red — a red (0xd65242) or a peach cushion is no wood)
   && c[1] - c[2] >= 0.3 * (c[0] - c[2]);
 const isWhite = (c: RGB) => luma(c) > 0.85 && saturation(c) < 0.12;

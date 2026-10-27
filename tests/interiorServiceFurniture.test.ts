@@ -149,9 +149,9 @@ describe('service furniture geometry', () => {
 
   it('climbs the stairs into the wall and sinks the stairwell under the floor', () => {
     const f = fit(2, 3, 4, 5, 1, STAIRS_TOP), up = soups();
-    buildStairsUp(up, f, 'N', 'W', COLORS, 'medium');
+    buildStairsUp(up, f, 'N', COLORS, 'medium');
     const b = all(up); inside(b, f); expect(b.max.y).toBeCloseTo(1.6, 1); expect(up.low.empty).toBe(true);
-    // the flight rises north: its north half's steps stand higher than its south half's (the rail on the west aside)
+    // the flight rises north: its north half's steps stand higher than its south half's (its west edge aside)
     const p = up.tall.geometry().getAttribute('position');
     let north = 0, south = 0;
     for (let i = 0; i < p.count; i++) {
@@ -168,7 +168,7 @@ describe('service furniture geometry', () => {
 
   it('turns the stairs with their direction', () => {
     const f = fit(2, 3, 4, 5, 2, STAIRS_TOP), E = soups(), W = soups();
-    buildStairsUp(E, f, 'E', null, COLORS, 'low'); buildStairsUp(W, f, 'W', null, COLORS, 'low');
+    buildStairsUp(E, f, 'E', COLORS, 'low'); buildStairsUp(W, f, 'W', COLORS, 'low');
     inside(all(E), f); inside(all(W), f); expect(hash(E)).not.toBe(hash(W));
   });
 });

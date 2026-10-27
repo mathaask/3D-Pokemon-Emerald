@@ -1,26 +1,17 @@
 // Home furniture geometry (Phase 4 Task 9, phase A): the pure builders behind furnitureHome.ts' generators, on plain
-// pieces (footprints, colours, facing, seed) — no Task 6 types.
+// pieces (footprints, colours, facing, seed), fitted by the furniture core's fitFurniture at FURNITURE_SPEC's sizes.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { Soup } from '../src/render/kit/soup';
 import {
   HOME_BUILDERS, HOME_KINDS, LOW_SEAT, homeColors, roundBox, blob, type HomeKind, type HomePiece, type HomeRect, type HomeSoups,
 } from '../src/render/kit/interior/geom/homeFurniture';
+import { FURNITURE_SPEC as SPEC, fitFurniture } from '../src/render/kit/interior/furniture';
 import type { PartColors } from '../src/render/kit/interior/colors';
 import type { Quality } from '../src/render/post';
 
-/** The plan's real-world sizes (FURNITURE_SPEC, Task 6) for the kinds built here. */
-const SPEC: Record<HomeKind, { height: number; depth: number }> = {
-  bed: { height: 0.55, depth: 2.0 }, table: { height: 0.75, depth: 1.6 }, chair: { height: 0.9, depth: 0.6 },
-  tv: { height: 1.1, depth: 0.5 }, bookshelf: { height: 2.1, depth: 0.45 }, plant: { height: 1.3, depth: 0.7 },
-  fridge: { height: 1.9, depth: 0.5 }, sink: { height: 0.95, depth: 0.5 }, cabinet: { height: 1.0, depth: 0.5 },
-  crate: { height: 0.8, depth: 0.8 }, trashCan: { height: 0.6, depth: 0.5 }, vase: { height: 0.6, depth: 0.5 },
-};
-/** Task 6's fitFurniture, free-standing: columns x0..x1, rows y0..y1 at floor h. */
-const fit = (k: HomeKind, x0: number, x1: number, y0: number, y1: number, h = 0): HomeRect => {
-  const z1 = y1 + 1 + h;
-  return { x0, x1: x1 + 1, z0: z1 - Math.min(SPEC[k].depth, y1 - y0 + 1), z1, y: h, height: SPEC[k].height };
-};
+/** fitFurniture, free-standing: columns x0..x1, rows y0..y1 at floor h. */
+const fit = (k: HomeKind, x0: number, x1: number, y0: number, y1: number, h = 0): HomeRect => fitFurniture(k, x0, x1, y0, y1, h, -Infinity);
 const COLORS: PartColors = { main: [0.26, 0.29, 0.42], second: [0.84, 0.81, 0.39], accent: [0.97, 0.55, 0.39], dark: [0.13, 0.15, 0.21] };
 /** As the furniture helper's piece(): cells (2..3, 4..5) at floor 0. */
 const piece = (kind: HomeKind, o: Partial<HomePiece> = {}): HomePiece => ({

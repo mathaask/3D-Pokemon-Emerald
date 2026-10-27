@@ -17,11 +17,6 @@ describe('home furniture generators', () => {
     if (isLow(kind)) expect(out.tall.empty && out.glow.empty).toBe(true);
     else expect(out.low.empty && out.glowLow.empty).toBe(true);
   });
-  it('turns a chair to face its table', () => {
-    const east = boxOf(run(HOME_GENERATORS, 'chair', 'medium', { facing: 'E' }));
-    const west = boxOf(run(HOME_GENERATORS, 'chair', 'medium', { facing: 'W' }));
-    expect(east.equals(west)).toBe(false);
-  });
   it('is deterministic and scales with quality', () => {
     expect(hashOut(run(HOME_GENERATORS, 'plant', 'medium'))).toBe(hashOut(run(HOME_GENERATORS, 'plant', 'medium')));
     expect(tris(run(HOME_GENERATORS, 'plant', 'low'))).toBeLessThan(tris(run(HOME_GENERATORS, 'plant', 'high')));

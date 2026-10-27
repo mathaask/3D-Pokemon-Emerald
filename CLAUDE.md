@@ -60,8 +60,9 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   `door_enter`/`door_exit`, crossing-gated); `--review` → `_review_interior.png` (GBA map from `out/atlas/` | before |
   Modern | Retro). Gated: `NIGHT_TWINS` (`nightLum`: night/dusk vs its day twin, room ≥ 0.45, actors 0.9–1.15) and the
   in-scope day rooms' actorLum vs Retro (0.9–1.15, median ≥ 0.95). Phase 4 gate: `--static --compare p4-base` → Retro
-  0.00 % everywhere, Modern 0.00 % except the in-scope interior entries. Interior A/B: `--ab --only <entries>
-  --ab-feature interior` (kit on vs today's interior, light included; ≤ +1.5 ms GPU / +0.5 ms CPU). Scope: 137 maps
+  0.00 % everywhere, Modern 0.00 % except the in-scope interior entries and the in-scope live entries (`item_indoor`,
+  `vigoroth`, `vigoroth_v`, `door_enter`). Fitting: `tests/smoke/interiorFitting.test.ts` (furniture over walkable cells
+  ≤ 0.45, none over free floor, 137 maps). Interior A/B: `--ab --only <entries> --ab-feature interior` (kit on vs today's interior, light included; ≤ +1.5 ms GPU / +0.5 ms CPU). Scope: 137 maps
   (`interiorScope(opts, mapKey)`, fails closed without a map key; `OUT_OF_SCOPE_MAPS` = the rooftop 13.21). Preview
   `&kitFail=<family>` (shell / floor / furniture) makes one family fail (its cells legacy, one warning); page API
   `preview.setInteriorKit(on)`, `preview.measureRebuild()` (warm rebuild ≤ 40 ms, + first frame ≤ 100 ms)

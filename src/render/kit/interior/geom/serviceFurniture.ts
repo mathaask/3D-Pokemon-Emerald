@@ -18,6 +18,7 @@ import { isOutline } from './homeFurniture';
 import type { Quality } from '../../../post';
 import type { PartColors } from '../colors';
 import type { WallDir } from '../room';
+import { FURNITURE_SPEC } from '../furniture';
 
 /** A footprint in world units: x [x0, x1], z [z0, z1] on the floor at height y (Task 6's Footprint fits it). */
 export interface Rect { x0: number; x1: number; z0: number; z1: number; y: number }
@@ -28,29 +29,31 @@ export interface ServiceSoups { tall: Soup; low: Soup; glow: Soup; glowLow: Soup
 /** Which sides of a block are open (seen): an open side is inset and its corners rounded; a closed one meets a neighbour
  *  flush. */
 export interface Sides { n: boolean; e: boolean; s: boolean; w: boolean }
-export const ALL_OPEN: Readonly<Sides> = { n: true, e: true, s: true, w: true };
+const ALL_OPEN: Readonly<Sides> = { n: true, e: true, s: true, w: true };
 
 /** Lathe sides per quality (as the home kit), the small goods' and rails' sides, rounded-corner segments. */
-export const LATHE_SIDES: Readonly<Record<Quality, number>> = { low: 8, medium: 12, high: 16 };
-export const SMALL_SIDES: Readonly<Record<Quality, number>> = { low: 6, medium: 8, high: 10 };
-export const CORNER_SEGS: Readonly<Record<Quality, number>> = { low: 2, medium: 3, high: 4 };
+const LATHE_SIDES: Readonly<Record<Quality, number>> = { low: 8, medium: 12, high: 16 };
+const SMALL_SIDES: Readonly<Record<Quality, number>> = { low: 6, medium: 8, high: 10 };
+const CORNER_SEGS: Readonly<Record<Quality, number>> = { low: 2, medium: 3, high: 4 };
 
 /** The healing machine's Poké Balls (sRGB, used as they are: the test finds them by colour). */
 export const BALL_RED: RGB = [0.85, 0.15, 0.15];
-export const BALL_WHITE: RGB = [0.96, 0.96, 0.94];
+const BALL_WHITE: RGB = [0.96, 0.96, 0.94];
 /** The healing machine's lit panel and the computers' screens (sRGB vertex colours; glowMesh adds the emissive). */
-export const PANEL_GLOW: RGB = [0.62, 0.95, 0.82];
-export const SCREEN_GLOW: RGB = [0.6, 0.82, 0.95];
+const PANEL_LIT: RGB = [0.62, 0.95, 0.82];
+const SCREEN_GLOW: RGB = [0.6, 0.82, 0.95];
 
-/** Stairs: each step rises / falls this much; the flight climbs to (or falls to) STAIRS_TOP. */
-export const STEP_RISE = 0.2;
-export const STAIRS_TOP = 1.6;
+/** Stairs: each step rises / falls this much; the flight climbs to (or falls to) STAIRS_TOP (FURNITURE_SPEC's stairs up). */
+const STEP_RISE = 0.2;
+export const STAIRS_TOP = FURNITURE_SPEC.stairsUp.height;
+/** The side opposite each side. */
+export const OPPOSITE: Readonly<Record<WallDir, WallDir>> = { N: 'S', S: 'N', E: 'W', W: 'E' };
 /** A rail's top over the floor or the treads, its post and tube sizes. */
-export const RAIL = { height: 0.9, post: 0.045, radius: 0.025, inset: 0.05 };
+const RAIL = { height: 0.9, post: 0.045, radius: 0.025, inset: 0.05 };
 
 /** A top / tread of the body's colour is lifted this far towards white (and tinted this much towards the accent); an
  *  outline-coloured body with no other surface colour, OUTLINE_LIFT. */
-export const TOP_LIFT = 0.3, TOP_TINT = 0.12, OUTLINE_LIFT = 0.55;
+const TOP_LIFT = 0.3, TOP_TINT = 0.12, OUTLINE_LIFT = 0.55;
 
 /** The part's colours for surfaces, softened and made linear. The GBA rings its counters, shelves, machines and stairs
  *  in a dark blue-grey outline (0x52526b, 0x424a6b …: the kit's one `isOutline` rule, geom/homeFurniture.ts) that is
@@ -84,13 +87,13 @@ function hueShift(c: RGB, dh: number): RGB {
 // Rounded blocks
 
 /** A lathe (kit/soup.ts) in one colour. */
-export function solid(s: Soup, at: V3, prof: readonly (readonly [number, number])[], col: RGB, sides: number): void {
+function solid(s: Soup, at: V3, prof: readonly (readonly [number, number])[], col: RGB, sides: number): void {
   lathe(s, at, prof, prof.slice(1).map(() => col), sides);
 }
 
 /** A block over `r` from y0 to y1 (over r.y): its open sides inset by `inset`, the corners between two open sides
  *  rounded (radius clamped to the block), smooth round the corners; top and sides, no underside. */
-export function roundedBlock(s: Soup, r: Rect, y0: number, y1: number, inset: number, radius: number, open: Sides,
+function roundedBlock(s: Soup, r: Rect, y0: number, y1: number, inset: number, radius: number, open: Sides,
   side: RGB, top: RGB, segs: number): void {
   const X0 = r.x0 + (open.w ? inset : 0), X1 = r.x1 - (open.e ? inset : 0);
   const Z0 = r.z0 + (open.n ? inset : 0), Z1 = r.z1 - (open.s ? inset : 0);
@@ -210,7 +213,7 @@ export function buildCounter(s: Soup, rects: readonly CounterRect[], top: number
 // Computers
 
 /** Computer proportions: desk top height, monitor size, keyboard. */
-export const PC = { desk: 0.74, deskTop: 0.05, monitorW: 0.62, monitorH: 0.38, monitorD: 0.12, neck: 0.06, bezel: 0.035, keyD: 0.14, keyH: 0.02 };
+const PC = { desk: 0.74, deskTop: 0.05, monitorW: 0.62, monitorH: 0.38, monitorD: 0.12, neck: 0.06, bezel: 0.035, keyD: 0.14, keyH: 0.02 };
 
 /** A computer desk over `f` (`f.height` tall: the monitors' tops): a cabinet desk in main with a top in second, one
  *  monitor per whole cell of width (at least one) in second with its screen in `glowLow`, a keyboard in front. All low. */
@@ -238,7 +241,7 @@ export function buildPc(out: ServiceSoups, f: Sized, c: PartColors, q: Quality):
 // The healing machine
 
 /** Healing machine proportions: console, deck, back panel (its lit screen), cradles. */
-export const HEALER = { kick: 0.06, console: 0.85, deck: 0.07, panelD: 0.16, panelInset: 0.15, wallGap: 0.04, screen: 0.045, ball: 0.08 };
+const HEALER = { kick: 0.06, console: 0.85, deck: 0.07, panelD: 0.16, panelInset: 0.15, wallGap: 0.04, screen: 0.045, ball: 0.08 };
 
 /** The healing machine over `f` (`f.height` tall: the back panel's top): a rounded console in main on a dark kick, a
  *  deck in second, six cradles (accent dishes) holding Poké Balls (red / white lathes with a dark band) — three by two
@@ -253,7 +256,7 @@ export function buildHealer(out: ServiceSoups, f: Sized, c: PartColors, q: Quali
   const panel: Rect = { x0: f.x0 + H.panelInset, x1: f.x1 - H.panelInset, z0: f.z0 + H.wallGap, z1: f.z0 + H.wallGap + H.panelD, y: f.y };
   roundedBlock(s, panel, deckY, f.height, 0, 0.05, ALL_OPEN, k.main, k.main, segs);
   const gz = panel.z1 + 0.004, gy0 = f.y + deckY + H.screen, gy1 = f.y + f.height - H.screen;
-  out.glow.quad([panel.x0 + H.screen, gy0, gz], [panel.x1 - H.screen, gy0, gz], [panel.x1 - H.screen, gy1, gz], [panel.x0 + H.screen, gy1, gz], [0, 0, 1], lin(PANEL_GLOW));
+  out.glow.quad([panel.x0 + H.screen, gy0, gz], [panel.x1 - H.screen, gy0, gz], [panel.x1 - H.screen, gy1, gz], [panel.x0 + H.screen, gy1, gz], [0, 0, 1], lin(PANEL_LIT));
   // six cradles on the deck in front of the panel
   const dx0 = f.x0 + 0.2, dx1 = f.x1 - 0.2, dz0 = panel.z1 + 0.05, dz1 = f.z1 - 0.06;
   const wide = dx1 - dx0 >= dz1 - dz0, nu = wide ? 3 : 2, nv = wide ? 2 : 3;
@@ -279,7 +282,7 @@ export function buildHealer(out: ServiceSoups, f: Sized, c: PartColors, q: Quali
 // The Mart's gondola
 
 /** Gondola proportions: plinth, end panels, divider, shelf levels, top cap. */
-export const GONDOLA = { plinth: 0.1, end: 0.05, divider: 0.06, shelf: 0.03, levels: [0.1, 0.5, 0.9, 1.3], cap: 0.08, edge: 0.04 };
+const GONDOLA = { plinth: 0.1, end: 0.05, divider: 0.06, shelf: 0.03, levels: [0.1, 0.5, 0.9, 1.3], cap: 0.08, edge: 0.04 };
 
 /** A double-sided gondola over `f` (`f.height` tall), along its longer side: a dark plinth, end panels and a divider in
  *  main, shelves in second on both faces, a rounded top cap, and rows of goods (boxes and cans, seeded) in the tile's
@@ -344,13 +347,6 @@ function flightFrame(f: Rect, dir: WallDir): { o: V3; along: V3; across: V3; len
 const at = (F: { o: V3; along: V3; across: V3 }, a: number, h: number, c: number): V3 =>
   [F.o[0] + F.along[0] * a + F.across[0] * c, F.o[1] + h, F.o[2] + F.along[2] * a + F.across[2] * c];
 
-/** The side of a flight frame a world side is: 'lo' (across = 0), 'hi' (across = wid), or null (an end). */
-function crossSide(dir: WallDir, side: WallDir): 'lo' | 'hi' | null {
-  const lo: Record<WallDir, WallDir> = { N: 'W', S: 'E', E: 'N', W: 'S' };
-  const hi: Record<WallDir, WallDir> = { N: 'E', S: 'W', E: 'S', W: 'N' };
-  return side === lo[dir] ? 'lo' : side === hi[dir] ? 'hi' : null;
-}
-
 /** Steps (solid, risers in main, treads in second with a runner in accent) over the frame, step i's tread at
  *  `tread(i)`, from `bottom`. */
 function steps(s: Soup, F: ReturnType<typeof flightFrame>, n: number, bottom: number, tread: (i: number) => number, k: LinColors): void {
@@ -372,31 +368,20 @@ function rail(s: Soup, pts: readonly V3[], foot: readonly number[], col: RGB, q:
 }
 
 /** A flight of stairs over `f` rising towards `dir` (N: into the back wall's recess) to `f.height` (STAIRS_TOP) in
- *  STEP_RISE steps; `railSide` (a side across the flight, null: none) gets a handrail RAIL.height over the treads, never
- *  above the flight's top. Tall (> 1.2). */
-export function buildStairsUp(out: ServiceSoups, f: Sized, dir: WallDir, railSide: WallDir | null, c: PartColors, q: Quality): void {
-  const k = serviceColors(c), s = out.tall, F = flightFrame(f, dir);
-  const n = Math.max(1, Math.round(f.height / STEP_RISE)), rise = f.height / n, run = F.len / n;
-  steps(s, F, n, 0, (i) => (i + 1) * rise, k);
-  const cs = railSide && crossSide(dir, railSide);
-  if (!cs) return;
-  const c0 = cs === 'lo' ? RAIL.inset : F.wid - RAIL.inset, pts: V3[] = [], feet: number[] = [];
-  for (let i = 0; i < n; i += 2) {
-    const tread = (i + 1) * rise, top = Math.min(tread + RAIL.height, f.height - RAIL.radius);
-    pts.push(at(F, (i + 0.5) * run, top, c0)); feet.push(f.y + tread);
-  }
-  rail(s, pts, feet, mix(k.dark, k.second, 0.3), q);
+ *  STEP_RISE steps, without a handrail (ruled off: the flight climbs into the wall). Tall (> 1.2). */
+export function buildStairsUp(out: ServiceSoups, f: Sized, dir: WallDir, c: PartColors, q: Quality): void {
+  const k = serviceColors(c), F = flightFrame(f, dir);
+  const n = Math.max(1, Math.round(f.height / STEP_RISE)), rise = f.height / n;
+  steps(out.tall, F, n, 0, (i) => (i + 1) * rise, k);
 }
 
 /** The stairwell's floor under its last step. */
-export const WELL_BOTTOM = 0.1;
+const WELL_BOTTOM = 0.1;
 
 /** A stairwell over `r` (its cells' whole area: Task 8 leaves them without floor) falling towards `dir` (N: away from
  *  the viewer) below the floor in STEP_RISE steps to −STAIRS_TOP: steps, the well's walls (fading to dark) on the sides
- *  and the far end, a lip at the entry edge, and a rail round the hole on `railSides` (default: every side but the
- *  entry). Low. */
-export function buildStairsDown(out: ServiceSoups, r: Rect, dir: WallDir, c: PartColors, q: Quality,
-  railSides?: readonly WallDir[]): void {
+ *  and the far end, a lip at the entry edge, and a rail round the hole on every side but the entry. Low. */
+export function buildStairsDown(out: ServiceSoups, r: Rect, dir: WallDir, c: PartColors, q: Quality): void {
   const k = serviceColors(c), s = out.low, F = flightFrame(r, dir);
   const n = Math.round(STAIRS_TOP / STEP_RISE), bottom = -STAIRS_TOP - WELL_BOTTOM, L = F.len, W = F.wid;
   steps(s, F, n, bottom, (i) => -(i + 1) * STEP_RISE, k);
@@ -411,8 +396,7 @@ export function buildStairsDown(out: ServiceSoups, r: Rect, dir: WallDir, c: Par
   wq(at(F, L, 0, 0), at(F, L, 0, W), [-F.along[0], 0, -F.along[2]], bottom);
   wq(at(F, 0, 0, 0), at(F, 0, 0, W), F.along, -STEP_RISE);
   // the rail round the hole
-  const entry: Record<WallDir, WallDir> = { N: 'S', S: 'N', E: 'W', W: 'E' };
-  const sides = railSides ?? (['N', 'E', 'S', 'W'] as const).filter((d) => d !== entry[dir]);
+  const sides = (['N', 'E', 'S', 'W'] as const).filter((d) => d !== OPPOSITE[dir]);
   const col = mix(k.dark, k.second, 0.3), i = RAIL.inset, h = RAIL.height;
   const edge: Record<WallDir, [V3, V3]> = {
     N: [[r.x0 + i, h, r.z0 + i], [r.x1 - i, h, r.z0 + i]], S: [[r.x0 + i, h, r.z1 - i], [r.x1 - i, h, r.z1 - i]],
