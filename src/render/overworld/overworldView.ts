@@ -433,6 +433,7 @@ export class OverworldView {
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
       secondaryTileset,
+      primaryTileset,
     }, { style: this.worldStyle, events, quality: this.quality, mapKey });
     this.haveWorld = true;
   }

@@ -22,6 +22,9 @@ export interface ClassifyOptions {
   /** ROM address of the secondary tileset (0 / absent: unknown). Read only by the kit: it picks the
    *  curated tables of that tileset's ids (512+). */
   secondaryTileset?: number;
+  /** ROM address of the primary tileset (0 / absent: unknown). Read only by the kit: the interior scope
+   *  (`kit/interior/scope.ts`) needs `gTileset_Building`. */
+  primaryTileset?: number;
   margin: number;
 }
 

@@ -65,6 +65,7 @@ export function loadStaticMap(group: number, num: number): StaticMap {
       underground: map.mapType === 4,
       underwater: map.mapType === 5,
       secondaryTileset: map.layout.secondaryTileset,
+      primaryTileset: map.layout.primaryTileset,
     },
   };
 }
