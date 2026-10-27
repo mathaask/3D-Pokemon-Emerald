@@ -403,7 +403,7 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
 - [x] 3 scope/symbols/tables scaffold (bfb5761: 138 in-scope maps, Building tileset symbols, id worklist)
 - [x] 4a GenericBuilding (64a29bd, fix 1cc1990) · [x] 4b PokemonCenter + Shop (097220d) · [x] 4c BrendansMaysHouse + Lab
   (7a4ab85) — all five tables 100 % labelled, 186 pins, legacy ≤ 0.8 % (GenericBuilding)
-- [ ] 5 room layout + colours (cb9a42e, fix 8dcb26e: partitions, invariants; re-review running)
+- [x] 5 room layout + colours (cb9a42e, fix 8dcb26e: dividing walls → partition runs on 8 maps, 5 invariants, 15 pinned layouts; 0 findings on 138 maps)
 - [ ] 6 integration (running) · [ ] 7 shell · [ ] 8 floors + shafts · [ ] 9 furniture I · [ ] 10 furniture II
 - [ ] 11 legacy HD · [ ] 12 smoke/coverage/live · [ ] 13 perf/docs
 - Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles.
