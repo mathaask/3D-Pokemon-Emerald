@@ -397,9 +397,19 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
   ridges), a battle look-polish pass (the Phase 3 known gaps above).
 
 ## Phase 4 status
-- [x] Plan (user-approved) · [ ] 1 harness + p4-base · [ ] 2 battle room geometry → kit · [ ] 3 scope/symbols/tables
-- [ ] 4a–4c tables · [ ] 5 room layout + colours · [ ] 6 integration · [ ] 7 shell · [ ] 8 floors + shafts
-- [ ] 9 furniture I · [ ] 10 furniture II · [ ] 11 legacy HD · [ ] 12 smoke/coverage/live · [ ] 13 perf/docs
+- [x] Plan (user-approved; preflight scan: 42 findings, all rulings applied @ 4f3ed00)
+- [x] 1 harness + `p4-base` (105e95a, fix 6df7681: 30 interior entries, door walks, `--interiors`, `NIGHT_TWINS`/`nightLum`)
+- [x] 2 battle room geometry → kit (e02f396 pins, a56a8c4 move; battle pixels identical)
+- [x] 3 scope/symbols/tables scaffold (bfb5761: 138 in-scope maps, Building tileset symbols, id worklist)
+- [x] 4a GenericBuilding (64a29bd, fix 1cc1990) · [x] 4b PokemonCenter + Shop (097220d) · [x] 4c BrendansMaysHouse + Lab
+  (7a4ab85) — all five tables 100 % labelled, 186 pins, legacy ≤ 0.8 % (GenericBuilding)
+- [ ] 5 room layout + colours (cb9a42e, fix 8dcb26e: partitions, invariants; re-review running)
+- [ ] 6 integration (running) · [ ] 7 shell · [ ] 8 floors + shafts · [ ] 9 furniture I · [ ] 10 furniture II
+- [ ] 11 legacy HD · [ ] 12 smoke/coverage/live · [ ] 13 perf/docs
+- Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles.
+- Rulings so far: walkable furniture = low seats (≤ 0.45); chairs/plants one per cell; flat indoor floors; dividing
+  walls = half-height partitions (Task 7); battles in rooms don't follow the clock (F38); Dept Store rooftop → Task 12.
+  Full ledger: `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md` (copied to the repo at merge).
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
 - **2026-10-23: hitch fix done** (user chose "hitch fix, then Phase 3"; in-chat design approved; branch `hitch-fix`,
   reviewed + 1 fix round + re-review, merged):
