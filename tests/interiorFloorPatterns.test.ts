@@ -1,0 +1,162 @@
+// Interior floors and window light shafts, the pure parts (Phase 4 Task 8, phase A): floor cells, their texture bytes, the
+// floor program's GLSL (sharing the terrain's cell fetch, whose program text stays byte-identical), the shafts.
+import { createHash } from 'node:crypto';
+import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import {
+  encodeFloor, floorCells, floorGeometry, FloorMat, interiorFloorMaterial, roomShaftMaterial, shaftGeometry, SHAFT_SLANT,
+} from '../src/render/kit/interior/geom/floorPatterns';
+import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
+import { BOARDS_GLSL, TILES_GLSL } from '../src/render/kit/interior/floorGlsl';
+import { TERRAIN_CELL_GLSL, TERRAIN_GRID_GLSL, terrainFragColor, terrainMaterial } from '../src/render/kit/terrain';
+import { CLAIM_OBJECT, CLAIM_SURFACE, Claims } from '../src/render/overworld/claims';
+import type { MapAnalysis } from '../src/render/overworld/analyze';
+import type { InteriorId } from '../src/render/kit/tables/building';
+import { fakeInterior } from './helpers/fakeInterior';
+
+/** Claims with the table cells claimed CLAIM_OBJECT, as the furniture family would. */
+const claimsWithTable = (a: MapAnalysis, ids: readonly (InteriorId | null)[]) => {
+  const c = new Claims(a.N);
+  ids.forEach((id, i) => { if (id === 'table') c.claim(i, CLAIM_OBJECT); });
+  return c;
+};
+const HOUSE = ['          ', ' WWOOWWWW ', ' WWOOWFWW ', ' ........ ', ' ..TT.... ', ' ..TT..rr ', ' ......rr ', ' ....M... ', '          '];
+const cellsOf = (rows: string[], claims?: (a: MapAnalysis, ids: readonly (InteriorId | null)[]) => Claims) => {
+  const { a, ids } = fakeInterior(rows);
+  const cells = floorCells(a, ids, roomLayout(a, ids, []), claims ? claims(a, ids) : new Claims(a.N));
+  return { a, ids, cells, at: (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y)) };
+};
+const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+describe('interior floor cells', () => {
+  it('gives the rug its kind and border edges, and the table cells the rug under them', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' ........ ', ' ..rrrr.. ', ' ..rTTr.. ', ' ..rrrr.. ', ' ........ ', '          ']);
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), claimsWithTable(a, ids));
+    const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y))!;
+    expect(at(4, 4).mat).toBe(FloorMat.Rug);                        // under the table: the rug around it
+    expect(at(3, 3).edges).toBe(0b1001);                             // NW corner of the rug: border N and W
+    expect(at(4, 3).edges).toBe(0b0001);
+    expect(at(5, 2).mat).toBe(FloorMat.Boards);
+  });
+
+  it('leaves the stairwell without floor', () => {
+    const { a, ids } = fakeInterior(['        ', ' WWWWWW ', ' ...s.. ', ' ...... ', '        ']);
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), new Claims(a.N));
+    expect(cells.some((c) => c.i === a.idx(4, 2))).toBe(false);
+    expect(cells.some((c) => c.i === a.idx(3, 2))).toBe(true);
+  });
+
+  it('floors the back-wall band, stairsUp, the mat (bordered) and Sootopolis 0x3FF blocks; leaves unknown cells legacy', () => {
+    const { at } = cellsOf(['         ', ' WWWWWWW ', ' S...... ', ' _....?. ', ' ...M... ', '         ']);
+    expect(at(2, 1)?.mat).toBe(FloorMat.Boards);                     // band: under the back wall's art
+    expect(at(1, 2)?.mat).toBe(FloorMat.Boards);                     // stairsUp: the boards beside it
+    expect(at(1, 3)?.mat).toBe(FloorMat.Boards);                     // a walkable 0x3FF block (real3ff): floor
+    expect(at(4, 4)?.mat).toBe(FloorMat.Mat);
+    expect(at(4, 4)?.edges).toBe(0b1111);                            // boards N/E/W, the void S: a border all round
+    expect(at(6, 3)).toBeUndefined();                                // a blocked unknown cell no family claimed: legacy
+  });
+
+  it('keeps a cell another family surfaced, and gives a lone piece of furniture the room floor', () => {
+    const { a, ids } = fakeInterior(['         ', ' WWWWWWW ', ' ....... ', ' .TTTTT. ', ' .TTTTT. ', ' .TTTTT. ', ' ....... ', '         ']);
+    const claims = claimsWithTable(a, ids);
+    claims.claim(a.idx(1, 2), CLAIM_SURFACE);
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), claims);
+    expect(cells.some((c) => c.i === a.idx(1, 2))).toBe(false);
+    const mid = cells.find((c) => c.i === a.idx(4, 4))!;             // no walkable floor around it: the room's floorTile
+    expect(mid.mat).toBe(FloorMat.Boards);
+    expect(cells.every((c) => c.h === 0)).toBe(true);                // flat
+  });
+
+  it('gives one kind one tint per area', () => {
+    const { a, ids } = fakeInterior(['        ', ' WWWWWW ', ' ...... ', ' .rRr.. ', ' ...... ', '        '],
+      { R: { mt: 0x210, blocked: false, id: 'rug' } });
+    a.info.bottom.fill(0x001f, 0x206 * 256, 0x207 * 256);            // 'r': red
+    a.info.bottom.fill(0x7c00, 0x210 * 256, 0x211 * 256);            // 'R': blue
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), new Claims(a.N));
+    const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y))!;
+    expect(at(3, 3).tint).toEqual(at(2, 3).tint);
+    expect(at(3, 3).tint[0]).toBeGreaterThan(at(3, 3).tint[2]);      // the area's most common: red
+  });
+
+  it('packs kind and edges in the alpha byte', () => {
+    const { a } = fakeInterior(['    ', ' .. ', '    ']);
+    const data = encodeFloor(a, [{ i: 7, h: 0, mat: FloorMat.Rug, tint: [1, 0.5, 0], edges: 0b0101 }]);
+    expect([...data.subarray(28, 32)]).toEqual([255, 128, 0, (3 << 4) | 0b0101]);
+    expect([...data.subarray(24, 28)]).toEqual([255, 128, 0, (3 << 4) | 0b0101]);   // its neighbour: dilated
+  });
+
+  it('lays one flat quad per cell, facing up', () => {
+    const { a, cells } = cellsOf(['      ', ' WWWW ', ' .... ', '      ']);
+    const g = floorGeometry(a, cells);
+    expect(g.getAttribute('position').count).toBe(cells.length * 6);
+    const p = g.getAttribute('position'), n = g.getAttribute('normal');
+    const e1 = new THREE.Vector3().fromBufferAttribute(p, 1).sub(new THREE.Vector3().fromBufferAttribute(p, 0));
+    const e2 = new THREE.Vector3().fromBufferAttribute(p, 2).sub(new THREE.Vector3().fromBufferAttribute(p, 0));
+    expect(e1.cross(e2).y).toBeGreaterThan(0);
+    expect(n.getY(0)).toBe(1);
+  });
+});
+
+describe('interior floor program', () => {
+  it('keeps the terrain program text byte-identical (the cell fetch shared, not copied)', () => {
+    const m = terrainMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1));
+    // recorded from terrain.ts before TERRAIN_GRID_GLSL / TERRAIN_CELL_GLSL were split out of it
+    expect([m.fragColor!.length, sha(m.fragColor!)]).toEqual([2070, 'd304a329823af0e2b873b55ac48df2900440031b9db9deedad469a6ca805c6ae']);
+    expect([m.fragHead!.length, sha(m.fragHead!)]).toEqual([2020, '63f6cdb55d51cd71295994539b55ee3c5595aef1f7a7a8ab0366bcfe5c019794']);
+    const custom = terrainFragColor('/*WARP*/\n');                  // the battle ground's composition
+    expect([custom.length, sha(custom)]).toEqual([1818, '52c1510ceb927ba30fc17873c1687e397f0274723fbe7ee710c7b45131f0803b']);
+    expect(m.fragColor).toContain(TERRAIN_GRID_GLSL + '  // Organic borders');
+    expect(m.fragColor).toContain(TERRAIN_CELL_GLSL);
+  });
+
+  it('composes the terrain cell fetch, inlines the pinned board / tile text, declares no uFloor uniforms', () => {
+    const o = interiorFloorMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1));
+    expect(o.hookKey).toBe('interiorFloor');
+    const glsl = String(o.fragHead) + String(o.fragColor);
+    expect(o.fragColor).toContain(TERRAIN_GRID_GLSL);
+    expect(o.fragColor).toContain(TERRAIN_CELL_GLSL);
+    expect(o.fragColor).toContain(BOARDS_GLSL);
+    expect(o.fragColor).toContain(TILES_GLSL);
+    expect(o.fragColor).toContain('vec4 uFloor = vec4(0.0, 0.55, 0.38, 0.07);');
+    expect(o.fragColor).toContain('vec4 uFloor = vec4(1.0, 1.0, 0.22, 0.025);');
+    expect(glsl).not.toMatch(/uniform\s+vec[34]\s+uFloor/);
+    expect(glsl).not.toMatch(/kitFbm2|warp \+|texture\(/);           // no organic warp, no bilinear tint blend
+    expect(o.fragColor).not.toMatch(/\d\.\d{7,}/);                   // float literals stay short
+    // braces balance (the inlined blocks are closed)
+    expect([...glsl].filter((c) => c === '{').length).toBe([...glsl].filter((c) => c === '}').length);
+  });
+});
+
+describe('window light shafts', () => {
+  it('lays one shaft per window, from the glass to the floor, gone at night', () => {
+    const { a, ids } = fakeInterior(HOUSE);
+    const L = roomLayout(a, ids, [{ x: 5, y: 7, dest: 'LITTLEROOT_TOWN' }]);
+    const g = shaftGeometry(L)!; g.computeBoundingBox();
+    const w = windowRect(L, L.features[0]);
+    expect(g.boundingBox!.min.y).toBeCloseTo(0, 1);
+    expect(g.boundingBox!.max.y).toBeLessThanOrEqual(w.y1 + 1e-3); expect(g.boundingBox!.max.y).toBeGreaterThan(w.y0);
+    expect(g.boundingBox!.min.x).toBeGreaterThanOrEqual(w.x0 - 1e-3); expect(g.boundingBox!.max.z).toBeGreaterThan(3 - RECESS);
+    const m = roomShaftMaterial(0.4);
+    expect(m.transparent).toBe(true); expect(m.depthWrite).toBe(false); expect(m.blending).toBe(THREE.AdditiveBlending);
+    expect(String(m.fragEmissive ?? '') + String(m.fragColor ?? '')).toContain('uOutdoorNight');
+    expect(m.hookKey).toBe('roomShaft');
+    expect(m.uniforms!.uShaftAlpha.value).toBe(0.4);
+  });
+
+  it('slants 0.6 south per unit fall, carries across/along colours, one strip per window, none without', () => {
+    const { a, ids } = fakeInterior(['          ', ' WOOWWOWW ', ' WOOWWOWW ', ' ........ ', ' ........ ', '          ']);
+    const L = roomLayout(a, ids, []);
+    expect(L.features.filter((f) => f.kind === 'window')).toHaveLength(2);
+    const g = shaftGeometry(L)!;
+    expect(g.getAttribute('position').count).toBe(8);
+    expect(g.getIndex()!.count).toBe(12);
+    const p = g.getAttribute('position'), c = g.getAttribute('color');
+    const w = windowRect(L, L.features[0]);
+    // corner 0 at the glass (along 0), corner 3 on the floor (along 1), 0.6 south per unit of fall
+    expect(p.getZ(0)).toBeCloseTo(w.z, 5);
+    expect(p.getZ(3) - p.getZ(0)).toBeCloseTo(SHAFT_SLANT * (p.getY(0) - p.getY(3)), 5);
+    expect([c.getX(0), c.getY(0), c.getX(2), c.getY(2)]).toEqual([0, 0, 1, 1]);
+    const { a: a2, ids: ids2 } = fakeInterior(['        ', ' WWWWWW ', ' ...... ', '        ']);
+    expect(shaftGeometry(roomLayout(a2, ids2, []))).toBeNull();
+  });
+});
