@@ -406,7 +406,8 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
 - [x] 5 room layout + colours (cb9a42e, fix 8dcb26e: dividing walls → partition runs on 8 maps, 5 invariants, 15 pinned layouts; 0 findings on 138 maps)
 - [x] 6 integration (f197318: families on in-scope maps, cutaway, clock-driven room light — night room 0.61× day, actors 0.94–0.97×; review approved)
 - [x] 7 shell (ac2c011, eaa7684) · [x] 8 floors + shafts (466ec2b, 11fda55) · [x] 9 furniture I (0e2940c, 0d23314) · [x] 10 furniture II (4c77c57, 36b107c, 0e1142a, fix 78ef9f5: nurse/clerks visible from the chest up, no navy outlines) — alcove cutaway follow-up 31e9d86 + e39299b; join f5558cb (furniture catalogue)
-- [x] 11 legacy HD (d1d6159) · [x] 12 smoke/coverage/live (871b654: coverage avg 4.5 %, worst 16.7 %; Dept Store rooftop ruled out of scope → 137 maps; dusk gate added, actor light fixed in ddf2577: dusk actors 0.96–0.97× day) · [ ] 13 perf/docs
+- [x] 11 legacy HD (d1d6159) · [x] 12 smoke/coverage/live (871b654: coverage avg 4.5 %, worst 16.7 %; Dept Store rooftop ruled out of scope → 137 maps; dusk gate added, actor light fixed in ddf2577: dusk actors 0.96–0.97× day) · [x] 13 perf/docs (be94f11, 7f5e0b9: worst A/B i_lab_night +1.58/+1.44 ms vs +1.5 → floor shader optimisation; rebuild ≤ 21 ms; ≤ 55 calls)
+- [ ] Final review (3 parallel area reviews) + floor-shader optimisation · [ ] merge
 - Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles. Group C gate (`tC-gate`): Retro and everything out of scope 0.00 %; only in-scope Modern interiors change; night rooms 0.61–0.63× day, actors 0.93–0.97×; door walks 1 build, 0 compiles.
 - Rulings so far: walkable furniture = low seats (≤ 0.45); chairs/plants one per cell; flat indoor floors; dividing
   walls = half-height partitions (Task 7); battles in rooms don't follow the clock (F38); Dept Store rooftop → Task 12.
