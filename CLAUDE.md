@@ -30,13 +30,15 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - `npm run regress -- --label x [--style retro] [--only littleroot,oldale] [--hours 11,21]` — visual regression:
   16 maps → `out/regress/x/` (PNGs, `_sheet_h11.png` / `_sheet_h21.png` contact sheets, `stats.json`
   calls/triangles/buildMs, plus rebuildMs/firstFrameMs = a map crossing's cost); compare against `out/regress/before` (pre-Phase-1 baseline) or `phase1`
-- `npm run regress:live -- --label x --static --gpu --selftest --compare p2-base` — deterministic live visual
+- `npm run regress:live -- --label x --static --gpu --selftest --compare p3-base` — deterministic live visual
   regression (`tools/regress-live.ts`, header documents every flag): save states replayed in manual mode (`?manual=1`: no
   frame loop, fixed RTC and clock; `emu.step(keys, frames)` emulates + renders and returns each frame's renderer CPU ms,
   `emu.gpuFrames(n, keys)` times frames with GPU timer queries) plus, with `--static`, map previews with their object
   events (`?map=G.N&actors=1`); both styles → `out/regress-live/x/` (PNGs, `_sheet_*`, `_crops.png`, `stats.json`:
-  calls/triangles/programs, stepMsMax, gpuMs/cpuMs with `--gpu`, actorLum Modern/Retro). `--compare p2-base` diffs against the pre-Phase-2
-  baseline: Retro must stay 0.00 % (only `lr_truck`/`littleroot_npcs` differ: the composed truck, Task 10).
+  calls/triangles/programs, stepMsMax, gpuMs/cpuMs with `--gpu`, actorLum Modern/Retro). `--compare p3-base` diffs against the pre-Phase-3
+  baseline (the current gate: Retro must stay 0.00 %). `p2-base` (pre-Phase-2) lacks every entry added later (`b_*`,
+  `battle_grass`/`enter`/`exit`/…, `gba_`/`ref_`), and a missing reference fails the run: compare against it only with
+  `--only` of the pre-Phase-3 entries (there only `lr_truck`/`littleroot_npcs` differ: the composed truck).
   `--selftest`: GPU inflation field + xBR vs CPU references. `--ab`: same-session cost of the Phase 2 actors vs flat
   cards (frame-interleaved; `--ab-aa` = noise floor, `--ab-feature npcfade`); budgets are judged this way, never
   against stored gpuMs (the Intel iGPU drifts 6–14 ms between sessions). Also `--only a,b`, `--styles modern`,

@@ -95,7 +95,7 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   - *The Sky Pillar* for Rayquaza: a broken stone floor over a sea of clouds.
 
   The two platforms are modelled per terrain: an earth disc with a grass skirt, a sand mound, a
-  stone slab, a lily pad, or cave rock. Colours are sampled from the battle background the game
+  stone slab, a lily pad, cave rock, a rock on the sea floor, or a ripple ring on open water. Colours are sampled from the battle background the game
   loads from your ROM, so every arena keeps the GBA's palette. Outdoor battles share the
   overworld's time of day. A gradient sky with soft clouds sits over the outdoor arenas. The
   battle camera looks down at the GBA's angle, so the sky shows only in water reflections and as
@@ -104,8 +104,9 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   setting applies to them. A floating Pokémon's shadow lies flat on its platform.
   What stays 2D: move-effect sprites are flat cards in 3D space, as before. Health boxes, text
   boxes and menus are the crisp original screen on top, and so are full-screen background move
-  effects. Every shader a battle can draw is compiled at boot, so a battle starts without a
-  stall. **Retro 3D** keeps the original themed arena with flat cards, unchanged. A world-style
+  effects. Every shader a battle can draw is compiled at boot, so no shader compiles when a battle
+  starts (the first battle of each arena type in a session still builds its scenery once: one
+  longer frame, about 0.1 s, during the battle's opening transition). **Retro 3D** keeps the original themed arena with flat cards, unchanged. A world-style
   switch in the middle of a battle applies at once, and V shows the original GBA screen at any
   point.
 - **Menus and cutscenes** are shown as the crisp original screen on an ambilight backdrop.
@@ -193,6 +194,8 @@ their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one o
   - Move effects the GBA draws semi-transparent or brightened show opaque at normal brightness.
   - Full-screen background move effects stay a flat 2D layer over the 3D scene.
   - A few moves (Dig, Memento, Mimic) can show a flat copy of the Pokémon beside its 3D sprite.
+  - During full-screen fades (a battle starting or ending) the Pokémon darken a little more than
+    the rest of the scene for a moment.
 - Battle arenas (Modern), what they don't do:
   - The sky shows only in water reflections and cloud shadows: the camera never frames the horizon.
   - Double battles reuse the two single-battle platforms: a side's two Pokémon share one, and
