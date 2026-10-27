@@ -59,7 +59,8 @@ function blankLook(): ArenaLook {
 }
 
 /** outdoor and water settings: timeOfDay(hour), night = nightFactor(hour), fog 30..80, clouds 1; sky (rayquaza): the
- *  same with the fog lerped 0.5 towards the backdrop, fog 25..90; underwater: sun (0.7, 0.95, 1.0) × 1.7, sky (0.5, 0.82,
+ *  same with the fog lerped 0.5 × (1 − night) towards the backdrop (by day half-way; at night the hour's own), fog
+ *  25..90; underwater: sun (0.7, 0.95, 1.0) × 1.7, sky (0.5, 0.82,
  *  0.95), hemi 1.7, fog (0.3, 0.64, 0.8) 10..42, caustics 1; cave (cave, cavePond, groudon, kyogre): CAVE_LIGHT;
  *  indoor: today's indoor battle light (sun 1.6, hemi 1.6) in warm white,
  *  fog = new THREE.Color(...toLinear(palette.wall)) × 0.6, 22..60, night 0.
@@ -84,7 +85,10 @@ export function arenaLook(kind: ArenaKind, palette: ArenaPalette, hour: number, 
       o.fogNear = 30;
       o.fogFar = 80;
       if (ARENA_SETTING[kind] === 'sky') {
-        o.fog.lerp(lin.wall, 0.5);
+        // (the pull fades with the daylight: at night the backdrop — the pale day colour — would leave the far clouds and
+        // the sky's horizon glowing over a moonlit floor, ≈ 8× the night fog of every other open sky; by day, night 0,
+        // it is the half it always was)
+        o.fog.lerp(lin.wall, 0.5 * (1 - o.night));
         o.fogNear = 25;
         o.fogFar = 90;
       }
