@@ -717,6 +717,28 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
     expect(shown).toBeGreaterThanOrEqual(2);
   });
 
+  it("breaks each stump's top as one closed fan: every triangle of it meets the axis at the same point (no slits)", () => {
+    // (the break's fan apex was rolled per triangle: neighbours met the axis up to 0.175 apart, see-through slits from the
+    // rim to the axis on a FrontSide material)
+    const arena = new ModernArena(createKitUniforms());
+    expect(arena.build('rayquaza', defaultArenaColors('rayquaza'), 'medium')).toBe(true);
+    const p = (arena.group.getObjectByName('skyPillarStone') as THREE.Mesh).geometry.getAttribute('position');
+    for (const s of stumpPlacements(STAGE)) {
+      const apex = new Set<number>();
+      let n = 0;
+      for (let i = 0; i < p.count; i++) {
+        if (Math.abs(p.getX(i) - s.x) > 1e-4 || Math.abs(p.getZ(i) - s.z) > 1e-4) continue;
+        n++;
+        apex.add(p.getY(i));
+      }
+      // (one corner of each of its 14 break triangles on the axis)
+      expect(n, `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(14);
+      expect([...apex].length, `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}): apex heights`).toBe(1);
+      expect([...apex][0]).toBeLessThan(GROUND_Y + s.height);
+    }
+    arena.dispose();
+  });
+
   it('builds the Sky Pillar: its stone (cliff, casting) and its clouds (soil, no shadow, after the floor)', () => {
     const arena = new ModernArena(createKitUniforms());
     expect(arena.build('rayquaza', defaultArenaColors('rayquaza'), 'medium')).toBe(true);

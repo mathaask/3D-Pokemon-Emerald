@@ -133,12 +133,13 @@ function stumpGeometry(seed: number, radius: number, height: number, color: RGB)
     }
   }
   const y0 = ph + 0.3, taper = (y: number) => radius * (1 - 0.04 * (y / Math.max(1, height)));
+  // the break: a fan from the rim to its middle, a little lower — one middle for the whole fan (one per triangle left
+  // slits from the rim to the axis between them)
+  const mid: V3 = [0, height - 0.35 * Math.min(1, height * 0.6) * (0.5 + r() * 0.5), 0];
   for (let q = 0; q < N; q++) {
     const am = ((q + 0.5) / N) * Math.PI * 2, h0 = breakH[q], h1 = breakH[(q + 1) % N];
     // (a flute: every other face a little darker)
     s.quad(ring(q, radius, y0), ring(q + 1, radius, y0), ring(q + 1, taper(h1), h1), ring(q, taper(h0), h0), [Math.cos(am), 0, Math.sin(am)], q % 2 ? scale(c, 0.93) : c);
-    // the break: a fan to its middle, a little lower
-    const mid: V3 = [0, height - 0.35 * Math.min(1, height * 0.6) * (0.5 + r() * 0.5), 0];
     s.tri(ring(q, taper(h0), h0), ring(q + 1, taper(h1), h1), mid, [0, 1, 0], scale(fresh, 0.95 + 0.1 * r()));
   }
   return s;
