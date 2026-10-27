@@ -12,6 +12,7 @@ import {
 } from './geom/floorPatterns';
 import type { InteriorCatalogueEntry } from './index';
 import { roomLayout } from './room';
+import { glazedWindows } from './geom/shellParts';
 
 export { encodeFloor, floorCells, FloorMat, interiorFloorMaterial, type FloorCell } from './geom/floorPatterns';
 
@@ -41,13 +42,16 @@ export const floorFamily: Family<FloorCell[]> = {
       mesh.castShadow = false;
       group.add(mesh);
     }
-    const shafts = shaftGeometry(roomLayout(a, interiorIds(a), events.warps));
+    const L = roomLayout(a, interiorIds(a), events.warps);
+    const shafts = shaftGeometry(L, glazedWindows(a, L));
     if (shafts) {
       const mesh = new THREE.Mesh(shafts, kitMaterial(kit.uniforms, roomShaftMaterial(SHAFT_ALPHA)).material);
       mesh.name = 'shafts';
       mesh.castShadow = false;
       mesh.receiveShadow = false;
-      mesh.renderOrder = 1;   // after the room's other transparent surfaces (the glass): light over them
+      // after the other transparent draws (blob and contact shadows, cards), so none blends over the added light (the
+      // glass is opaque: its fade is a dithered discard, it draws in the opaque pass)
+      mesh.renderOrder = 1;
       // (every window is in the back wall, N: the shafts are cut away with it — no light from a hidden window)
       mesh.userData.wallDir = 'N';
       group.add(mesh);

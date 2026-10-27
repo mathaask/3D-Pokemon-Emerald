@@ -27,18 +27,22 @@ import { floorLook } from '../colors';
 import {
   BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, FLOOR_SEAM_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL,
 } from '../floorGlsl';
-import { RECESS, heightMode, votesHeight, walkable, windowRect, type RoomLayout } from '../room';
+import { RECESS, heightMode, votesHeight, walkable, windowRect, type RoomLayout, type WallFeature } from '../room';
 
 export const enum FloorMat { Boards = 0, Tiles = 1, Carpet = 2, Rug = 3, Mat = 4 }
 /** edges: bit 0 N, 1 E, 2 S, 3 W — the neighbour on that side is another floor kind (rugs and mats draw their border).
  *  north: where the cell's quad starts, in cells south of its north side (absent: 0, the whole cell). The back wall's
  *  recess row starts at the wall's inner face (BAND_RECESS_NORTH); a band row north of it has no quad (BAND_HIDDEN):
- *  claimed, so nothing draws behind the wall, but no floor. */
+ *  claimed, so nothing draws behind the wall, but no floor. A room row under void whose back wall still stands in the
+ *  recess (room.ts edgeOf: a back line with no band above it) reaches into it (VOID_RECESS_NORTH). */
 export interface FloorCell { i: number; h: number; mat: FloorMat; tint: RGB; edges: number; north?: number }
 /** A back-wall recess row's quad: from the wall's inner face (RECESS north of the back line) south. */
 export const BAND_RECESS_NORTH = 1 - RECESS;
 /** A band cell north of the recess row: behind the back wall, no quad. */
 export const BAND_HIDDEN = 1;
+/** A room row under void (no band north of it): its quad from the back wall's inner face, RECESS north of the row (review
+ *  B M7: else a strip of the recess has no floor; no in-scope map has one today). */
+export const VOID_RECESS_NORTH = -RECESS;
 
 export const FLOOR_MAT: Readonly<Record<FloorKind, FloorMat>> = {
   boards: FloorMat.Boards, tiles: FloorMat.Tiles, carpet: FloorMat.Carpet, rug: FloorMat.Rug, mat: FloorMat.Mat,
@@ -229,6 +233,10 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     if (L.band[i] && !L.partition[i]) {
       const s = a.inside(x, y + 1) ? a.idx(x, y + 1) : -1;
       cell.north = s >= 0 && L.inside[s] ? BAND_RECESS_NORTH : BAND_HIDDEN;
+    } else if (L.inside[i]) {
+      // (room.ts edgeOf: a room row's back wall stands in the recess unless room or a partition lies north of it)
+      const n = a.inside(x, y - 1) ? a.idx(x, y - 1) : -1;
+      if (n < 0 || (!L.inside[n] && !L.band[n])) cell.north = VOID_RECESS_NORTH;
     }
     cells.push(cell);
   }
@@ -236,7 +244,8 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
 }
 
 /** RGBA8 per analysis cell: rgb = sRGB tint, a = mat << 4 | edges. A texel without a floor cell copies a 4-neighbour's
- *  (first in +x, −x, +y, −y), so a fragment on a cell's very border never fetches black. */
+ *  (first in +x, −x, +y, −y), so a fragment on a cell's very border never fetches black; the one north of a cell whose
+ *  quad reaches into it (VOID_RECESS_NORTH) copies that cell's first. */
 export function encodeFloor(a: MapAnalysis, cells: readonly FloorCell[]): Uint8Array {
   const data = new Uint8Array(a.N * 4);
   const has = new Uint8Array(a.N);
@@ -249,6 +258,8 @@ export function encodeFloor(a: MapAnalysis, cells: readonly FloorCell[]): Uint8A
     has[c.i] = 1;
   }
   const W = a.GW, H = a.GH;
+  for (const c of cells) if ((c.north ?? 0) < 0 && c.i >= W && !has[c.i - W]) data.copyWithin((c.i - W) * 4, c.i * 4, c.i * 4 + 4);
+  for (const c of cells) if ((c.north ?? 0) < 0 && c.i >= W) has[c.i - W] = 1;
   for (let i = 0; i < a.N; i++) {
     if (has[i]) continue;
     const col = i % W, row = (i - col) / W;
@@ -270,7 +281,7 @@ export function floorTexture(a: MapAnalysis, cells: readonly FloorCell[]): THREE
 }
 
 /** The floor's flat quads, one per cell at its height (un-projected: world (x, h, y + h)) from its `north` edge south
- *  (none at BAND_HIDDEN), facing up: non-indexed position + normal (the material reads no colours or UVs). */
+ *  (none at BAND_HIDDEN; north of the cell at VOID_RECESS_NORTH), facing up: non-indexed position + normal (the material reads no colours or UVs). */
 export function floorGeometry(a: MapAnalysis, cells: readonly FloorCell[]): THREE.BufferGeometry {
   const drawn = cells.filter((c) => (c.north ?? 0) < 1);
   const pos = new Float32Array(drawn.length * 18);
@@ -404,12 +415,12 @@ export const SHAFT_SLANT = 0.6;
 /** The shafts' daylight (linear, emissive: the additive blend adds it × the strip's alpha). */
 export const SHAFT_LIGHT: RGB = [1.0, 0.94, 0.8];
 
-/** One soft strip per window feature: from its glass (`windowRect(L, f)`, the rectangle the shell glazes) down and into
- *  the room (slant 0.6 south per unit fall) to the floor, vertex colours r = across (0..1), g = along (0 window … 1 floor).
+/** One soft strip per glazed window (`windows`: shellParts' `glazedWindows`, the shell's own "is a window" rule, so no
+ *  beam falls from a decal): from its glass (`windowRect(L, f)`, the rectangle the shell glazes) down and into the room (slant 0.6 south per unit fall) to the floor, vertex colours r = across (0..1), g = along (0 window … 1 floor).
  *  The strip is the beam's middle sheet: from the glass's mid height at its own width, straight down the slant to the
  *  floor of the window's wall (its N run's floorY). Indexed position + normal + colour; null without windows. */
-export function shaftGeometry(L: RoomLayout): THREE.BufferGeometry | null {
-  const wins = L.features.filter((w) => w.kind === 'window');
+export function shaftGeometry(L: RoomLayout, windows: readonly WallFeature[]): THREE.BufferGeometry | null {
+  const wins = windows;
   if (!wins.length) return null;
   const pos: number[] = [], nor: number[] = [], col: number[] = [], index: number[] = [];
   const nl = Math.hypot(SHAFT_SLANT, 1);
@@ -460,14 +471,16 @@ const SHAFT_EMISSIVE = /* glsl */ `
 
 /** transparent, depthWrite false, blending AdditiveBlending (an additive volume, spec §8), emissive daylight ×
  *  (1 − uOutdoorNight) (D8: none at night); alpha through a uniform; hookKey 'roomShaft'. Black and metallic, so
- *  the lights add nothing to it (no diffuse, no specular): only the emissive daylight × the alpha adds. */
+ *  the lights add nothing to it (no diffuse, no specular): only the emissive daylight × the alpha adds. Front side only
+ *  (review B M3: a DoubleSide transparent material draws twice): the strip faces up and south, and its back shows only
+ *  from north of its window's wall, where the cutaway hides the wall and the shafts with it. */
 export function roomShaftMaterial(alpha: number): KitMaterialOptions & { blending: THREE.Blending } {
   return {
     color: 0x000000,
     vertexColors: true,
     roughness: 1,
     metalness: 1,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,

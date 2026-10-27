@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { encodeFloor, floorCells, floorFamily, FloorMat, FLOOR_CATALOGUE } from '../src/render/kit/interior/floors';
 import { roomShaftMaterial, shaftGeometry } from '../src/render/kit/interior/shafts';
 import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
+import { glazedWindows } from '../src/render/kit/interior/geom/shellParts';
 import { CLAIM_OBJECT, CLAIM_SURFACE, Claims } from '../src/render/overworld/claims';
 import { createKitUniforms } from '../src/render/kit/materials';
 import type { MapAnalysis } from '../src/render/overworld/analyze';
@@ -45,7 +46,7 @@ describe('interior floors', () => {
   it('lays one shaft per window, from the glass to the floor, gone at night', () => {
     const { a, ids } = fakeInterior(HOUSE);
     const L = roomLayout(a, ids, [{ x: 5, y: 7, dest: 'LITTLEROOT_TOWN' }]);
-    const g = shaftGeometry(L)!; g.computeBoundingBox();
+    const g = shaftGeometry(L, glazedWindows(a, L))!; g.computeBoundingBox();
     const w = windowRect(L, L.features[0]);
     expect(g.boundingBox!.min.y).toBeCloseTo(0, 1);
     expect(g.boundingBox!.max.y).toBeLessThanOrEqual(w.y1 + 1e-3); expect(g.boundingBox!.max.y).toBeGreaterThan(w.y0);

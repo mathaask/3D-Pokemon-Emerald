@@ -4,10 +4,11 @@ import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  BAND_HIDDEN, BAND_RECESS_NORTH, encodeFloor, floorCells, floorGeometry, FloorMat, floorTint, FLOOR_SAT_KNEE, FLOOR_SAT_SLOPE, interiorFloorMaterial, roomShaftMaterial,
+  BAND_HIDDEN, BAND_RECESS_NORTH, VOID_RECESS_NORTH, encodeFloor, floorCells, floorGeometry, FloorMat, floorTint, FLOOR_SAT_KNEE, FLOOR_SAT_SLOPE, interiorFloorMaterial, roomShaftMaterial,
   shaftGeometry, SHAFT_SLANT,
 } from '../src/render/kit/interior/geom/floorPatterns';
 import { roomLayout, windowRect, RECESS } from '../src/render/kit/interior/room';
+import { glazedWindows } from '../src/render/kit/interior/geom/shellParts';
 import {
   BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_GLSL, BOARDS_SHADE_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_GLSL, TILES_SHADE_GLSL,
 } from '../src/render/kit/interior/floorGlsl';
@@ -76,6 +77,30 @@ describe('interior floor cells', () => {
       const z = pos.getZ(k) - pos.getY(k);
       if (bl >= 0) expect(z, `vertex ${k}`).toBeGreaterThanOrEqual(bl - RECESS - 1e-6);
     }
+  });
+
+  // review B M7: a room row under void is its column's back line, and its back wall stands RECESS north of it
+  it('floors the recess of a back wall over void (a corridor between two rooms)', () => {
+    const { a, ids } = fakeInterior(['           ', ' WWW   WWW ', ' ......... ', ' ......... ', '           ']);
+    const L = roomLayout(a, ids, []);
+    expect(L.runs.filter((r) => r.dir === 'N')).toEqual([{ dir: 'N', line: 2 - RECESS, from: 1, to: 10, floorY: 0 }]);
+    const cells = floorCells(a, ids, L, new Claims(a.N));
+    const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y));
+    for (const x of [4, 5, 6]) expect(at(x, 2)?.north, `${x}`).toBe(VOID_RECESS_NORTH);
+    expect(at(3, 2)?.north).toBeUndefined();                         // under the band: the band cell floors the recess
+    expect(at(3, 1)?.north).toBe(BAND_RECESS_NORTH);
+    expect(at(5, 3)?.north).toBeUndefined();
+    // the floor is closed up to the wall's inner face: each column's northernmost vertex at z = 2 − RECESS
+    const pos = floorGeometry(a, cells).getAttribute('position');
+    const north = new Map<number, number>();
+    for (let k = 0; k < pos.count; k++) {
+      const x = Math.floor(Math.min(pos.getX(k), 9.5));
+      north.set(x, Math.min(north.get(x) ?? Infinity, pos.getZ(k)));
+    }
+    for (let x = 1; x < 10; x++) expect(north.get(x), `${x}`).toBe(2 - RECESS);
+    // the strip's fragments fetch the void cell north of the row: it carries the row's texel
+    const tex = encodeFloor(a, cells), o = (x: number, y: number) => a.idx(x, y) * 4;
+    for (const x of [4, 5, 6]) expect([...tex.subarray(o(x, 1), o(x, 1) + 4)]).toEqual([...tex.subarray(o(x, 2), o(x, 2) + 4)]);
   });
 
   it('keeps a cell another family surfaced, and gives a lone piece of furniture the room floor', () => {
@@ -219,7 +244,7 @@ describe('window light shafts', () => {
   it('lays one shaft per window, from the glass to the floor, gone at night', () => {
     const { a, ids } = fakeInterior(HOUSE);
     const L = roomLayout(a, ids, [{ x: 5, y: 7, dest: 'LITTLEROOT_TOWN' }]);
-    const g = shaftGeometry(L)!; g.computeBoundingBox();
+    const g = shaftGeometry(L, glazedWindows(a, L))!; g.computeBoundingBox();
     const w = windowRect(L, L.features[0]);
     expect(g.boundingBox!.min.y).toBeCloseTo(0, 1);
     expect(g.boundingBox!.max.y).toBeLessThanOrEqual(w.y1 + 1e-3); expect(g.boundingBox!.max.y).toBeGreaterThan(w.y0);
@@ -228,6 +253,7 @@ describe('window light shafts', () => {
     expect(m.transparent).toBe(true); expect(m.depthWrite).toBe(false); expect(m.blending).toBe(THREE.AdditiveBlending);
     expect(String(m.fragEmissive ?? '') + String(m.fragColor ?? '')).toContain('uOutdoorNight');
     expect(m.hookKey).toBe('roomShaft');
+    expect(m.side).toBe(THREE.FrontSide);                            // one pass (review B M3)
     expect(m.uniforms!.uShaftAlpha.value).toBe(0.4);
   });
 
@@ -235,7 +261,7 @@ describe('window light shafts', () => {
     const { a, ids } = fakeInterior(['          ', ' WOOWWOWW ', ' WOOWWOWW ', ' ........ ', ' ........ ', '          ']);
     const L = roomLayout(a, ids, []);
     expect(L.features.filter((f) => f.kind === 'window')).toHaveLength(2);
-    const g = shaftGeometry(L)!;
+    const g = shaftGeometry(L, glazedWindows(a, L))!;
     expect(g.getAttribute('position').count).toBe(8);
     expect(g.getIndex()!.count).toBe(12);
     const p = g.getAttribute('position'), c = g.getAttribute('color');
@@ -245,6 +271,19 @@ describe('window light shafts', () => {
     expect(p.getZ(3) - p.getZ(0)).toBeCloseTo(SHAFT_SLANT * (p.getY(0) - p.getY(3)), 5);
     expect([c.getX(0), c.getY(0), c.getX(2), c.getY(2)]).toEqual([0, 0, 1, 1]);
     const { a: a2, ids: ids2 } = fakeInterior(['        ', ' WWWWWW ', ' ...... ', '        ']);
-    expect(shaftGeometry(roomLayout(a2, ids2, []))).toBeNull();
+    const L2 = roomLayout(a2, ids2, []);
+    expect(shaftGeometry(L2, glazedWindows(a2, L2))).toBeNull();
+  });
+
+  // review B M2: the shafts take the shell's own "is a window" rule (glazedWindows): a window drawn on a partition is a
+  // decal, so no beam falls from it
+  it('lays no shaft from a window the shell draws as a decal (on a partition)', () => {
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' ........ ', ' ..OOWW.. ', ' ........ ', '          ']);
+    const L = roomLayout(a, ids, []);
+    const win = L.features.filter((f) => f.kind === 'window');
+    expect(win).toHaveLength(1);
+    expect(L.partition[win[0].cells[0]]).toBe(1);
+    expect(glazedWindows(a, L)).toEqual([]);
+    expect(shaftGeometry(L, glazedWindows(a, L))).toBeNull();
   });
 });

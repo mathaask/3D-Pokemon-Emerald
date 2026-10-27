@@ -498,11 +498,56 @@ export function featureRole(L: RoomLayout, runs: readonly ShellRun[], f: WallFea
   return 'decal';
 }
 
-/** The features the shell draws as decals (featureRole; a window whose opening would overlap another one also becomes
- *  one at build, never seen on the 137 in-scope maps). */
-export function shellDecals(a: MapAnalysis, L: RoomLayout): WallFeature[] {
+/** Where the shell cuts its openings: the outer runs; per run its openings; the doorways it opened (on their run); the
+ *  windows it glazes (featureRole 'window' whose opening overlaps no other one, on their run); what it could not place.
+ *  Doorways first, then the windows in feature order. */
+interface OpeningPlan {
+  runs: ShellRun[];
+  openings: Map<ShellRun, (Opening & { door: boolean })[]>;
+  doors: { d: DoorGap; r: ShellRun }[];
+  glazed: Map<WallFeature, ShellRun>;
+  skipped: string[];
+}
+
+/** The openings the shell cuts (OpeningPlan). */
+function planOpenings(a: MapAnalysis, L: RoomLayout): OpeningPlan {
   const runs = shellRuns(a, L);
-  return L.features.filter((f) => featureRole(L, runs, f) === 'decal');
+  const openings = new Map<ShellRun, (Opening & { door: boolean })[]>();
+  const doors: OpeningPlan['doors'] = [], glazed = new Map<WallFeature, ShellRun>(), skipped: string[] = [];
+  const open = (r: ShellRun, o: Opening & { door: boolean }) => {
+    const list = openings.get(r) ?? [];
+    if (list.some((q) => q.from < o.to && o.from < q.to)) return false;
+    list.push(o);
+    openings.set(r, list);
+    return true;
+  };
+  for (const d of L.doors as readonly DoorGap[]) {
+    const r = runs.find((q) => q.dir === d.dir && q.line === d.line && q.from <= d.from && d.to <= q.to);
+    if (!r || !open(r, { from: d.from, to: d.to, h0: -1, h1: LINTEL_H, door: true })) { skipped.push(`door ${d.dir} ${d.line} [${d.from}, ${d.to})`); continue; }
+    doors.push({ d, r });
+  }
+  for (const f of L.features) {
+    if (featureRole(L, runs, f) !== 'window') continue;
+    const w = windowRect(L, f);
+    const r = runs.find((q) => q.dir === 'N' && q.line === w.z && q.from < f.x1 && f.x0 < q.to);
+    if (!r) continue;
+    if (open(r, { from: w.x0, to: w.x1, h0: w.y0, h1: w.y1, door: false })) glazed.set(f, r);
+    else skipped.push(`window ${f.x0}…${f.x1} overlaps another opening: a decal`);
+  }
+  return { runs, openings, doors, glazed, skipped };
+}
+
+/** The windows the shell glazes, in feature order: the one "is a window" rule (the floor family's shafts read it too). */
+export function glazedWindows(a: MapAnalysis, L: RoomLayout): WallFeature[] {
+  const { glazed } = planOpenings(a, L);
+  return L.features.filter((f) => glazed.has(f));
+}
+
+/** The features the shell draws as decals: neither a clock nor a glazed window (featureRole; a window whose opening
+ *  would overlap another one too, never seen on the 137 in-scope maps). */
+export function shellDecals(a: MapAnalysis, L: RoomLayout): WallFeature[] {
+  const { glazed } = planOpenings(a, L);
+  return L.features.filter((f) => f.kind !== 'clock' && !glazed.has(f));
 }
 
 export interface ShellInput {
@@ -537,43 +582,26 @@ const recordOf = <T>(f: () => T): Record<WallDir, T> => ({ N: f(), E: f(), S: f(
 export function buildShellSoups(inp: ShellInput): ShellSoups {
   const { a, L, colors } = inp;
   const C = shellPalette(colors);
-  const runs = shellRuns(a, L);
+  const { runs, openings, doors, glazed, skipped } = planOpenings(a, L);
   const walls = recordOf(() => new Soup()), fixtures = recordOf(() => new Soup());
   const glass = new Soup(), partitions = new Soup();
-  const skipped: string[] = [];
-  const openings = new Map<ShellRun, (Opening & { door: boolean })[]>();
-  const runAt = (dir: WallDir, line: number, from: number, to: number) =>
-    runs.find((r) => r.dir === dir && r.line === line && r.from <= from && to <= r.to);
-  const open = (r: ShellRun, o: Opening & { door: boolean }) => {
-    const list = openings.get(r) ?? [];
-    if (list.some((p) => p.from < o.to && o.from < p.to)) return false;
-    list.push(o);
-    openings.set(r, list);
-    return true;
-  };
 
   // doorways
-  for (const d of L.doors as readonly DoorGap[]) {
-    const r = runAt(d.dir, d.line, d.from, d.to);
-    if (!r || !open(r, { from: d.from, to: d.to, h0: -1, h1: LINTEL_H, door: true })) { skipped.push(`door ${d.dir} ${d.line} [${d.from}, ${d.to})`); continue; }
-    addDoor(fixtures[d.dir], r, d.from, d.to, colors.trim);
-  }
+  for (const { d, r } of doors) addDoor(fixtures[d.dir], r, d.from, d.to, colors.trim);
 
   // wall art: windows on a back wall's run, clocks, the rest (and anything on a partition but clocks) decals
   const decals: WallFeature[] = [], decalRects: Omit<DecalQuad, 'uv'>[] = [];
   for (const f of L.features) {
-    const part = onPartition(L, f), role = featureRole(L, runs, f);
+    const part = onPartition(L, f);
     const z = windowRect(L, f).z;
     const r = part ? undefined : runs.find((q) => q.dir === 'N' && q.line === z && q.from < f.x1 && f.x0 < q.to);
     const fy = r ? r.floorY : (L.runs.find((q) => q.partition) ?? L.runs[0])?.floorY ?? 0;
-    if (role === 'window' && r) {
+    const g = glazed.get(f);
+    if (g) {
       const w = windowRect(L, f);
-      if (open(r, { from: w.x0, to: w.x1, h0: w.y0, h1: w.y1, door: false })) {
-        const size: WindowSize = { ...WINDOW, width: w.x1 - w.x0, height: w.y1 - w.y0, sill: w.y0 };
-        addWindow(fixtures.N, glass, wallFrameAt([0, fy, z + fy], [1, 0, 0], [0, 0, 1], [r.from, r.to]), (w.x0 + w.x1) / 2, colors.trim, size);
-        continue;
-      }
-      skipped.push(`window ${f.x0}…${f.x1} overlaps another opening: a decal`);
+      const size: WindowSize = { ...WINDOW, width: w.x1 - w.x0, height: w.y1 - w.y0, sill: w.y0 };
+      addWindow(fixtures.N, glass, wallFrameAt([0, g.floorY, z + g.floorY], [1, 0, 0], [0, 0, 1], [g.from, g.to]), (w.x0 + w.x1) / 2, colors.trim, size);
+      continue;
     }
     if (f.kind === 'clock') {
       const [s0, s1] = part ? PARTITION_SPAN : WALL_SPAN;
