@@ -6,7 +6,7 @@ import { BATTLE_CAMERA, STAGE, GROUND_Y } from '../src/render/battle/stage';
 import * as THREE from 'three';
 import { HALL_PART, PANEL, SEATS, SHELF, SHELL, bannerGeometry, hallColors, hallLayout, seatTiers, wallFrame, type HallKind } from '../src/render/battle/parts/rooms';
 import { COURT_BOUNDS, FLOOR_COURT, FLOOR_STYLE, hallFloorMaterial } from '../src/render/battle/parts/floor';
-import { frameProjector } from '../src/render/battle/parts/scatter';
+import { battleFrameCamera, battlerBoxes, frameRect, rectsOverlap, type FrameRect } from '../src/render/battle/parts/frame';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { ARENA_KINDS } from '../src/render/battle/arenaKind';
@@ -21,7 +21,7 @@ import { brokenEdgeGeometry, cloudSeaGeometry } from '../src/render/battle/parts
 import { MAGMA_LAVA, RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
 import { EDGE, SKY_PILLAR_PART, stumpPlacements } from '../src/render/battle/parts/skyPillar';
 import { LAVA_GLOW, LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaMaterial, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
-import { SCENERY_SEED, battleCamera, frameTop, sightCap } from '../src/render/battle/parts/scatter';
+import { SCENERY_SEED, frameTop, sightCap } from '../src/render/battle/parts/scatter';
 import { arenaClear } from '../src/render/battle/parts/flora';
 import { ARENA_PARTS } from '../src/render/battle/modernArena';
 import { GROUND_RADIUS, GROUND_RENDER_ORDER } from '../src/render/battle/parts/ground';
@@ -180,19 +180,11 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
   });
 
   it('keeps windows, bookcases, banners and light panels out from behind the battlers in the idle frame', () => {
-    // the battlers as the lava keeps off them (rock.ts): a 2 × 2 box on each platform, projected by the idle camera
-    const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
-    const rect = (pts: [number, number, number][]) => {
-      const r = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const [x, y, z] of pts) {
-        project(x, y, z, v);
-        r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
-      }
-      return r;
-    };
-    const boxes = [STAGE.player, STAGE.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
-      [0, 2].map((y) => [p.x + dx, y, p.z + dz] as [number, number, number])))));
-    const overlaps = (r: number[]) => boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]);
+    // the battlers as the lava keeps off them (frame.ts battlerBoxes): a 2 × 2 box on each platform, projected by the idle
+    // camera
+    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0);
+    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
+    const overlaps = (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b));
     let framed = 0;
     for (const kind of HALL_KINDS) {
       const h = HALLS[kind], l = hallLayout(kind), F = wallFrame('back', h, STAGE);
@@ -358,9 +350,7 @@ describe('stadiums and the Sky Pillar', () => {
 function inFrontOfIntro(x: number, z: number, half: number, height: number): boolean {
   const v = new THREE.Vector3();
   return [0, 0.5].some((ease) => [-0.9, 0, 0.9].some((yaw) => {
-    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
-    cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look, ease));
-    cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+    const cam = battleFrameCamera(STAGE, { yaw, ease, zoom: 1 }, 16 / 9);
     const d = Math.hypot(x - cam.position.x, z - cam.position.z);
     const near = Math.min(...[STAGE.player, STAGE.enemy].map((p) => Math.hypot(p.x - cam.position.x, p.z - cam.position.z)));
     if (d >= near) return false;
@@ -448,9 +438,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
       // 9–29 units off the stage centre: never the floor beyond them
       const walls = meshes.filter((m) => m.name === 'stadiumRoom' || m.name === 'stadiumRock');
       for (const yaw of [0, -0.9, 0.9]) {
-        const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
-        cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
-        cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+        const cam = battleFrameCamera(STAGE, yaw);
         const ray = new THREE.Raycaster();
         for (let nx = -0.95; nx <= 0.96; nx += 0.19) {
           ray.setFromCamera(new THREE.Vector2(nx, 0.97), cam);
@@ -466,19 +454,10 @@ describe('stadium rooms: the part, walls, props, colours', () => {
   });
 
   it('stands the props in the idle frame, never over a battler there, and the tall ones never before the stage in the intro', () => {
-    const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
-    const rect = (pts: [number, number, number][]) => {
-      const r = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const [x, y, z] of pts) {
-        project(x, y, z, v);
-        r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
-      }
-      return r;
-    };
-    const boxes = [STAGE.player, STAGE.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
-      [0, 2].map((y) => [p.x + dx, y, p.z + dz] as [number, number, number])))));
-    const overlaps = (r: number[]) => boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]);
-    const framed = (r: number[]) => r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1;
+    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0);
+    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
+    const overlaps = (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b));
+    const framed = (r: FrameRect) => r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1;
     for (const kind of KINDS) {
       const items = stadiumItems(kind, STAGE);
       const props = STADIUM_THEME[kind].props.filter((p) => ['pillars', 'fountains', 'candles', 'crystals'].includes(p));
@@ -511,9 +490,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
       const arena = new ModernArena(u);
       expect(arena.build(kind, defaultArenaColors(kind), 'medium'), kind).toBe(true);
       const meshes = meshesUnder(arena.group.getObjectByName('stadium')!), water = meshes.find((m) => m.name === 'fountainWater')!;
-      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
-      cam.position.copy(battleCamera(STAGE, 0, new THREE.Vector3(), look));
-      cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+      const cam = battleFrameCamera(STAGE, 0);
       const ray = new THREE.Raycaster(), c = new THREE.Vector3();
       const rows: number[] = [];
       for (const it of stadiumItems(kind, STAGE).filter((i) => i.kind === 'fountain')) {
@@ -550,8 +527,8 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     const rect = (pts: number[][]) => [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])),
       Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
     for (const sway of [-BATTLE_CAMERA.sway, 0, BATTLE_CAMERA.sway]) {
-      const project = frameProjector(STAGE, sway), v = new THREE.Vector3(), px = (x: number, y: number, z: number) => {
-        project(x, y, z, v);
+      const cam = battleFrameCamera(STAGE, sway), v = new THREE.Vector3(), px = (x: number, y: number, z: number) => {
+        v.set(x, y, z).project(cam);
         return [(v.x + 1) * 640, (1 - v.y) * 400];
       };
       const sprite = (gx: number, gy: number, depth: number) => rect([[gx, gy], [gx + 64, gy], [gx, gy + 64], [gx + 64, gy + 64]].map(([sx, sy]) => {
@@ -592,7 +569,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
   });
 
   it("pools Magma's lava outside the rim, off the platforms, two of them in the idle frame", () => {
-    const project = frameProjector(STAGE, 0), v = new THREE.Vector3();
+    const cam = battleFrameCamera(STAGE, 0);
     for (const seed of [SCENERY_SEED, 2, 3]) {
       const pools = stadiumLava(STAGE, seed);
       expect(pools.length, `seed ${seed}`).toBeGreaterThanOrEqual(3);
@@ -604,7 +581,7 @@ describe('stadium rooms: the part, walls, props, colours', () => {
       }
       const shows = (pool: LavaPool) => Array.from({ length: 25 }, (_, q) => {
         const a = (q / 24) * Math.PI * 2, d = q === 24 ? 0 : poolRadius(pool, a) * 0.5;
-        return project(pool.x + Math.cos(a) * d, GROUND_Y, pool.z + Math.sin(a) * d, v).clone();
+        return new THREE.Vector3(pool.x + Math.cos(a) * d, GROUND_Y, pool.z + Math.sin(a) * d).project(cam);
       }).every((n) => n.z < 1 && Math.abs(n.x) <= 0.9 && n.y <= 0.85 && n.y >= -0.35);
       // (the arena's seed: two between and beside the battlers; any seed: one at least — the rest show as the camera swings)
       expect(pools.filter(shows).length, `seed ${seed} idle`).toBeGreaterThanOrEqual(seed === SCENERY_SEED ? 2 : 1);
@@ -701,9 +678,7 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
       return t > 0 && Math.hypot(o.x + d.x * t - cx, o.z + d.z * t - cz) <= GROUND_RADIUS.rayquaza!;
     };
     for (const yaw of [0, -0.9, 0.9]) {
-      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 1.6, 0.1, 400);
-      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
-      cam.lookAt(look); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+      const cam = battleFrameCamera(STAGE, yaw);
       const ray = new THREE.Raycaster();
       let rays = 0, hits = 0;
       for (let nx = -0.85; nx <= 0.86; nx += 0.34) {
@@ -722,17 +697,8 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
   });
 
   it('stands broken pillar stumps on the floor inside the edge, on the tall rule, off the battlers in the idle frame and the intro', () => {
-    const project = frameProjector(STAGE, 0), v = new THREE.Vector3(), top0 = frameTop(STAGE, [0]);
-    const rect = (pts: [number, number, number][]) => {
-      const r = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const [x, y, z] of pts) {
-        project(x, y, z, v);
-        r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
-      }
-      return r;
-    };
-    const boxes = [STAGE.player, STAGE.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
-      [0, 2].map((y) => [p.x + dx, y, p.z + dz] as [number, number, number])))));
+    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0), top0 = frameTop(STAGE, [0]);
+    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
     const stumps = stumpPlacements(STAGE);
     expect(stumps.length).toBeGreaterThanOrEqual(5);
     let shown = 0;
@@ -743,7 +709,7 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
       expect(inFrontOfIntro(s.x, s.z, half, s.height), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}): intro`).toBe(false);
       const h = Math.min(s.height, top0(s.x, s.z) - GROUND_Y);
       const r = rect([[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
-      expect(boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(false);
+      expect(boxes.some((b) => rectsOverlap(r, b)), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(false);
       if (r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1) shown++;
     }
     expect(shown).toBeGreaterThanOrEqual(2);

@@ -33,7 +33,8 @@ import { HALLS, hallLayout, pillarGeometry, roomShell, wallPillars, type RoomSpe
 import { Soup, cross, lathe, lin, norm, sub, tube } from './soup';
 import { WATER_RENDER_ORDER, arenaWaterMaterial, opaqueWater } from './water';
 import { arenaClear } from './flora';
-import { SCENERY_SEED, frameProjector, frameTop, scatter, sightCap, stageKeepOut } from './scatter';
+import { SCENERY_SEED, frameTop, scatter, sightCap, stageKeepOut } from './scatter';
+import { battleFrameCamera, battlerBoxes, frameRect, rectsOverlap } from './frame';
 
 export type StadiumKind = 'magma' | 'aqua' | 'sidney' | 'phoebe' | 'glacia' | 'drake' | 'champion';
 export type StadiumProp = 'lava' | 'pipes' | 'candles' | 'crystals' | 'pillars' | 'fountains' | 'spikes';
@@ -249,25 +250,15 @@ export function stadiumItems(kind: StadiumKind, stage: Stage): StadiumItem[] {
   });
 }
 
-/** The battlers as the idle frame shows them (the lava's and the halls' rule: a 2 × 2 box on each platform, projected by
- *  the settled camera at yaw 0): whether a thing `half` wide either side and `height` tall standing at (x, z) — its part
- *  under the frame's top — stands over one of them there. */
-export function battlerOverlap(stage: Stage): (x: number, z: number, half: number, height: number) => boolean {
-  const project = frameProjector(stage, 0), v = new THREE.Vector3(), top = frameTop(stage, [0]);
-  const rect = (pts: V3[]) => {
-    const r = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const [x, y, z] of pts) {
-      project(x, y, z, v);
-      r[0] = Math.min(r[0], v.x); r[1] = Math.min(r[1], v.y); r[2] = Math.max(r[2], v.x); r[3] = Math.max(r[3], v.y);
-    }
-    return r;
-  };
-  const boxes = [stage.player, stage.enemy].map((p) => rect([-1, 1].flatMap((dx) => [-0.3, 0.3].flatMap((dz) =>
-    [0, 2].map((y): V3 => [p.x + dx, y, p.z + dz])))));
+/** The battlers as the idle frame shows them (frame.ts battlerBoxes: the lava's and the halls' rule, a 2 × 2 box on each
+ *  platform, projected by the settled camera at yaw 0): whether a thing `half` wide either side and `height` tall standing
+ *  at (x, z) — its part under the frame's top — stands over one of them there. */
+function battlerOverlap(stage: Stage): (x: number, z: number, half: number, height: number) => boolean {
+  const cam = battleFrameCamera(stage, 0), boxes = battlerBoxes(stage, 0), top = frameTop(stage, [0]);
   return (x, z, half, height) => {
     const h = Math.min(height, top(x, z) - GROUND_Y);
-    const r = rect([[x - half, GROUND_Y, z], [x + half, GROUND_Y, z], [x - half, GROUND_Y + h, z], [x + half, GROUND_Y + h, z]]);
-    return boxes.some((b) => r[0] < b[2] && r[2] > b[0] && r[1] < b[3] && r[3] > b[1]);
+    const r = frameRect(cam, [[x - half, GROUND_Y, z], [x + half, GROUND_Y, z], [x - half, GROUND_Y + h, z], [x + half, GROUND_Y + h, z]]);
+    return boxes.some((b) => rectsOverlap(r, b));
   };
 }
 

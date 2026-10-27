@@ -18,10 +18,11 @@ import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import { blobCrown } from '../../kit/trees';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { BATTLE_CAMERA, GROUND_Y, type Stage } from '../stage';
+import { GROUND_Y, type Stage } from '../stage';
 import { GROUND_RENDER_ORDER } from './ground';
 import { Soup, lin } from './soup';
-import { FRAME_ASPECT, SCENERY_SEED, battleCamera } from './scatter';
+import { FRAME_ASPECT, SCENERY_SEED } from './scatter';
+import { battleFrameCamera } from './frame';
 
 // ------------------------------------------------------------------------------------------------- the broken edge
 
@@ -244,14 +245,8 @@ interface Placed { x: number; y: number; z: number; yaw: number; s: number; v: n
  *  (FRAME_ASPECT.widest, 21:9) — the top, or a point 1.5 to its side, inside the frame (a little margin) and the ray to it
  *  passing over the floor's edge (crossing the floor's plane beyond r 14.5: the floor hides it otherwise). */
 export function cloudShown(stage: Stage): (x: number, y: number, z: number) => boolean {
-  const cams = [[1, 0], [1, -0.45], [1, 0.45], [1, -0.9], [1, 0.9], [0, 0], [0, -0.9], [0, 0.9]].map(([ease, yaw]) => {
-    const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(BATTLE_CAMERA.fov, FRAME_ASPECT.widest, 0.1, 400);
-    cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look, ease));
-    cam.lookAt(look);
-    cam.updateMatrixWorld();
-    cam.updateProjectionMatrix();
-    return cam;
-  });
+  const cams = [[1, 0], [1, -0.45], [1, 0.45], [1, -0.9], [1, 0.9], [0, 0], [0, -0.9], [0, 0.9]]
+    .map(([ease, yaw]) => battleFrameCamera(stage, { yaw, ease, zoom: 1 }, FRAME_ASPECT.widest));
   const cx = stage.centre.x, cz = stage.centre.z, v = new THREE.Vector3();
   const SIDE = [[0, 0], [1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]];
   return (x, y, z) => cams.some((cam) => SIDE.some(([dx, dz]) => {
