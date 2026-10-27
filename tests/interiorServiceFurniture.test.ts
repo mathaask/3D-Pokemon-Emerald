@@ -4,7 +4,7 @@ import { Soup, lin } from '../src/render/kit/soup';
 import { soften, type RGB } from '../src/render/kit/palette';
 import type { PartColors } from '../src/render/kit/interior/colors';
 import {
-  BALL_RED, STAIRS_TOP, buildCounter, serviceColors, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects,
+  BALL_RED, COUNTER, STAIRS_TOP, buildCounter, serviceColors, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects,
   type Rect, type ServiceSoups, type Sized,
 } from '../src/render/kit/interior/geom/serviceFurniture';
 
@@ -59,7 +59,8 @@ const cellsOf = (x0: number, x1: number, y0: number, y1: number) => {
 
 describe('service furniture geometry', () => {
   it('never makes a surface of the art\'s dark outline colour', () => {
-    const navy: RGB = [0.2, 0.2, 0.35], cream: RGB = [0.95, 0.9, 0.75];
+    const hex = (h: string): RGB => [0, 2, 4].map((k) => parseInt(h.slice(k, k + 2), 16) / 255) as RGB;
+    const navy = hex("52526b"), navy2 = hex("424a6b"), cream: RGB = [0.95, 0.9, 0.75];   // the GBA outline (luma 0.33, 0.28)
     const nurse = serviceColors({ main: cream, second: navy, accent: [0.9, 0.4, 0.2], dark: [0.1, 0.1, 0.1] });
     expect(nurse.main).toEqual(lin(soften(cream)));                            // body: the cream
     expect(nurse.second[0]).toBeGreaterThan(nurse.main[0] * 0.98);             // top: lifted cream, not the navy
@@ -68,6 +69,11 @@ describe('service furniture geometry', () => {
     const plain = serviceColors({ main: cream, second: [0.6, 0.8, 0.9], accent: [0.9, 0.4, 0.2], dark: [0.1, 0.1, 0.1] });
     expect(plain.second).toEqual(lin(soften([0.6, 0.8, 0.9])));               // a light second stays the top
     expect(plain.goods).toHaveLength(5);
+    // two outline colours (a healer console, a gondola): the body is lifted off the navy; an outline accent gives way
+    const both = serviceColors({ main: navy, second: navy2, accent: navy2, dark: [0.1, 0.1, 0.1] });
+    for (const x of [both.main, both.second, both.accent]) expect(x).not.toEqual(lin(soften(navy)));
+    expect(both.main[0]).toBeGreaterThan(lin(soften(navy))[0] * 1.5);
+    expect(serviceColors({ main: cream, second: cream, accent: navy, dark: navy }).accent).not.toEqual(lin(soften(navy)));
   });
 
   it('builds a computer: low, inside its footprint, 1.2 tall, its screen in glowLow', () => {
@@ -89,25 +95,26 @@ describe('service furniture geometry', () => {
     const xy = cellsOf(2, 3, 4, 5), feet = xy.map(([x, y]) => fit(x, x, y, y, 0.9, height));
     const s = new Soup();
     buildCounter(s, counterRects(xy, feet), height, COLORS, 'medium', band);
-    const b = boxOf(s); inside(b, fit(2, 3, 4, 5, 0.9, height)); expect(b.max.y).toBeCloseTo(height, 3);
+    const b = boxOf(s); inside(b, fit(2, 3, 4, 5, 0.9, height)); expect(b.max.y).toBeCloseTo(Math.min(height, COUNTER.height), 3);
   });
 
   it('cuts a counter into rectangles cell by cell, an L arm reaching its bar', () => {
     const xy: [number, number][] = [[2, 4], [3, 4], [3, 5]], feet = xy.map(([x, y]) => fit(x, x, y, y, 0.9, 1.05));
-    const rs = counterRects(xy, feet);
-    expect(rs.map((r) => [r.x0, r.x1, +r.z0.toFixed(3), r.z1])).toEqual([[2, 4, 4.1, 5], [3, 4, 5, 6]]);
+    const rs = counterRects(xy, feet).map((r) => ({ ...r, z0: +r.z0.toFixed(6), z1: +r.z1.toFixed(6) }));
+    expect(rs.map((r) => [r.x0, r.x1, +r.z0.toFixed(3), r.z1])).toEqual([[2, 4, 4.28, 5], [3, 4, 5, 6]]);
     expect(rs[0].open).toEqual({ n: true, e: true, s: false, w: true });
     expect(rs[1].open).toEqual({ n: false, e: true, s: true, w: true });
     const sq = counterRects(cellsOf(2, 3, 4, 5), cellsOf(2, 3, 4, 5).map(([x, y]) => fit(x, x, y, y, 0.9, 1)));
-    expect(sq).toHaveLength(1); expect(sq[0]).toMatchObject({ x0: 2, x1: 4, z1: 6 }); expect(sq[0].z0).toBeCloseTo(5.1, 6);
+    expect(sq).toHaveLength(1); expect(sq[0]).toMatchObject({ x0: 2, x1: 4, z1: 6 }); expect(sq[0].z0).toBeCloseTo(6 - COUNTER.bar, 6);
     const side = counterRects([[2, 4], [3, 4]], [fit(2, 2, 4, 4, 0.9, 1), fit(3, 3, 4, 4, 0.9, 1)]);
     expect(side).toHaveLength(1);
     // the nurse's U against the wall (z 1.525): the west arm runs from the wall down to the bar; a walkable cell caps it
     const U: [number, number][] = [[4, 1], [4, 2], [4, 3], [5, 3], [6, 3]];
     const wall = (x: number, y: number) => { const f = fit(x, x, y, y, 0.9, 1.05); return { ...f, z0: Math.max(f.z0, 1.525) }; };
     const uf = U.map(([x, y]) => wall(x, y)); uf[1] = { ...uf[1], height: 0.45 };
-    const ur = counterRects(U, uf);
-    expect(ur.map((r) => [r.x0, r.x1, r.z0, r.z1, r.height])).toEqual([[4, 5, 1.525, 3, 0.45], [4, 7, 3, 4, 1.05]]);
+    const ur = counterRects(U, uf).map((r) => ({ ...r, z0: +r.z0.toFixed(6), z1: +r.z1.toFixed(6) }));
+    expect(ur.map((r) => [r.x0, r.x1, r.z0, r.z1, r.height])).toEqual([[4, 5, 1.525, 3.28, 0.45], [4, 7, 3.28, 4, 1.05]]);
+    // (the bar keeps its depth: its north edge 0.28 south of the clerk standing in the pocket, row 2; the arm reaches it)
   });
 
   it('follows an L-shaped counter cell by cell, never over the walkable cell inside the L', () => {

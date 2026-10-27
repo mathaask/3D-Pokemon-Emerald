@@ -13,7 +13,8 @@
 import { lathe, lin, tube, type Soup } from '../../soup';
 import { rng, type V3 } from '../../geom';
 import * as THREE from 'three';
-import { luma, mix, scale, soften, type RGB } from '../../palette';
+import { mix, scale, soften, type RGB } from '../../palette';
+import { isOutline } from './homeFurniture';
 import type { Quality } from '../../../post';
 import type { PartColors } from '../colors';
 import type { WallDir } from '../room';
@@ -47,24 +48,26 @@ export const STAIRS_TOP = 1.6;
 /** A rail's top over the floor or the treads, its post and tube sizes. */
 export const RAIL = { height: 0.9, post: 0.045, radius: 0.025, inset: 0.05 };
 
-/** Surfaces: a tile colour darker than this (luma) is the art's outline, not a surface — the GBA draws its counters, shelves
- *  and stairs in light colours ringed in a dark navy, which as a slab read as a black top. */
-export const OUTLINE_LUMA = 0.32;
-/** A top / tread of the body's colour is lifted this far towards white (and tinted this much towards the accent). */
-export const TOP_LIFT = 0.3, TOP_TINT = 0.12;
+/** A top / tread of the body's colour is lifted this far towards white (and tinted this much towards the accent); an
+ *  outline-coloured body with no other surface colour, OUTLINE_LIFT. */
+export const TOP_LIFT = 0.3, TOP_TINT = 0.12, OUTLINE_LIFT = 0.55;
 
-/** The part's colours for surfaces, softened and made linear: `main` the body (the tile's main, or its second when
- *  main is an outline colour and second is lighter), `second` the top (the tile's second when it is a light colour
- *  apart from the body, else the body lifted towards white with a hint of accent), `accent`, `dark`, and `goods` (a
- *  shop's packaging: the accent, its lighter tone and two neighbouring hues, the top colour). */
+/** The part's colours for surfaces, softened and made linear. The GBA rings its counters, shelves, machines and stairs
+ *  in a dark blue-grey outline (0x52526b, 0x424a6b …: the kit's one `isOutline` rule, geom/homeFurniture.ts) that is
+ *  often a part's most frequent colour: never a surface. `main` the body (the tile's main; an outline main gives way to
+ *  the second, or is lifted towards white), `second` the top (the tile's second when it is no outline and apart from the
+ *  body, else the body lifted towards white with a hint of accent), `accent` (an outline accent gives way to the top),
+ *  `dark`, and `goods` (a shop's packaging: the accent, its lighter tone and three other hues round it). */
 export interface LinColors { main: RGB; second: RGB; accent: RGB; dark: RGB; goods: RGB[] }
 export function serviceColors(c: PartColors): LinColors {
-  const body = luma(c.main) < OUTLINE_LUMA && luma(c.second) > luma(c.main) ? c.second : c.main;
-  const top = body !== c.second && luma(c.second) >= OUTLINE_LUMA + 0.08 ? c.second
-    : mix(mix(body, [1, 1, 1], TOP_LIFT), c.accent, TOP_TINT);
-  const goods: RGB[] = [c.accent, mix(c.accent, [1, 1, 1], 0.4), hueShift(c.accent, 0.1), hueShift(c.accent, -0.12), top];
+  const body = !isOutline(c.main) ? c.main : !isOutline(c.second) ? c.second : mix(c.main, [1, 1, 1], OUTLINE_LIFT);
+  const accent0 = isOutline(c.accent) ? null : c.accent;
+  const top = body !== c.second && !isOutline(c.second) ? c.second
+    : mix(mix(body, [1, 1, 1], TOP_LIFT), accent0 ?? body, TOP_TINT);
+  const accent = accent0 ?? (top !== body ? top : mix(body, [1, 1, 1], 0.5));
+  const goods: RGB[] = [accent, mix(accent, [1, 1, 1], 0.4), hueShift(accent, 0.1), hueShift(accent, -0.12), hueShift(accent, 0.4)];
   const L = (x: RGB) => lin(soften(x));
-  return { main: L(body), second: L(top), accent: L(c.accent), dark: L(c.dark), goods: goods.map(L) };
+  return { main: L(body), second: L(top), accent: L(accent), dark: L(c.dark), goods: goods.map(L) };
 }
 
 const _c = new THREE.Color(), _hsl = { h: 0, s: 0, l: 0 };
@@ -127,10 +130,12 @@ export interface CounterRect extends Rect { cx0: number; cx1: number; cy0: numbe
 
 /** A counter component's cells (grid `xy`, with each cell's own footprint `feet` in the same order) as rectangles, cell
  *  by cell: row runs, merged down while their columns match. A rectangle with more rows than columns is a bar running
- *  north–south: it spans its north row's footprint to its south row's; any other runs east–west, as deep as its south
- *  row's footprints (a counter is as deep as its spec, anchored south). A rectangle right under another reaches north to
- *  it (the L's arm, a ring's sides meet its bar); touching sides are closed. Nothing reaches over a cell that is not the
- *  component's (the walkable cells inside a ring or an L stay clear). */
+ *  north–south: it spans its north row's footprint to its south row's; any other runs east–west, anchored at its south
+ *  row's footprints, COUNTER.bar deep at most (the clerk standing north of it shows from the chest up: I2). Two
+ *  rectangles one over the other meet: the upper reaches south to the lower when its columns lie within the lower's (the
+ *  U's arms reach the bar, which keeps its depth), else the lower reaches north to the upper (an L's arm, a ring's sides
+ *  meet their bar); touching sides are closed. Nothing reaches over a cell that is not the component's (the walkable
+ *  cells inside a ring, a U or an L stay clear). */
 export function counterRects(xy: readonly (readonly [number, number])[], feet: readonly (Rect & { height?: number })[]): CounterRect[] {
   const foot = new Map<string, Rect & { height?: number }>();
   xy.forEach(([x, y], i) => foot.set(`${x},${y}`, feet[i]));
@@ -154,9 +159,10 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
   }
   for (const r of rects) {
     const row = (y: number) => { const fs: (Rect & { height?: number })[] = []; for (let x = r.cx0; x <= r.cx1; x++) fs.push(foot.get(`${x},${y}`)!); return fs; };
-    const south = row(r.cy1), north = r.cy1 - r.cy0 > r.cx1 - r.cx0 ? row(r.cy0) : south;
+    const ns = r.cy1 - r.cy0 > r.cx1 - r.cx0, south = row(r.cy1), north = ns ? row(r.cy0) : south;
     r.x0 = Math.min(...south.map((f) => f.x0)); r.x1 = Math.max(...south.map((f) => f.x1));
-    r.z0 = Math.max(...north.map((f) => f.z0)); r.z1 = Math.max(...south.map((f) => f.z1));
+    r.z1 = Math.max(...south.map((f) => f.z1));
+    r.z0 = Math.max(...north.map((f) => f.z0), ns ? -Infinity : r.z1 - COUNTER.bar);
     r.y = south[0].y;
     for (let y = r.cy0; y <= r.cy1; y++) for (const f of row(y)) r.height = Math.min(r.height, f.height ?? Infinity);
   }
@@ -164,7 +170,8 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
   for (const a of rects) {
     for (const b of rects) {
       if (b.cy0 === a.cy1 + 1 && Math.min(a.cx1, b.cx1) >= Math.max(a.cx0, b.cx0)) {
-        b.z0 = Math.min(b.z0, a.z1);
+        if (a.cx0 >= b.cx0 && a.cx1 <= b.cx1) a.z1 = Math.max(a.z1, b.z0);
+        else b.z0 = Math.min(b.z0, a.z1);
         a.open.s = false; b.open.n = false;
       }
     }
@@ -177,16 +184,21 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
   return rects;
 }
 
-/** Counter proportions: top slab, toe kick, the nurse's front band, insets and corner radius. */
-export const COUNTER = { top: 0.07, kick: 0.08, kickInset: 0.1, bodyInset: 0.05, bandInset: 0.035, band: [0.6, 0.76], radius: 0.12 };
+/** Counter proportions: height (a serving counter's, 0.88: under FURNITURE_SPEC's 1.0 / 1.05 — the nurse and the clerks
+ *  behind it read from the chest up at the default camera, as on the GBA: controller ruling I2), an east–west bar's
+ *  depth at most, top slab, toe kick, the nurse's front band, insets and corner radius. With the bar 0.72 deep its edge
+ *  stands 0.28 south of the clerk's feet: at the Classic pitch (0.82 rad) a sprite shows from about 0.58 up. */
+export const COUNTER = {
+  height: 0.88, bar: 0.72, top: 0.07, kick: 0.08, kickInset: 0.1, bodyInset: 0.05, bandInset: 0.035, band: [0.5, 0.64], radius: 0.12,
+};
 
-/** A counter over its rectangles, `top` tall (a rectangle's own cap lower): a toe kick in dark, a body in main, a top in
- *  second (overhanging the body on its open sides); `band` (the nurse's counter) adds a front band in accent round its
- *  open sides. Low. */
+/** A counter over its rectangles, min(`top`, COUNTER.height) tall (a rectangle's own cap lower): a toe kick in dark, a
+ *  body in main, a top in second (overhanging the body on its open sides); `band` (the nurse's counter) adds a front band
+ *  in accent round its open sides. Low. */
 export function buildCounter(s: Soup, rects: readonly CounterRect[], top: number, c: PartColors, q: Quality, band: boolean): void {
   const k = serviceColors(c), segs = CORNER_SEGS[q], C = COUNTER;
   for (const r of rects) {
-    const height = Math.min(top, r.height);
+    const height = Math.min(top, C.height, r.height);
     roundedBlock(s, r, 0, C.kick, C.kickInset, C.radius - C.kickInset, r.open, k.dark, k.dark, segs);
     roundedBlock(s, r, C.kick, height - C.top, C.bodyInset, C.radius - C.bodyInset, r.open, k.main, k.main, segs);
     if (band && C.band[1] < height - C.top) roundedBlock(s, r, C.band[0], C.band[1], C.bandInset, C.radius - C.bandInset, r.open, k.accent, k.accent, segs);

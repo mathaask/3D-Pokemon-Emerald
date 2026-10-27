@@ -3,7 +3,7 @@ import { piece, newOut, boxOf, run, countClusters, hashOut, tris } from './helpe
 import { SERVICE_GENERATORS, againstWall, cellsArea, flightDir } from '../src/render/kit/interior/furnitureService';
 import { FURNITURE_SPEC, fitFurniture, isLow } from '../src/render/kit/interior/furniture';
 import { RECESS } from '../src/render/kit/interior/room';
-import { BALL_RED } from '../src/render/kit/interior/geom/serviceFurniture';
+import { BALL_RED, COUNTER } from '../src/render/kit/interior/geom/serviceFurniture';
 
 const KINDS = ['pc', 'healer', 'pcCounter', 'counter', 'martShelf'] as const;
 
@@ -13,7 +13,8 @@ describe('service furniture', () => {
     const b = boxOf(out), f = p.foot;
     expect(b.min.x).toBeGreaterThanOrEqual(f.x0 - 1e-3); expect(b.max.x).toBeLessThanOrEqual(f.x1 + 1e-3);
     expect(b.min.z).toBeGreaterThanOrEqual(f.z0 - 1e-3); expect(b.max.z).toBeLessThanOrEqual(f.z1 + 1e-3);
-    expect(b.max.y).toBeCloseTo(FURNITURE_SPEC[kind].height, 1);
+    // (serving counters stand COUNTER.height, under the spec: the clerk behind reads from the chest up — ruling I2)
+    expect(b.max.y).toBeCloseTo(kind === "counter" || kind === "pcCounter" ? COUNTER.height : FURNITURE_SPEC[kind].height, 1);
     if (isLow(kind)) expect(out.tall.empty && out.glass.empty && out.glow.empty).toBe(true);
     else expect(out.low.empty && out.glassLow.empty && out.glowLow.empty).toBe(true);
   });
@@ -53,6 +54,20 @@ describe('service furniture', () => {
     }
     expect(sideAt6).toBe(true);
     expect(boxOf(out).max.z).toBeCloseTo(8, 6);                                  // the sides run down to row 7
+  });
+
+  it('keeps the nurse counter low and its bar clear of her feet (she reads from the chest up)', () => {
+    // Pokémon Center 1F: the U (arms x 4 and 8..9 down from the wall, bar on row 3); the nurse stands at (7, 2), feet at z 3
+    const xy: [number, number][] = [[4, 1], [9, 1], [4, 2], [8, 2], [9, 2], [4, 3], [5, 3], [6, 3], [7, 3], [8, 3], [9, 3]];
+    const wallZ = 1.5 + 0.03;
+    const u = piece("pcCounter", { xy, cells: xy.map((_, i) => i), cellFeet: xy.map(([x, y]) => fitFurniture("pcCounter", x, x, y, y, 0, wallZ)),
+      foot: fitFurniture("pcCounter", 4, 9, 1, 3, 0, wallZ) });
+    const out = newOut(); SERVICE_GENERATORS.pcCounter!(u, out, "medium");
+    const p = out.low.geometry().getAttribute("position");
+    for (let i = 0; i < p.count; i++) {
+      expect(p.getY(i)).toBeLessThanOrEqual(0.9 + 1e-6);
+      if (p.getX(i) > 5 + 1e-3 && p.getX(i) < 8 - 1e-3) expect(p.getZ(i)).toBeGreaterThanOrEqual(3.25);   // in front of the nurse: only the bar
+    }
   });
 
   it('turns a Mart shelf cut by the wall into a one-sided wall unit', () => {
