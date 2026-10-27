@@ -79,15 +79,20 @@ export function indoorLight(nightK: number, out?: IndoorLight): IndoorLight {
  *  channel max(the blended light's, ACTOR_NIGHT_FLOOR × INDOOR_DAY's), so characters stay as readable as by day. */
 export const ACTOR_NIGHT_FLOOR = 0.95;
 
-/** The light flat sprite cards get under `L` (updateLighting's charLight: a Lambert surface facing the camera,
- *  (sky × hemisphere + sun × 0.75) / π), into `out`. */
-export function indoorCardLight(L: Readonly<IndoorLight>, out = new THREE.Color()): THREE.Color {
+/** The light characters get (OverworldView.updateLighting's charLight, the one place it is computed): a Lambert
+ *  surface facing the camera, (sky × hemisphere + sun × 0.75) / π, into `out`. */
+export function cardLight(sky: THREE.Color, hemiI: number, sun: THREE.Color, sunI: number, out = new THREE.Color()): THREE.Color {
   const k = 1 / Math.PI;
   return out.setRGB(
-    (L.sky.r * L.hemiI + L.sunColor.r * L.sunI * 0.75) * k,
-    (L.sky.g * L.hemiI + L.sunColor.g * L.sunI * 0.75) * k,
-    (L.sky.b * L.hemiI + L.sunColor.b * L.sunI * 0.75) * k,
+    (sky.r * hemiI + sun.r * sunI * 0.75) * k,
+    (sky.g * hemiI + sun.g * sunI * 0.75) * k,
+    (sky.b * hemiI + sun.b * sunI * 0.75) * k,
   );
+}
+
+/** The light flat sprite cards get under the room light `L` (cardLight), into `out`. */
+export function indoorCardLight(L: Readonly<IndoorLight>, out = new THREE.Color()): THREE.Color {
+  return cardLight(L.sky, L.hemiI, L.sunColor, L.sunI, out);
 }
 
 /** By this night factor the inflated actors' floor holds its full ACTOR_NIGHT_FLOOR: ahead of the room's dimming (it

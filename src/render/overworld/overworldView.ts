@@ -18,7 +18,7 @@ import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
-import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, actorFloorShare, indoorCardLight, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
+import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, actorFloorShare, cardLight, indoorCardLight, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
 import { createHdWorldMaterials, createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
@@ -637,20 +637,15 @@ export class OverworldView {
     fogObj.near = fogNear * this.zoom;
     fogObj.far = fogFar * this.zoom;
     this.sky.setColors(skyColor, fog, indoor || underground, this.time);
-    // Characters are lit with a simplified model (no normal): ambient + part of the sun.
-    // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI.
-    const k = 1 / Math.PI;
+    // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI (cardLight, shared
+    // with indoorCardLight: D8's day floor below equals this exactly).
     if (state.flashLevel > 0) {
       // Characters are drawn near the player's light.
       this.charLight.setRGB(0.85, 0.75, 0.6);
       this.actorFloor.copy(this.charLight);
       return;
     }
-    this.charLight.setRGB(
-      (skyColor.r * hemiI + sunColor.r * sunI * 0.75) * k,
-      (skyColor.g * hemiI + sunColor.g * sunI * 0.75) * k,
-      (skyColor.b * hemiI + sunColor.b * sunI * 0.75) * k,
-    );
+    cardLight(skyColor, hemiI, sunColor, sunI, this.charLight);
     this.actorFloor.copy(this.charLight);
     // (D8: in an in-scope room the actors keep near the room's day light, per channel: the cards through charLight (at
     // least ACTOR_NIGHT_FLOOR of the day's), the inflated actors and models — lit by the room's lights, floored at

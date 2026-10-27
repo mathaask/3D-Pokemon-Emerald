@@ -3,7 +3,7 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--interiors]
+//     [--query k=v&…] [--compare <label> [--expect-same]] [--gpu] [--selftest] [--static] [--battles] [--interiors]
 //     [--review [--review-before <label>]]
 //     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers|interior] [--ab-aa]]
 //
@@ -24,7 +24,9 @@
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
 // pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png / ref_<entry>.png too, reported with the diffs, not in
-// stats; a missing reference fails the run as a shot's does).
+// stats; a missing reference fails the run as a shot's does). The diffs are reported, not gated, unless --expect-same: then a
+// control (isSameControl: every Retro shot, the non-interior Modern entries, OUT_OF_SCOPE_INTERIOR, door_exit, the GBA
+// pictures) that differs from its reference by even one pixel fails the run.
 // --review writes _review_battle.png: one row per battle entry of the run, columns GBA (gba_ / ref_<entry>.png) | before
 // (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots);
 // and _review_interior.png: one row per interior entry of the run, columns GBA map (out/atlas/<group>_<num>_<Name>.png,
@@ -83,10 +85,11 @@
 // flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary). Gated (Phase 4 Task 13)
 // on the in-scope day interior entries (dayActorGated: --interiors entries ending indoors, not OUT_OF_SCOPE_INTERIOR, not a
 // night / dusk twin) with a reliable measure: each within DAY_ACTOR_BAND, their median ≥ DAY_ACTOR_MEDIAN_MIN (a failure
-// fails the run; an entry without a measure is listed, not gated).
+// fails the run; an entry without a measure is listed, not gated — but a run whose in-scope day interiors give none
+// fails: never a vacuous pass).
 // Night twins (every run with Modern; NIGHT_TWINS, Phase 4's D8): a night interior preview's Modern shot against its day
 // twin's — night / day mean luma of the room (non-actor pixels) and of the actors (`nightLum` on the night entry's Modern
-// key, and a table); gated on the in-scope pairs: room ≥ 0.45, actors 0.9-1.15, and both measurable (no actor measure, or
+// key, and a table); gated on the in-scope pairs: room 0.45-0.8 at night, 0.7-0.95 at dusk, actors 0.9-1.15, and both measurable (no actor measure, or
 // a twin without its Modern shot in this run, fails; a failure fails the run). Selecting either twin runs both.
 // A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
@@ -382,8 +385,8 @@ const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'i_de
  * with both Modern shots and masks in the folder gets `nightLum` (on the night entry's Modern key, and a table): roomLuma
  * = night / day mean sRGB luma (Rec. 709) of the pixels no actor covers in either mask (with a 1-px margin), actorLum =
  * night / day mean luma of the actor pixels visible in both masks (as actorLum; null under ACTOR_LUM_MIN_PX). Gated on the
- * in-scope pairs (not OUT_OF_SCOPE_INTERIOR): roomLuma ≥ NIGHT_ROOM_MIN, actorLum within NIGHT_ACTOR_BAND (D8: the room
- * stays readable at night, the actors lit as by day); an unmeasured actorLum, or a twin without its Modern shot in this run,
+ * in-scope pairs (not OUT_OF_SCOPE_INTERIOR): roomLuma within roomBand (NIGHT_ROOM_BAND / DUSK_ROOM_BAND — D8: the room
+ * follows the clock and stays readable at night), actorLum within NIGHT_ACTOR_BAND (the actors lit as by day); an unmeasured actorLum, or a twin without its Modern shot in this run,
  * fails (never a vacuous pass). With Modern, selecting either twin runs both (main's selection). Today's fixed indoor light reads ≈ 1.0 (p4-base). Every live entry
  * is day: each save state's in-game clock reads 10:00 under manual mode's fixed RTC (nightFactor 0; probed in Phase 4
  * Task 1).
@@ -392,7 +395,14 @@ const NIGHT_TWINS: Record<string, string> = {
   i_pc_night: 'i_pc_1f', i_house_night: 'i_house_1f', i_lab_night: 'i_lab', i_mart_night: 'i_mart', i_gym_night: 'i_gym',
   i_pc_dusk: 'i_pc_1f', i_house_dusk: 'i_house_1f',   // dusk, hour 19 (Task 12): the same gate
 };
-const NIGHT_ROOM_MIN = 0.45;
+/** The room's night / day luma an in-scope pair must read, two-sided (a room that stopped following the clock reads
+ *  1.000 and fails, as one gone too dark does): night (hour 21, nightFactor 1) 0.45-0.8, dusk (the `_dusk` twins, hour
+ *  19, nightFactor ≈ 0.47) 0.7-0.95. Measured at 7f5e0b9: night 0.607-0.629, dusk 0.829-0.841 — each bound keeps ≥ 0.1
+ *  of margin for look tuning (floors, lamps), while D8 switched off (1.000), a night room left at its dusk light, or a
+ *  dusk room already at night's, fail. */
+const NIGHT_ROOM_BAND: [number, number] = [0.45, 0.8];
+const DUSK_ROOM_BAND: [number, number] = [0.7, 0.95];
+const roomBand = (night: string): [number, number] => (night.endsWith('_dusk') ? DUSK_ROOM_BAND : NIGHT_ROOM_BAND);
 const NIGHT_ACTOR_BAND: [number, number] = [0.9, 1.15];
 
 /**
@@ -454,6 +464,12 @@ const isBattleEntry = (e: Entry): boolean => (e.kind === 'live' && e.name.starts
 /** The entries --interiors runs: the static interior previews (i_*) and the live ones in INTERIOR_LIVE. */
 const isInteriorEntry = (e: Entry): boolean => (e.kind === 'static' && e.name.startsWith('i_')) || (e.kind === 'live' && e.name in INTERIOR_LIVE);
 
+/** --expect-same's controls (Phase 4): the shots its interior work must leave pixel-identical — every Retro shot, every
+ *  Modern entry that is no interior entry (outdoors, battles, the Phase 2 / 3 entries), the out-of-scope interiors
+ *  (OUT_OF_SCOPE_INTERIOR) and door_exit (it ends outdoors, 47 frames after the fade-in). */
+const isSameControl = (e: Entry, style: string): boolean => style === 'retro' || !isInteriorEntry(e) || OUT_OF_SCOPE_INTERIOR.has(e.name)
+  || e.name === 'door_exit';
+
 /** An interior entry's map, "group.num" (the interior review's GBA map column): a preview's map=, a live entry's
  *  INTERIOR_LIVE map; null for others. */
 const interiorMap = (e: Entry): string | null => (e.kind === 'live' ? INTERIOR_LIVE[e.name] ?? null
@@ -493,11 +509,11 @@ const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
  *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5, the Modern battle (Phase 3)
- *  +3.0 / +0.5. `previewWhen`: the static entries (by query) where the switch changes anything (the NPC fade needs a
+ *  +3.0 / +0.5. `previewWhen`: the static entries where the switch changes anything (the NPC fade needs a
  *  stand-in player, &focus; the battle style a battle preview; elsewhere both arms would be the same frames). */
 interface AbFeature {
   what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string;
-  previewWhen?: (q: string) => boolean;
+  previewWhen?: (e: Entry) => boolean;
 }
 const AB_FEATURES: Record<string, AbFeature> = {
   actors: {
@@ -507,7 +523,7 @@ const AB_FEATURES: Record<string, AbFeature> = {
   npcfade: {
     what: "NPC occlusion fade on vs off (the player's circle only)", gpuMs: 0.3, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
-    previewWhen: (q) => /(^|&)focus=/.test(q),
+    previewWhen: (e) => e.kind === 'static' && /(^|&)focus=/.test(e.q),
   },
   // (Phase 3: the battle's world style alone — the live page's PostFX keeps its style's tilt-shift; the preview's
   // setStyle switches both, as Renderer.setWorldStyle does)
@@ -515,24 +531,24 @@ const AB_FEATURES: Record<string, AbFeature> = {
     what: 'Modern vs Retro battle (BattleView world style)', gpuMs: 3.0, cpuMs: 0.5,
     live: (on) => `emu.renderer.battle.setWorldStyle('${on ? 'modern' : 'retro'}')`,
     preview: (on) => `preview.setStyle('${on ? 'modern' : 'retro'}')`,
-    previewWhen: (q) => q.startsWith('battle='),
+    previewWhen: (e) => e.kind === 'static' && e.q.startsWith('battle='),
   },
   // (Phase 3 Task 5: the Modern battle's inflated battlers and their field passes against today's cards, same arena)
   battlers: {
     what: 'Modern battlers inflated (+ their field passes) vs cards', gpuMs: 1.0, cpuMs: 0.5,
     live: (on) => `emu.renderer.battle.inflation = ${on}`,
     preview: (on) => `preview.setInflation(${on})`,
-    previewWhen: (q) => q.startsWith('battle='),
+    previewWhen: (e) => e.kind === 'static' && e.q.startsWith('battle='),
   },
   // (Phase 4 Task 13: the interior kit on in-scope rooms against today's interior, light included — off, the world builds
   // no kit there, so `interiorKitRan` is false: no night blend, uOutdoorNight 0. Each switch rebuilds the world: the
-  // half's settle frames absorb it. The previews of in-scope maps only: the rooftop 13.21 and the out-of-scope controls
-  // draw the same frames in both arms)
+  // half's settle frames absorb it. The in-scope interior previews only, by entry (a new i_* entry is in unless it joins
+  // OUT_OF_SCOPE_INTERIOR): the rooftop and the out-of-scope controls draw the same frames in both arms)
   interior: {
     what: 'Phase 4 interior kit (shell, floor, furniture, HD legacy, light) vs today\'s interior', gpuMs: 1.5, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setInteriorKit(${on})`,
     preview: (on) => `preview.setInteriorKit(${on})`,
-    previewWhen: (q) => /map=(1|2|11|12|13|15|16|29|32)\./.test(q) && !/map=13\.21(&|$)/.test(q),
+    previewWhen: (e) => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name),
   },
 };
 
@@ -823,7 +839,8 @@ async function nightLum(page: Page, night: string, day: string, files: [string, 
   };
   if (n.gated) {
     const broken: string[] = [];
-    if (!(n.roomLuma >= NIGHT_ROOM_MIN)) broken.push(`roomLuma ${n.roomLuma} < ${NIGHT_ROOM_MIN}`);
+    const [lo, hi] = roomBand(night);
+    if (!(n.roomLuma >= lo && n.roomLuma <= hi)) broken.push(`roomLuma ${n.roomLuma} outside ${lo}-${hi}`);
     // (no actor measure is a failure, not a pass: D8's actor rule cannot be judged on an entry whose actors vanished)
     if (n.actorLum === null) broken.push(`actorLum unmeasured (${n.actorPx} actor px visible in both masks < ${ACTOR_LUM_MIN_PX})`);
     else if (!(n.actorLum >= NIGHT_ACTOR_BAND[0] && n.actorLum <= NIGHT_ACTOR_BAND[1])) {
@@ -1141,6 +1158,9 @@ async function main(): Promise<void> {
   const extra = arg('query', '');
   const compare = arg('compare', '');
   const gpu = flag('gpu');
+  const expectSame = flag('expect-same');
+  if (expectSame && !compare) throw new Error('--expect-same needs --compare <label>');
+  const sameFailures: string[] = []; // --expect-same: controls that differ from the reference
   const selftest = flag('selftest');
   const ab = flag('ab');
   const abMethod = arg('ab-method', 'frame') as AbMethod;
@@ -1156,6 +1176,7 @@ async function main(): Promise<void> {
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
   const dayActorFailures: string[] = []; // in-scope day interiors' actors outside DAY_ACTOR_BAND (or their median low)
+  let dayGatedMeasured = 0;              // the in-scope day interiors with a reliable measure
   const nightRows: { name: string; n: NightLum }[] = [];
   const nightFailures: string[] = []; // in-scope night twins outside D8's bounds, or not measurable
   const shotThisRun = new Set<string>(); // the entry_style keys this run shot (and kept)
@@ -1361,7 +1382,7 @@ async function main(): Promise<void> {
             entry.cpuMs = round(g.cpuMs, 3);
           }
           // (an entry that equals another one: measured there)
-          if (ab && style === 'modern' && !(e.kind === 'live' && e.sameAs) && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
+          if (ab && style === 'modern' && !(e.kind === 'live' && e.sameAs) && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e) ?? true)))) {
             const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature, abMethod, abAa, abHalf)
               : await abMeasureStatic(page, abRounds, abFeature, abMethod, abAa, abHalf);
             const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
@@ -1399,6 +1420,7 @@ async function main(): Promise<void> {
               const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
               diffs.push(`diff ${key.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
               line += ` | diff ${d.pct.toFixed(2)} % (${d.pixels} px)`;
+              if (expectSame && isSameControl(e, style) && d.pixels !== 0) sameFailures.push(`${key} (${d.pixels} px, bbox ${b})`);
             } else {
               missingRefs.push(key);
               diffs.push(`diff ${key.padEnd(24)} no reference in ${compare}`);
@@ -1437,6 +1459,8 @@ async function main(): Promise<void> {
             const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
             diffs.push(`diff ${name.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
             console.log(`gba  ${name.padEnd(24)} diff ${d.pct.toFixed(2)} % (${d.pixels} px)`);
+            // (the GBA's own picture does not depend on the renderer: always a control)
+            if (expectSame && d.pixels !== 0) sameFailures.push(`${name} (${d.pixels} px, bbox ${b})`);
           } catch (err) {
             gbaDiffFailures.push(name);
             console.log(`[${name}] FAILED: ${(err as Error).message}`);
@@ -1513,6 +1537,7 @@ async function main(): Promise<void> {
     for (const x of gated) {
       if (!(x.lum.ratio >= DAY_ACTOR_BAND[0] && x.lum.ratio <= DAY_ACTOR_BAND[1])) dayActorFailures.push(`${x.name} ${x.lum.ratio.toFixed(3)}`);
     }
+    dayGatedMeasured = gated.length;
     if (gated.length) {
       const m = median(gated.map((x) => x.lum.ratio));
       if (m < DAY_ACTOR_MEDIAN_MIN) dayActorFailures.push(`median ${m.toFixed(3)} < ${DAY_ACTOR_MEDIAN_MIN}`);
@@ -1521,8 +1546,11 @@ async function main(): Promise<void> {
         + (unmeasured.length ? `; not measured (not gated): ${unmeasured.join(', ')}` : ''));
     }
   }
+  // (never a vacuous pass: in-scope day interiors ran in both styles, yet not one gave a reliable measure)
+  const dayGatedRun = styles.includes('modern') && styles.includes('retro') ? entries.filter(dayActorGated).map((e) => e.name) : [];
+  if (dayGatedRun.length && !dayGatedMeasured) dayActorFailures.push(`no reliable measure of any of ${dayGatedRun.join(', ')}`);
   if (nightRows.length) {
-    console.log(`\nnight twins, Modern night / day (mean sRGB luma; gated in scope: room ≥ ${NIGHT_ROOM_MIN}, actors ${NIGHT_ACTOR_BAND.join('-')}):`);
+    console.log(`\nnight twins, Modern night / day (mean sRGB luma; gated in scope: room ${NIGHT_ROOM_BAND.join('-')} at night, ${DUSK_ROOM_BAND.join('-')} at dusk, actors ${NIGHT_ACTOR_BAND.join('-')}):`);
     console.log('| night | day | roomLuma | room night / day | actorLum | actor night / day | actor px | gate |');
     console.log('|---|---|---|---|---|---|---|---|');
     for (const { name, n } of nightRows) {
@@ -1550,8 +1578,9 @@ async function main(): Promise<void> {
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
   if (nightFailures.length) console.log(`night-twin gates (D8) failed in: ${nightFailures.join(', ')}`);
   if (dayActorFailures.length) console.log(`day actor-luminance gate (in-scope interiors vs Retro) failed: ${dayActorFailures.join(', ')}`);
+  if (sameFailures.length) console.log(`--expect-same: controls that differ from ${compare}: ${sameFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length
-    || nightFailures.length || dayActorFailures.length) {
+    || nightFailures.length || dayActorFailures.length || sameFailures.length) {
     process.exitCode = 1;
   }
 }
