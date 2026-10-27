@@ -6,8 +6,7 @@ import {
 import { STAGE, REF_PITCH } from '../src/render/battle/stage';
 import { blankSprite } from '../src/render/previewActors';
 import { SYM } from '../src/game/symbols';
-import { GameState, type SpriteSnap } from '../src/game/state';
-import { Bus } from '../src/gba/bus';
+import type { SpriteSnap } from '../src/game/state';
 import { previewBattleSprites } from '../src/render/battlePreview';
 
 const slot = { u0: 0, v0: 0.125, u1: 0.0625, v1: 0 };
@@ -87,31 +86,7 @@ describe('battleRoute', () => {
 });
 
 describe('battler copies on BG layers (a move\'s monbg)', () => {
-  it('GameState lists the battler sprites whose monbg copy the overlay shows: their task lives now and lived at the previous sync', () => {
-    const bus = new Bus(new Uint8Array(0x1000));
-    const w = (a: number, v: number, bytes: 1 | 2 | 4) => {
-      const arr = (a >>> 24) === 2 ? bus.ewram : bus.iwram, o = (a >>> 24) === 2 ? a & 0x3ffff : a & 0x7fff;
-      for (let i = 0; i < bytes; i++) arr[o + i] = (v >>> (8 * i)) & 0xff;
-    };
-    w(SYM.gMain + 4, SYM.BattleMainCB2 | 1, 4);                        // in battle
-    w(SYM.sMonAnimTaskIdArray, 0xff, 1); w(SYM.sMonAnimTaskIdArray + 1, 0xff, 1);
-    const task = SYM.gTasks + 3 * 40;
-    w(task, SYM.Task_UpdateMonBg | 1, 4); w(task + 4, 1, 1); w(task + 8, 4, 2);   // Task_UpdateMonBg, active, sprite 4
-    const st = new GameState(bus);
-    st.update();
-    expect(st.scene).toBe('battle');
-    expect(st.battlerCopies).toEqual([]);
-    w(SYM.sMonAnimTaskIdArray, 3, 1);                                   // monbg: the task lives (the copy shows a frame later)
-    st.update(); expect(st.battlerCopies).toEqual([]);
-    st.update(); expect(st.battlerCopies).toEqual([4]);
-    st.update(); expect(st.battlerCopies).toEqual([4]);
-    w(SYM.sMonAnimTaskIdArray, 0xff, 1);                                // clearmonbg's task destroyed it
-    st.update(); expect(st.battlerCopies).toEqual([]);
-    w(SYM.sMonAnimTaskIdArray, 3, 1); w(task, 0x08000001, 4);           // another task in that slot: no copy
-    st.update(); st.update(); expect(st.battlerCopies).toEqual([]);
-    w(task, SYM.Task_UpdateMonBg | 1, 4); w(task + 4, 0, 1);            // an inactive task: none
-    st.update(); st.update(); expect(st.battlerCopies).toEqual([]);
-  });
+  // (which battlers GameState lists as copied, by emulated frames: tests/monBgCopies.test.ts)
   it('Modern hides a battler while its flat copy shows on the overlay (no duplicate); Retro and the cards baseline as today', () => {
     const b = battler(4, 144, 23);
     expect(battleRoute(b, 'modern', true, true)).toBe('skip');

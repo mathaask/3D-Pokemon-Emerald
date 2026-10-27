@@ -216,15 +216,22 @@ export class GameState {
    * (Task_UpdateMonBg, sMonAnimTaskIdArray) lives; clearmonbg shows the sprite again three frames before the task goes.
    * Measured on Scratch (battle1.state, frames from the load): task 65–91, sprite hidden 65–87, the copy on the overlay
    * 66–90 — the overlay shows it a frame after the task appears and stops a frame before the task goes. So: a battler
-   * whose task lives at this sync and lived at the previous one (66–91: never a frame with the copy outside it; frame 91
-   * shows neither, as 65 does). (On the GBA the copy lies exactly under the sprite; the 3D view places the battler
-   * elsewhere: Modern hides it meanwhile — no duplicate. monbg_static, which makes no task and keeps the sprite, is not
-   * covered.)
+   * whose task lives now and appeared at least one emulated frame ago (66–91: never a frame with the copy outside it;
+   * frame 91 shows neither, as 65 does). Counted in emulated frames (gMain.vblankCounter1), not syncs: a sync after
+   * several frames (below 60 fps, fast-forward, the harness's steps) takes a task first seen as appeared on the frame
+   * after the last sync's (its copy may already show: never a duplicate), and a resync on the same frame changes nothing.
+   * (On the GBA the copy lies exactly under the sprite; the 3D view places the battler elsewhere: Modern hides it
+   * meanwhile — no duplicate. monbg_static, which makes no task and keeps the sprite, is not covered.)
    */
   battlerCopies: number[] = [];
-  /** The sprites with a live monbg task at the previous sync and at this one (two arrays, swapped each sync). */
-  private monBgBefore: number[] = [];
-  private monBgNow: number[] = [];
+  /** The sprites of the monbg tasks seen at the last battle sync and, for each, the earliest emulated frame its task can
+   *  have appeared on (two pairs of arrays, swapped each sync); that sync's emulated frame (-1: none since the battle
+   *  began, or the counter went back). */
+  private monBgSprites: number[] = [];
+  private monBgSince: number[] = [];
+  private monBgSpritesNext: number[] = [];
+  private monBgSinceNext: number[] = [];
+  private monBgFrame = -1;
 
   /** Subsprite tables read so far, by table address (ROM tables only: they never change). */
   private subspriteCache = new Map<number, SubspritePiece[] | null>();
@@ -245,27 +252,45 @@ export class GameState {
     this.readSprites();
     if (this.scene === 'overworld' || this.scene === 'transition' || this.scene === 'battleTransition') this.readOverworld();
     if (this.scene === 'battle') this.readBattle();
-    else this.battlerCopies.length = this.monBgBefore.length = 0;
+    else {
+      this.battlerCopies.length = this.monBgSprites.length = this.monBgSince.length = 0;
+      this.monBgFrame = -1;
+    }
   }
 
-  /** The battler copies the overlay shows (battlerCopies): the sprites of the monbg tasks live both now and at the
-   *  previous sync. */
+  /** The battler copies the overlay shows (battlerCopies): the sprites of the live monbg tasks that appeared at least one
+   *  emulated frame ago. */
   private readMonBg(): void {
     const m = this.mem;
-    const now = this.monBgNow;
-    now.length = 0;
+    // gMain.vblankCounter1: +1 every VBlank (main.c VBlankIntr), so every emulated frame
+    const frame = m.u32(SYM.gMain + 0x20);
+    // (gone back: a loaded save state — the history restarts)
+    if (frame < this.monBgFrame) {
+      this.monBgSprites.length = this.monBgSince.length = 0;
+      this.monBgFrame = -1;
+    }
+    // a task first seen now appeared on a frame since the last sync's: at the earliest the one after it (this one on the
+    // battle's first sync, or a resync on the same frame)
+    const earliest = this.monBgFrame >= 0 && frame > this.monBgFrame ? this.monBgFrame + 1 : frame;
+    const sprites = this.monBgSpritesNext, since = this.monBgSinceNext, copies = this.battlerCopies;
+    sprites.length = since.length = copies.length = 0;
     for (let k = 0; k < 2; k++) {
       const id = m.u8(SYM.sMonAnimTaskIdArray + k);
       if (id >= TASK_COUNT) continue; // TASK_NONE
       const t = SYM.gTasks + id * TASK_SIZE;
       if (m.u8(t + 4) === 0 || ((m.u32(t) & ~1) >>> 0) !== SYM.Task_UpdateMonBg) continue;
-      now.push(m.u16(t + 8)); // t2_SpriteId (data[0])
+      const s = m.u16(t + 8); // t2_SpriteId (data[0])
+      const seen = this.monBgSprites.indexOf(s);
+      const from = seen >= 0 ? this.monBgSince[seen] : earliest;
+      sprites.push(s);
+      since.push(from);
+      if (frame > from) copies.push(s);
     }
-    const copies = this.battlerCopies;
-    copies.length = 0;
-    for (const s of now) if (this.monBgBefore.includes(s)) copies.push(s);
-    this.monBgNow = this.monBgBefore;
-    this.monBgBefore = now;
+    this.monBgSpritesNext = this.monBgSprites;
+    this.monBgSinceNext = this.monBgSince;
+    this.monBgSprites = sprites;
+    this.monBgSince = since;
+    this.monBgFrame = frame;
   }
 
   private readFade(): void {
