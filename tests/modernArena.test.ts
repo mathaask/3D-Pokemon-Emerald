@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { ModernArena, ArenaColorLock, type ArenaPart } from '../src/render/battle/modernArena';
-import { createKitUniforms } from '../src/render/kit/materials';
+import { createKitUniforms, kitMaterialKind } from '../src/render/kit/materials';
+import { GROUND_PART } from '../src/render/battle/parts/ground';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { ARENA_KINDS } from '../src/render/battle/arenaKind';
 
@@ -90,5 +91,84 @@ describe('ModernArena', () => {
     const a = new ModernArena(createKitUniforms());
     for (const k of ARENA_KINDS) { expect(a.covers(k)).toBe(true); expect(a.build(k, defaultArenaColors(k), 'medium'), k).toBe(true); }
     a.dispose();
+  });
+});
+
+describe('ModernArena: freeing a build (review B M4)', () => {
+  /** A build's kit materials and the DataTextures their uniforms hold (onBeforeCompile on a stub hands the slots over). */
+  const contents = (root: THREE.Object3D) => {
+    const materials = new Set<THREE.Material>(), textures = new Set<THREE.Texture>();
+    root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+        if (!kitMaterialKind(mat)) continue;
+        materials.add(mat);
+        const s = { uniforms: {} as Record<string, { value: unknown }>, vertexShader: '', fragmentShader: '' };
+        mat.onBeforeCompile(s as unknown as THREE.WebGLProgramParametersWithUniforms, null as unknown as THREE.WebGLRenderer);
+        for (const u of Object.values(s.uniforms)) if ((u.value as THREE.DataTexture | null)?.isDataTexture) textures.add(u.value as THREE.Texture);
+      }
+    });
+    return { materials, textures };
+  };
+  const sampled = (kind: 'pond' | 'grass') => ({ ...defaultArenaColors(kind), platform: [0.3, 0.6, 0.25] as [number, number, number] });
+
+  it("frees a build's textures and hands its kit materials back on a rebuild: the rebuild draws with the very same ones", () => {
+    const dispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+    const a = new ModernArena(createKitUniforms());
+    expect(a.build('pond', defaultArenaColors('pond'), 'medium')).toBe(true);
+    const first = contents(a.group);
+    // (the ground's cells and the water's field: the lily pads have no tops of their own)
+    expect(first.textures.size).toBe(2);
+    expect(dispose.mock.contexts.filter((t) => first.textures.has(t as THREE.Texture))).toHaveLength(0);
+    // (the battle's sampled colours: a rebuild of the same kind)
+    expect(a.build('pond', sampled('pond'), 'medium')).toBe(true);
+    for (const t of first.textures) expect(dispose.mock.contexts, 'a texture of the first build freed').toContain(t);
+    const second = contents(a.group);
+    expect(second.materials).toEqual(first.materials);
+    // (a kind of other parts: of each material kind both draw with, it takes the pooled ones before making any)
+    expect(a.build('grass', defaultArenaColors('grass'), 'medium')).toBe(true);
+    for (const t of second.textures) expect(dispose.mock.contexts).toContain(t);
+    const third = [...contents(a.group).materials];
+    const of = (list: Iterable<THREE.Material>, kind: string | null) => [...list].filter((m) => kitMaterialKind(m) === kind);
+    let shared = 0;
+    for (const kind of new Set(third.map((m) => kitMaterialKind(m)))) {
+      const was = of(second.materials, kind), now = of(third, kind);
+      expect(now.filter((m) => second.materials.has(m)).length, kind!).toBe(Math.min(was.length, now.length));
+      shared += Math.min(was.length, now.length);
+    }
+    expect(shared).toBeGreaterThan(0);
+    a.dispose();
+    dispose.mockRestore();
+  });
+
+  it('leaves nothing of a build a part fails in: its textures freed, its kit materials back in the pool', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+    const u = createKitUniforms();
+    let built: THREE.Mesh | null = null, extra: THREE.DataTexture | null = null, cells = new Set<THREE.Texture>();
+    const ground = part('ground', 'all', (ctx) => {
+      built = GROUND_PART.build(ctx) as THREE.Mesh;
+      cells = contents(built).textures;
+      return built;
+    });
+    const failing = part('boom', 'all', (ctx) => {
+      ctx.disposables.push(extra = new THREE.DataTexture(new Uint8Array(4), 1, 1));
+      throw new Error('boom');
+    });
+    const a = new ModernArena(u, [ground, failing]);
+    expect(a.build('grass', defaultArenaColors('grass'), 'medium')).toBe(false);
+    expect(a.group.children).toHaveLength(0);
+    expect(cells.size).toBe(1);
+    for (const t of [...cells, extra!]) expect(dispose.mock.contexts, 'a texture of the failed build freed').toContain(t);
+    // (the ground's material is back in the pool: the next build takes it)
+    const material = built!.material;
+    const b = new ModernArena(u, [ground]);
+    expect(b.build('grass', defaultArenaColors('grass'), 'medium')).toBe(true);
+    expect(built!.material).toBe(material);
+    expect((b.group.children[0] as THREE.Mesh).material).toBe(material);
+    b.dispose();
+    dispose.mockRestore();
+    warn.mockRestore();
   });
 });
