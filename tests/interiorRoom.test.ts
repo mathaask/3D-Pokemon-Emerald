@@ -86,6 +86,16 @@ describe('room layout', () => {
     expect(L.floorTile).toBe(0x205);
     expect(checkRoomLayout(a, L)).toEqual([]);
   });
+  // Brendan's / May's house 1F: windows in the band's top row hang high on the wall (row 0 is the band's top).
+  it('puts a top-row window at the top of the wall and a bottom-row one below it', () => {
+    const { a, ids } = fakeInterior(['         ', ' WOWWWWW ', ' WWWWOWW ', ' ....... ', '         ']);
+    const L = roomLayout(a, ids, []);
+    const [hi, lo] = L.features.map((f) => windowRect(L, f));
+    const span = WALL_H - 0.5;
+    expect(L.features.map((f) => [f.x0, f.row0, f.row1, f.rows])).toEqual([[2, 0, 0, 2], [5, 1, 1, 2]]);
+    expect(hi.y0).toBeCloseTo(0.2 + span / 2, 5); expect(hi.y1).toBeCloseTo(WALL_H - 0.3, 5);
+    expect(lo.y0).toBeCloseTo(0.2, 5); expect(lo.y1).toBeCloseTo(0.2 + span / 2, 5);
+  });
   it('groups wall art by id and row-run, merged downward', () => {
     const { a, ids } = fakeInterior(['         ', ' WCWDDWW ', ' WCWDDWW ', ' ....... ', '         ']);
     const L = roomLayout(a, ids, []);

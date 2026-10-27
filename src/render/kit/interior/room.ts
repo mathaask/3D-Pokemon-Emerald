@@ -441,8 +441,9 @@ export function checkRoomLayout(a: MapAnalysis, L: RoomLayout, warps?: readonly 
 }
 
 /** A window feature's glass rectangle on its back wall (shared by the shell's window and the floor family's shaft):
- *  x centred on the feature, width x1 − x0 − 0.3; its art rows stretched over 0.2 … WALL_H − 0.3:
- *  y0 = 0.2 + (row0 / rows)·(WALL_H − 0.5), y1 = 0.2 + ((row1 + 1) / rows)·(WALL_H − 0.5); z = the N run's line there.
+ *  x centred on the feature, width x1 − x0 − 0.3; its art rows stretched over 0.2 … WALL_H − 0.3, row 0 (the band's top)
+ *  at the top: y0 = 0.2 + ((rows − row1 − 1) / rows)·(WALL_H − 0.5), y1 = 0.2 + ((rows − row0) / rows)·(WALL_H − 0.5)
+ *  (the brief's formula counted rows from the floor: a top-row window sat low); z = the N run's line there.
  *  Pass the feature itself (z is kept by reference); a copy falls back to the northernmost N run over its centre. */
 export function windowRect(L: RoomLayout, f: WallFeature): { x0: number; x1: number; y0: number; y1: number; z: number } {
   const cx = (f.x0 + f.x1) / 2, hw = (f.x1 - f.x0 - 0.3) / 2;
@@ -452,5 +453,5 @@ export function windowRect(L: RoomLayout, f: WallFeature): { x0: number; x1: num
     const r = L.runs.filter((q) => q.dir === 'N' && q.from <= cx && cx < q.to).sort((p, q) => p.line - q.line)[0];
     z = r ? r.line : 0;
   }
-  return { x0: cx - hw, x1: cx + hw, y0: 0.2 + (f.row0 / f.rows) * span, y1: 0.2 + ((f.row1 + 1) / f.rows) * span, z };
+  return { x0: cx - hw, x1: cx + hw, y0: 0.2 + ((f.rows - f.row1 - 1) / f.rows) * span, y1: 0.2 + ((f.rows - f.row0) / f.rows) * span, z };
 }
