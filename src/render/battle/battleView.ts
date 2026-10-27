@@ -64,6 +64,9 @@ const TODAY_LIGHT = { day: todayLight(1.15, 2.4), night: todayLight(0.7, 0.6), r
 /** The Modern battlers' exposure range (BattleView.applyLook). */
 const EXPOSURE = { min: 0.5, max: 3 };
 const _sunDir = new THREE.Vector3();
+/** BattleView.update's scratch (no allocation per frame): the point the camera looks at, the platform it eases towards
+ *  while a move plays, the camera's direction from that point and the sun's offset from it. */
+const _mid = new THREE.Vector3(), _focus = new THREE.Vector3(), _dir = new THREE.Vector3(), _sunOffset = new THREE.Vector3();
 /** Whether two key lists are equal (updateField's, every frame: no closure, no callback). */
 function sameKeys(a: readonly number[], b: readonly number[]): boolean {
   if (a.length !== b.length) return false;
@@ -510,7 +513,7 @@ export class BattleView {
     // Look down the reference camera's centre ray; a narrow FOV keeps perspective close to
     // the GBA's flat projection while still giving depth.
     const midDepth = (STAGE.playerDepth + STAGE.enemyDepth) / 2;
-    const mid = STAGE.at(120, 82, midDepth);
+    const mid = STAGE.at(120, 82, midDepth, _mid);
     // Cinematic focus: while a move animation plays, ease towards the target and push in.
     const targetFocus = state.animActive ? 1 : 0;
     this.focus += (targetFocus - this.focus) * Math.min(1, dt * 2.5);
@@ -519,7 +522,7 @@ export class BattleView {
       this.focusSide = (state.target & 1) === 1 ? 1 : -1;
     }
     const focusPoint = this.focusSide > 0 ? STAGE.enemy : STAGE.player;
-    mid.lerp(new THREE.Vector3(focusPoint.x, mid.y, focusPoint.z), this.focus * 0.25);
+    mid.lerp(_focus.set(focusPoint.x, mid.y, focusPoint.z), this.focus * 0.25);
     const ease = 1 - Math.pow(1 - this.intro, 3);
     const sway = Math.sin(this.time * 0.25) * C.sway;
     const yaw = this.yaw + sway + (1 - ease) * C.intro.yaw + this.focus * C.focusYaw * this.focusSide;
@@ -527,7 +530,7 @@ export class BattleView {
     const dist = ((80 / PX) / Math.tan(THREE.MathUtils.degToRad(fov / 2))) * this.zoom *
       (1 + (1 - ease) * C.intro.dist) * (1 - this.focus * C.focusPush);
     const pitch = REF_PITCH - C.pitchDrop + (1 - ease) * C.intro.pitch;
-    const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+    const dir = _dir.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
     this.camera.position.copy(mid).addScaledVector(dir, dist);
     this.camera.fov = fov;
     this.camera.lookAt(mid);
@@ -540,7 +543,7 @@ export class BattleView {
     const hour = state.hours + state.minutes / 60;
     const dayPhase = ((hour - 6) / 12) * Math.PI;
     const night = !indoor && (hour < 5.5 || hour > 19.5);
-    this.sun.position.copy(mid).add(new THREE.Vector3(Math.cos(dayPhase) * SUN_OFFSET.swing + SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z));
+    this.sun.position.copy(mid).add(_sunOffset.set(Math.cos(dayPhase) * SUN_OFFSET.swing + SUN_OFFSET.x, SUN_OFFSET.y, SUN_OFFSET.z));
     this.sun.target.position.copy(mid);
     this.uniforms.uTime.value = this.time;
     const fog = this.scene.fog as THREE.Fog;
