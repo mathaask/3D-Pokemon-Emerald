@@ -14,6 +14,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import { STAGE, type Stage } from '../stage';
 import { platformsGlsl } from './ground';
+import { BOARDS_GLSL, FLOOR_SEAM_GLSL, TILES_GLSL } from '../../kit/interior/floorGlsl';
 
 /** A floor's pattern: wooden boards along z, square tiles, or a platform's top. */
 export type FloorStyle = 'boards' | 'tiles' | 'stage';
@@ -53,46 +54,19 @@ uniform vec3 uFloorAlt;   // tiles: the alternate tiles' factor; stage: the rim 
 uniform vec4 uFloorCourt; // a court's rectangle (x0, z0, x1, z1; empty: none) ...
 uniform vec3 uFloorCourtColor; // ... and its colour (linear), in place of the floor's
 `;
-const FLOOR_SEAM = /* glsl */ `// A seam's coverage at fract coordinate f (one period = 1), halfW its half width (periods), the pixel fw periods across:
-// antialiased; where a pixel spans much of a period, the seams' share of it (no moire).
-float floorSeam(float f, float halfW, float fw) {
-  float d = min(f, 1.0 - f);
-  float line = 1.0 - smoothstep(halfW - fw, halfW + fw, d);
-  return mix(line, 2.0 * halfW, smoothstep(0.12, 0.45, fw));
-}
-`;
 /** The floor's head: its uniforms, the build's stage's two platforms (platformsGlsl: the 'stage' tops' rings; the court's
- *  rectangle comes from the same stage, hallFloorMaterial) and the seam function. */
-const floorHead = (stage: Stage) => FLOOR_UNIFORMS + platformsGlsl('FLOOR_PLATFORMS', stage) + FLOOR_SEAM;
+ *  rectangle comes from the same stage, hallFloorMaterial) and the seam function (kit/interior/floorGlsl.ts). */
+const floorHead = (stage: Stage) => FLOOR_UNIFORMS + platformsGlsl('FLOOR_PLATFORMS', stage) + FLOOR_SEAM_GLSL;
 
+// (the boards' and the tiles' branches: kit/interior/floorGlsl.ts, the interiors' floors share them)
 const FLOOR_COLOR = /* glsl */ `
 {
   vec2 fp = vKitWorld.xz;
   vec3 k = vec3(1.0);
   float seam = 0.0;
   if (uFloor.x < 0.5) {
-    // boards along z, uFloor.y wide, each 2.6–4.2 long, their butt joints staggered board to board; a tone per board and
-    // a soft grain along it, both fading out where a pixel spans a board
-    float bx = fp.x / uFloor.y, bi = floor(bx);
-    float h = kitHash12(vec2(bi, 17.0));
-    float len = 2.6 + 1.6 * h;
-    float bz = fp.y / len + h * 5.3, bj = floor(bz);
-    vec2 fw = fwidth(vec2(bx, bz));
-    float near = 1.0 - smoothstep(0.08, 0.4, fw.x);
-    float tone = kitHash12(vec2(bi * 1.7 + 3.0, bj));
-    float grain = kitNoise2(vec2(fp.x * 6.0 + tone * 31.0, fp.y * 0.5));
-    k *= 1.0 + near * (uFloor.w * (2.0 * tone - 1.0) + 0.05 * (grain - 0.5));
-    seam = max(floorSeam(fract(bx), 0.03, fw.x), floorSeam(fract(bz), 0.02 / len, fw.y));
-  } else if (uFloor.x < 1.5) {
-    // square tiles, uFloor.y on a side: a soft checker (uFloorAlt) and a tone per tile, fading out with distance
-    vec2 t = fp / uFloor.y, ti = floor(t);
-    vec2 fw = fwidth(t);
-    float near = 1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y));
-    float tone = kitHash12(ti + 5.0);
-    float chk = mod(ti.x + ti.y, 2.0);
-    k *= mix(vec3(1.0), uFloorAlt, mix(0.5, chk, near)) * (1.0 + near * uFloor.w * (2.0 * tone - 1.0));
-    seam = max(floorSeam(fract(t.x), 0.012, fw.x), floorSeam(fract(t.y), 0.012, fw.y));
-  } else {
+${BOARDS_GLSL}  } else if (uFloor.x < 1.5) {
+${TILES_GLSL}  } else {
     // a platform's top: polished stone, an inlaid band at its rim (uFloorAlt) and a ring of dots inside it, as the GBA's
     // platforms; by the nearer platform's elliptical radius
     vec2 q0 = (fp - FLOOR_PLATFORMS[0].xy) / FLOOR_PLATFORMS[0].zw, q1 = (fp - FLOOR_PLATFORMS[1].xy) / FLOOR_PLATFORMS[1].zw;
