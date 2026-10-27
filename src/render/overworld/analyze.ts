@@ -78,6 +78,11 @@ export interface MapAnalysis {
   groundOf: Int16Array;
   groundH: Float32Array;
   groundRefs: Int16Array;
+  /** Per cell: 1 (walkable) / 2 (blocked) where the map's block is metatile 0x3FF with collision or elevation bits of its
+   *  own: the game draws the secondary tileset's metatile 0x3FF there (only MAPGRID_UNDEFINED, 0x3FF exactly, means the
+   *  border); the classifier reads the border there as it always has (today's look, kept). Read only by the interior kit:
+   *  Sootopolis' houses floor parts of their rooms with it. */
+  real3ff: Uint8Array;
   /** NORMAL/SPLIT metatile with top-layer pixels (an overhang drawn over objects). */
   hasTop(i: number): boolean;
   isGeneralId(m: number): boolean;
@@ -113,6 +118,7 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
   const elev = new Uint8Array(N);
   const beh = new Uint8Array(N);
   const layer = new Uint8Array(N);
+  const real3ff = new Uint8Array(N);
   const borderAt = (x: number, y: number) => {
     const bx = (((x + grid.borderPhase) % grid.borderW) + grid.borderW) % grid.borderW;
     const by = (((y + grid.borderPhase) % grid.borderH) + grid.borderH) % grid.borderH;
@@ -121,7 +127,10 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
   for (let y = minY; y < maxY; y++) {
     for (let x = minX; x < maxX; x++) {
       let raw = x >= 0 && y >= 0 && x < W && y < H ? grid.cells[y * W + x] : borderAt(x, y);
-      if ((raw & 0x3ff) === 0x3ff) raw = borderAt(x, y);
+      if ((raw & 0x3ff) === 0x3ff) {
+        if (raw !== 0x3ff && x >= 0 && y >= 0 && x < W && y < H) real3ff[idx(x, y)] = (raw >> 10) & 3 ? 2 : 1;
+        raw = borderAt(x, y);
+      }
       const i = idx(x, y);
       mt[i] = raw & 0x3ff;
       col[i] = (raw >> 10) & 3 ? 1 : 0;
@@ -470,7 +479,7 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
     cellX: (i) => (i % GW) + minX,
     cellY: (i) => ((i / GW) | 0) + minY,
     mt, col, elev, beh, layer, kind, roundTree, building, buildings,
-    height, waterLevel, groundOf, groundH, groundRefs, hasTop, isGeneralId,
+    height, waterLevel, groundOf, groundH, groundRefs, real3ff, hasTop, isGeneralId,
   };
 }
 
