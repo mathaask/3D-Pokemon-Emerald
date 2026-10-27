@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   groundCells, groundDisc, groundHeight, CAVE_POND, POND, POND_BANK, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
-  GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS, nearerPlatformGlsl, platformsGlsl,
+  CLOUD_SHADOW, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS, nearerPlatformGlsl, platformsGlsl,
 } from '../src/render/battle/parts/ground';
 import type { ArenaContext } from '../src/render/battle/modernArena';
 import { arenaLook } from '../src/render/battle/look';
@@ -117,17 +117,31 @@ describe('arena ground', () => {
 // Task 7b — is held with the battle's whole order, three's group order included: tests/battleRenderOrder.test.ts)
 
 describe('groundNightScale (GROUND_COLOR\'s moonlit earth as a colour factor)', () => {
-  const warmOf = (c: RGB) => THREE.MathUtils.smoothstep(c[0] - c[2], 0, 0.08) * (1 - THREE.MathUtils.smoothstep(c[1] - c[0], 0, 0.08));
-  it('is 1 by day and on cool colours; at night turns warm earth towards its lifted luminance', () => {
-    const earth: RGB = [0.5, 0.35, 0.2], leaf: RGB = [0.2, 0.5, 0.15], out: RGB = [0, 0, 0];
-    expect(groundNightScale(earth, 0, out)).toEqual([1, 1, 1]);
-    expect(groundNightScale(leaf, 1, out)).toEqual([1, 1, 1]);
-    const l = (0.2126 * earth[0] + 0.7152 * earth[1] + 0.0722 * earth[2]) * GROUND_NIGHT.lift;
-    for (const night of [0.4, 1]) {
-      const t = night * GROUND_NIGHT.mix * warmOf(earth);
-      const k = groundNightScale(earth, night, out);
-      for (let i = 0; i < 3; i++) expect(k[i]).toBeCloseTo((earth[i] + (l - earth[i]) * t) / earth[i], 12);
+  // the ground shader's own night lines (GROUND_COLOR), evaluated: its warmth test, then mix(gc, luminance × lift, t)
+  const color = arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0).fragColor!;
+  const warmLine = /float warm = ([^;]*);/.exec(color)![1];
+  const nightLine = /diffuseColor\.rgb = mix\(gc, vec3\(dot\(gc, vec3\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)\) \* ([-\d.]+)\), ([^;]*)\);/.exec(color);
+  const shader = (c: RGB, uNight: number): RGB => {
+    const m = nightLine!;
+    const warm = glslEval(warmLine.replace(/gc\.([rgb])/g, 'gc_$1'), { gc_r: c[0], gc_g: c[1], gc_b: c[2] });
+    const l = (Number(m[1]) * c[0] + Number(m[2]) * c[1] + Number(m[3]) * c[2]) * Number(m[4]);
+    const t = glslEval(m[5], { uNight, warm });
+    return c.map((v) => v + (l - v) * t) as RGB;
+  };
+  it("is the ground shader's moonlit earth as a factor on the colour (its night lines evaluated): 1 by day and on cool colours", () => {
+    expect(nightLine, "GROUND_COLOR's night line").not.toBeNull();
+    const out: RGB = [0, 0, 0];
+    const colours: RGB[] = [[0.5, 0.35, 0.2], [0.2, 0.5, 0.15], [0.86, 0.78, 0.56], [0.45, 0.45, 0.45], [0.55, 0.3, 0.35], [0.3, 0.32, 0.29],
+      [0.42, 0.4, 0.36], [0.6, 0.62, 0.3]];
+    let moonlit = 0;
+    for (const c of colours) for (const uNight of [0, 0.4, 1]) {
+      const k = groundNightScale(c, uNight, out), want = shader(c, uNight);
+      for (let i = 0; i < 3; i++) expect(c[i] * k[i], `${c} at night ${uNight}`).toBeCloseTo(want[i], 12);
+      if (k.some((v) => v !== 1)) moonlit++;
     }
+    expect(moonlit).toBeGreaterThan(4);
+    expect(groundNightScale([0.5, 0.35, 0.2], 0, out)).toEqual([1, 1, 1]);
+    expect(groundNightScale([0.2, 0.5, 0.15], 1, out)).toEqual([1, 1, 1]);
     expect(groundNightScale([0.5, 0, 0.1], 1, out)[1]).toBe(1);   // (a channel at 0 keeps 1)
   });
   it('moonlitAsGround hooks warm colours only and follows uNight through the material colour', () => {
@@ -191,6 +205,13 @@ describe('the worn ring (the ground shader)', () => {
       // at night it fades 40 % into the field
       expect(worn(P.x + 1.15 * fp.rx, P.z, fray, wear, 1)).toBeCloseTo(0.6 * worn(P.x + 1.15 * fp.rx, P.z, fray, wear), 9);
     }
+  });
+  it("darkens the ground under a cloud by CLOUD_SHADOW at most, soft (the shader's line evaluated); not at all without clouds", () => {
+    const cloud = /diffuseColor\.rgb \*= (1\.0 - uClouds \* [^;]*);/.exec(color)![1];
+    expect(glslEval(cloud, { uClouds: 1, vArenaCloud: 1 })).toBeCloseTo(1 - CLOUD_SHADOW, 12);
+    expect(glslEval(cloud, { uClouds: 1, vArenaCloud: 0.5 })).toBeCloseTo(1 - CLOUD_SHADOW / 2, 12);
+    expect(glslEval(cloud, { uClouds: 0, vArenaCloud: 1 })).toBe(1);
+    expect(CLOUD_SHADOW).toBeLessThanOrEqual(0.15);
   });
   it('lies on the outdoor kinds\' field only, in the path\'s browner tint', () => {
     const uRing = (kind: ArenaKind) => {

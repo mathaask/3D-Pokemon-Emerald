@@ -10,7 +10,7 @@ import { treeGeometry } from '../src/render/kit/trees';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
 import { boulderGeometry, rockPlacements } from '../src/render/battle/parts/rocks';
 import { arenaClear, CLUMP_TOP, REED, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
-import { groundHeight, CLOUD_SHADOW } from '../src/render/battle/parts/ground';
+import { groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
 import { createKitUniforms } from '../src/render/kit/materials';
@@ -124,7 +124,6 @@ describe('arena scenery', () => {
       expect(!!arena.group.children.find((c) => c.name === 'dunes')).toBe(kind === 'sand');
       arena.dispose();
     }
-    expect(CLOUD_SHADOW).toBeLessThanOrEqual(0.15);
   });
 
   it("keeps the grass under the sight lines of the intro sweep's cameras too (1.5× as far: flatter lines to the player)", () => {

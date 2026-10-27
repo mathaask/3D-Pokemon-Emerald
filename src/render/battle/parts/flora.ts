@@ -79,7 +79,8 @@ function placedOnce<T>(stage: Stage, key: string, make: () => T): T {
   return byStage.get(key) as T;
 }
 
-function makeTrees(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
+/** treePlacements, made afresh (uncached: the tests hold the cache to it). */
+export function makeTrees(kind: ArenaKind, stage: Stage, seed: number): ArenaTree[] {
   const rule = TREES[kind];
   if (!rule) return [];
   const ko = stageKeepOut(stage), where = rule.where?.(stage, seed);
@@ -181,7 +182,8 @@ export function arenaClear(stage: Stage): (x: number, z: number) => boolean {
 export function grassPlacements(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): readonly Readonly<ArenaClump>[] {
   return placedOnce(stage, `grass:${kind}:${seed}:${quality}`, () => makeGrass(kind, stage, seed, quality));
 }
-function makeGrass(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
+/** grassPlacements, made afresh (uncached: the tests hold the cache to it). */
+export function makeGrass(kind: ArenaKind, stage: Stage, seed: number, quality: Quality): ArenaClump[] {
   const rule = GRASS[kind];
   if (!rule) return [];
   const s = seed * 7919 + salt(kind) + 0x6a55;
@@ -241,7 +243,8 @@ function wornOf(stage: Stage): (x: number, z: number) => boolean {
 export function flowerPlacements(kind: ArenaKind, stage: Stage, seed: number): readonly Readonly<ArenaClump>[] {
   return placedOnce(stage, `flowers:${kind}:${seed}`, () => makeFlowers(kind, stage, seed));
 }
-function makeFlowers(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
+/** flowerPlacements, made afresh (uncached: the tests hold the cache to it). */
+export function makeFlowers(kind: ArenaKind, stage: Stage, seed: number): ArenaClump[] {
   if (kind !== 'grass' && kind !== 'plain') return [];
   const s = seed * 7919 + salt(kind) + 0xf10;
   const clear = arenaClear(stage), worn = wornOf(stage), cap = sightCap(stage);
