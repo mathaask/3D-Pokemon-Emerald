@@ -13,6 +13,7 @@ import { flowerMaterial } from './flowers';
 import { SEABED_MATERIAL, WATER_ROCK_MATERIAL, waterMaterial } from './water';
 import { SOIL_MATERIAL } from './soil';
 import { terrainMaterial } from './terrain';
+import { INTERIOR_CATALOGUE } from './interior/index';
 import { groundMaterial, type WorldMaterials } from '../overworld/world';
 import { TreeCardMaterials, TreeCards } from '../overworld/treeCards';
 
@@ -173,6 +174,8 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
   kit(WATER_ROCK_MATERIAL, PNC, true);
   kit(SOIL_MATERIAL, PNC, false);
   kit(terrainMaterial(placeholder(), v2(), v2()), PN, true);
+  // the interior families' (Phase 4: shell, floor; the furniture's at the group-C join)
+  for (const e of INTERIOR_CATALOGUE) kit(e.material, e.attrs, e.castShadow);
 
   // the legacy pixel geometry (World.addMesh: the water casts no shadow), its tree cards, the ground plane under all
   add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.opaque), true);

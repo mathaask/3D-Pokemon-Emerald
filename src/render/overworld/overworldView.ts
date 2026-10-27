@@ -18,12 +18,12 @@ import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
-import { nightFactor, timeOfDay } from './timeOfDay';
+import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
 import { createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
-import type { ProgramInfo } from '../actors/inflatedActors';
+import { LIGHT_FLOOR, type ProgramInfo } from '../actors/inflatedActors';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -90,6 +90,10 @@ export class OverworldView {
   private lastGrid: Uint16Array | null = null;
   private haveWorld = false;
   private style: WorldStyle = 'modern';
+  /** The interior kit on in-scope interiors (Modern; false: today's legacy rooms and light, the A/B baseline). */
+  private interiorKit = true;
+  /** The blended indoor light of an in-scope room (D8), reused every frame. */
+  private indoorScratch: IndoorLight = indoorLight(0);
   quality: Quality = 'medium';
   private shadowQuality: Quality = 'medium';
   private romReader: RomReader | null = null;
@@ -125,6 +129,8 @@ export class OverworldView {
   /** 0..1 progress of the battle-entry effect (pushes the camera in and twists it). */
   battleZoom = 0;
   private charLight = new THREE.Color(1, 1, 1);
+  /** The light the inflated actors' and models' floor follows (charLight; raised in an in-scope room at night, D8). */
+  private actorFloor = new THREE.Color(1, 1, 1);
   /** What the actor layer reads each frame (one object, updated in place). */
   private actorFrame: ActorFrame = {
     style: 'modern',
@@ -134,6 +140,7 @@ export class OverworldView {
     cameraRight: this.cameraRight,
     cameraPosition: this.camera.position,
     charLight: this.charLight,
+    lightFloor: this.actorFloor,
   };
 
   /** The legacy pixel-geometry materials (the World's; the program catalogue draws with them too). */
@@ -209,6 +216,21 @@ export class OverworldView {
     this.style = s;
     this.gridKey = '';
     this.applyShadowSettings();
+  }
+
+  /** The interior kit on in-scope interiors on or off (Modern; off: today's legacy room and light — the harness's
+   *  `--ab-feature interior` baseline); the world is rebuilt on the next sync. */
+  setInteriorKit(on: boolean): void {
+    if (on === this.interiorKit) return;
+    this.interiorKit = on;
+    this.gridKey = '';
+  }
+
+  /** Makes the named kit family fail on every build (null: none; the preview's `&kitFail=`): its cells render legacy,
+   *  warned once per map. Takes effect at the next build. */
+  setFailFamily(name: string | null): void {
+    this.world.setFailFamily(name);
+    this.gridKey = '';
   }
 
   /**
@@ -434,7 +456,7 @@ export class OverworldView {
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
       secondaryTileset,
       primaryTileset,
-    }, { style: this.worldStyle, events, quality: this.quality, mapKey });
+    }, { style: this.worldStyle, events, quality: this.quality, mapKey, interiorKit: this.interiorKit });
     this.haveWorld = true;
   }
 
@@ -518,13 +540,18 @@ export class OverworldView {
     let groundColor = new THREE.Color(0.45, 0.5, 0.35);
     let hemiI = 1.15;
     let fog = new THREE.Color(0.8, 0.9, 1.0);
+    // An in-scope room whose interior kit ran follows the clock (D8): today's indoor light by day, a warm lamp-lit night.
+    const lit = this.worldStyle === 'modern' && this.world.interiorKitRan;
+    const nightOut = lit ? nightFactor(hour) : 0;
+    this.kitUniforms.uOutdoorNight.value = nightOut;
 
     if (indoor) {
-      sunColor = new THREE.Color(1.0, 0.95, 0.85);
-      sunI = 1.5;
-      skyColor = new THREE.Color(1.0, 0.97, 0.92);
-      groundColor = new THREE.Color(0.55, 0.5, 0.45);
-      hemiI = 1.7;
+      const room = lit ? indoorLight(nightOut, this.indoorScratch) : INDOOR_DAY;
+      sunColor = room.sunColor.clone();
+      sunI = room.sunI;
+      skyColor = room.sky.clone();
+      groundColor = room.ground.clone();
+      hemiI = room.hemiI;
       fog = new THREE.Color(0.02, 0.02, 0.03);
     } else if (underground) {
       sunColor = new THREE.Color(0.9, 0.85, 1.0);
@@ -611,6 +638,7 @@ export class OverworldView {
     if (state.flashLevel > 0) {
       // Characters are drawn near the player's light.
       this.charLight.setRGB(0.85, 0.75, 0.6);
+      this.actorFloor.copy(this.charLight);
       return;
     }
     this.charLight.setRGB(
@@ -618,6 +646,20 @@ export class OverworldView {
       (skyColor.g * hemiI + sunColor.g * sunI * 0.75) * k,
       (skyColor.b * hemiI + sunColor.b * sunI * 0.75) * k,
     );
+    this.actorFloor.copy(this.charLight);
+    // (D8: in an in-scope room the actors keep at least ACTOR_NIGHT_FLOOR of the room's day light, per channel: the
+    // cards through charLight, the inflated actors and models — lit by the room's lights, floored at LIGHT_FLOOR ×
+    // their floor light — through a floor light raised as the night comes, to ACTOR_NIGHT_FLOOR × the day's at full
+    // night; by day both are today's exactly)
+    if (lit && indoor) {
+      const D = INDOOR_DAY;
+      const day = (c: 'r' | 'g' | 'b') => (D.sky[c] * D.hemiI + D.sunColor[c] * D.sunI * 0.75) * k;
+      const card = ACTOR_NIGHT_FLOOR, floor = (ACTOR_NIGHT_FLOOR * nightOut) / LIGHT_FLOOR;
+      this.charLight.setRGB(Math.max(this.charLight.r, day('r') * card), Math.max(this.charLight.g, day('g') * card),
+        Math.max(this.charLight.b, day('b') * card));
+      this.actorFloor.setRGB(Math.max(this.charLight.r, day('r') * floor), Math.max(this.charLight.g, day('g') * floor),
+        Math.max(this.charLight.b, day('b') * floor));
+    }
   }
 
   /** Per displayed frame: camera smoothing, billboards, lights. */
@@ -654,6 +696,8 @@ export class OverworldView {
     const yawFx = this.yaw + bz * 1.2;
     // (the camera's horizontal back direction: "in front of" for the NPC occlusion fade)
     this.kitUniforms.uCamBack.value.set(Math.sin(yawFx), Math.cos(yawFx));
+    // the interior walls the camera sees from outside vanish (D5)
+    this.world.updateCutaway(this.kitUniforms.uCamBack.value);
     const offset = new THREE.Vector3(
       Math.sin(yawFx) * Math.cos(pitch),
       Math.sin(pitch),

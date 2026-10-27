@@ -80,6 +80,9 @@ export interface ActorFrame {
   cameraPosition?: THREE.Vector3;
   /** Light the cards are drawn with (ambient + part of the sun). */
   charLight: THREE.Color;
+  /** The light the inflated actors' and object models' floor follows (they stay ≥ LIGHT_FLOOR × it; default
+   *  charLight): an in-scope room at night keeps its actors near their day light with it (D8, OverworldView). */
+  lightFloor?: THREE.Color;
 }
 
 /** Inputs of the inflated actors (field; `instanceUniforms`: their instance data from a uniform array, default true —
@@ -381,14 +384,14 @@ export class ActorLayer {
     if (this.inflated && this.contact) {
       // Retro: no inflated mesh, no contact shadows (empty and hidden)
       this.inflated.set(this.actors, f.cameraRight, f.cameraPosition);
-      this.inflated.setLightFloor(f.charLight);
+      this.inflated.setLightFloor(f.lightFloor ?? f.charLight);
       this.inflated.mesh.visible = this.contact.mesh.visible = inflate;
     }
     if (this.models) {
       // Retro (or Phase 2 off): no models (empty and hidden)
       this.models.set(this.modelList);
       this.models.group.visible = models !== null;
-      this.models.setLightFloor(f.charLight);
+      this.models.setLightFloor(f.lightFloor ?? f.charLight);
       // objects gone since the last synced frame are new again when they reappear (all of them after a Retro or
       // Phase-2-off period: no identity is kept across it)
       if (models) {

@@ -35,8 +35,9 @@ const OUT = path.resolve(import.meta.dirname, '../../out');
 
 interface Run { name: string; width: number; height: number; a: MapAnalysis; ex: Extracted | null }
 
-/** Analysis and extraction as World.build runs them: margin 14, and the kit runs on every map that
- *  is neither indoor nor underground (on a Dive map only the seabed terrain draws). */
+/** Analysis and extraction as World.build runs them: margin 14, and the outdoor families run on every map that
+ *  is neither indoor nor underground (on a Dive map only the seabed terrain draws; in-scope interiors run the
+ *  interior families instead: tests/smoke/interiorWorld.test.ts). */
 function run(g: number, n: number): Run {
   const s = loadStaticMap(g, n);
   const a = analyze(s.grid, { ...s.opts, margin: 14 });
@@ -280,7 +281,7 @@ describe('semantics on real maps', () => {
     expect([...w.dist].filter((d) => d === 1).length).toBeGreaterThan(20);
   });
 
-  it('indoor and cave maps are left to legacy', () => {
+  it('the outdoor families never run on indoor and cave maps (in-scope interiors run the interior families: interiorWorld.test.ts)', () => {
     expect(run(1, 0).ex).toBeNull();
     expect(run(24, 7).ex).toBeNull();
   });

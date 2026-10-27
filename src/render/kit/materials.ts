@@ -50,6 +50,9 @@ export interface KitUniforms {
   uActors: { value: THREE.Vector3[] };
   /** Sky colour (linear) for water reflections. */
   uSky: { value: THREE.Color };
+  /** The outdoor night seen from an in-scope room (D8): nightFactor(hour) when the interior kit ran on the build, else 0
+   *  (night glass deep blue, light shafts off). Bound in every kit material; read by the interior shaders only. */
+  uOutdoorNight: { value: number };
 }
 
 export function createKitUniforms(): KitUniforms {
@@ -66,6 +69,7 @@ export function createKitUniforms(): KitUniforms {
     uCamBack: { value: new THREE.Vector2(0, 1) },
     uActors: { value: Array.from({ length: MAX_ACTORS }, () => new THREE.Vector3(1e4, 0, 1e4)) },
     uSky: { value: new THREE.Color(0.75, 0.88, 1.0) },
+    uOutdoorNight: { value: 0 },
   };
 }
 
@@ -263,6 +267,9 @@ export interface KitMaterialOptions {
   transparent?: boolean;
   /** Writes depth (default true; false for a transparent surface drawn over what lies under it). */
   depthWrite?: boolean;
+  /** Blending (default NormalBlending; AdditiveBlending: the interiors' light shafts). Set per build, like the colour:
+   *  not program-affecting, not in the pool key. */
+  blending?: THREE.Blending;
   flatShading?: boolean;
   /** Sway amplitude in world units at full flex (0 = rigid). */
   wind?: number;
@@ -464,7 +471,7 @@ function patchKit(s: THREE.WebGLProgramParametersWithUniforms, u: KitUniforms, l
     uTime: u.uTime, uWind: u.uWind, uActors: u.uActors, uNight: u.uNight, uSky: u.uSky,
     uFocusPx: u.uFocusPx, uFocusDepth: u.uFocusDepth, uFadeRadius: u.uFadeRadius, uFocusExtra: u.uFocusExtra,
     uFocusExtraBox: u.uFocusExtraBox, uFocusExtraFoot: u.uFocusExtraFoot,
-    uCamBack: u.uCamBack, ...local, ...slots,
+    uCamBack: u.uCamBack, uOutdoorNight: u.uOutdoorNight, ...local, ...slots,
   });
   s.vertexShader = VERT_PRELUDE + (o.vertHead ?? '') + s.vertexShader
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + (o.vertTransform ?? ''))
@@ -522,6 +529,7 @@ function configure(p: Pooled, o: KitMaterialOptions): void {
   m.metalness = o.metalness ?? 0;
   m.map = o.map ?? null;
   m.depthWrite = o.depthWrite ?? true;
+  m.blending = o.blending ?? THREE.NormalBlending;
   p.local.uWindAmp.value = o.wind ?? 0;
   p.local.uWindHeight.value = o.windHeight ?? 1;
   p.local.uGlow.value = o.glow ?? 0;

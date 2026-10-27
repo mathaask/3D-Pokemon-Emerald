@@ -8,6 +8,7 @@
 //   &focusGfx=G / &focusObj=N   look at the first template with graphics id G / at template N
 //   &spriteFilter=pixel  Modern actors with nearest texels (default: HD smooth sprite edges)
 //   &manual=1            no frame loop: frames advance through preview.frames(n) (1/60 s each)
+//   &kitFail=<family>    that kit family fails on every build (its cells legacy, warned once): the failure path
 
 import * as THREE from 'three';
 import { Bus } from '../gba/bus';
@@ -97,6 +98,8 @@ export class PreviewApp {
     this.view.setShadowQuality(quality);
     this.view.setWorldStyle(params.get('style') === 'retro' ? 'retro' : 'modern');
     this.view.setSpriteFilter(parseSpriteFilter(params.get('spriteFilter')) ?? 'smooth');
+    // (before the first build: the failure path from the first frame)
+    if (params.has('kitFail')) this.view.setFailFamily(params.get('kitFail'));
     // object models sample their colours where the atlas does: the scratch OBJ VRAM and palette (1D mapping)
     this.view.setActorPixelSource({ vram: bus.vram, palette, map2d: false });
     const mem = new Mem(bus);
@@ -203,6 +206,13 @@ export class PreviewApp {
   /** Renders one frame without advancing time (the harness's actor-mask shot matches the last frame). */
   renderStill(): void {
     this.frame(0);
+  }
+
+  /** The interior kit on in-scope interiors on or off (Modern; off: today's legacy room and light — the harness's
+   *  `--ab-feature interior` baseline); rebuilds the world now. */
+  setInteriorKit(on: boolean): void {
+    this.view.setInteriorKit(on);
+    this.rebuild();
   }
 
   /** Draws the world sprites flat magenta (the harness's visible-actor mask) or normally. */
