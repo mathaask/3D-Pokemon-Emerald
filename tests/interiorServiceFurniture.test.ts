@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { Soup, lin } from '../src/render/kit/soup';
-import type { RGB } from '../src/render/kit/palette';
+import { soften, type RGB } from '../src/render/kit/palette';
 import type { PartColors } from '../src/render/kit/interior/colors';
 import {
-  BALL_RED, STAIRS_TOP, buildCounter, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects,
+  BALL_RED, STAIRS_TOP, buildCounter, serviceColors, buildHealer, buildMartShelf, buildPc, buildStairsDown, buildStairsUp, counterRects,
   type Rect, type ServiceSoups, type Sized,
 } from '../src/render/kit/interior/geom/serviceFurniture';
 
@@ -58,6 +58,18 @@ const cellsOf = (x0: number, x1: number, y0: number, y1: number) => {
 };
 
 describe('service furniture geometry', () => {
+  it('never makes a surface of the art\'s dark outline colour', () => {
+    const navy: RGB = [0.2, 0.2, 0.35], cream: RGB = [0.95, 0.9, 0.75];
+    const nurse = serviceColors({ main: cream, second: navy, accent: [0.9, 0.4, 0.2], dark: [0.1, 0.1, 0.1] });
+    expect(nurse.main).toEqual(lin(soften(cream)));                            // body: the cream
+    expect(nurse.second[0]).toBeGreaterThan(nurse.main[0] * 0.98);             // top: lifted cream, not the navy
+    const shelf = serviceColors({ main: navy, second: cream, accent: [0.9, 0.8, 0.1], dark: [0.1, 0.1, 0.1] });
+    expect(shelf.main).toEqual(lin(soften(cream)));                            // an outline-coloured main gives way
+    const plain = serviceColors({ main: cream, second: [0.6, 0.8, 0.9], accent: [0.9, 0.4, 0.2], dark: [0.1, 0.1, 0.1] });
+    expect(plain.second).toEqual(lin(soften([0.6, 0.8, 0.9])));               // a light second stays the top
+    expect(plain.goods).toHaveLength(5);
+  });
+
   it('builds a computer: low, inside its footprint, 1.2 tall, its screen in glowLow', () => {
     const f = fit(2, 3, 4, 5, 0.6, 1.2), o = soups();
     buildPc(o, f, COLORS, 'medium');

@@ -12,7 +12,8 @@
 
 import { lathe, lin, tube, type Soup } from '../../soup';
 import { rng, type V3 } from '../../geom';
-import { mix, scale, soften, type RGB } from '../../palette';
+import * as THREE from 'three';
+import { luma, mix, scale, soften, type RGB } from '../../palette';
 import type { Quality } from '../../../post';
 import type { PartColors } from '../colors';
 import type { WallDir } from '../room';
@@ -46,10 +47,34 @@ export const STAIRS_TOP = 1.6;
 /** A rail's top over the floor or the treads, its post and tube sizes. */
 export const RAIL = { height: 0.9, post: 0.045, radius: 0.025, inset: 0.05 };
 
-/** The part's colours softened and made linear. */
-export interface LinColors { main: RGB; second: RGB; accent: RGB; dark: RGB }
+/** Surfaces: a tile colour darker than this (luma) is the art's outline, not a surface — the GBA draws its counters, shelves
+ *  and stairs in light colours ringed in a dark navy, which as a slab read as a black top. */
+export const OUTLINE_LUMA = 0.32;
+/** A top / tread of the body's colour is lifted this far towards white (and tinted this much towards the accent). */
+export const TOP_LIFT = 0.3, TOP_TINT = 0.12;
+
+/** The part's colours for surfaces, softened and made linear: `main` the body (the tile's main, or its second when
+ *  main is an outline colour and second is lighter), `second` the top (the tile's second when it is a light colour
+ *  apart from the body, else the body lifted towards white with a hint of accent), `accent`, `dark`, and `goods` (a
+ *  shop's packaging: the accent, its lighter tone and two neighbouring hues, the top colour). */
+export interface LinColors { main: RGB; second: RGB; accent: RGB; dark: RGB; goods: RGB[] }
 export function serviceColors(c: PartColors): LinColors {
-  return { main: lin(soften(c.main)), second: lin(soften(c.second)), accent: lin(soften(c.accent)), dark: lin(soften(c.dark)) };
+  const body = luma(c.main) < OUTLINE_LUMA && luma(c.second) > luma(c.main) ? c.second : c.main;
+  const top = body !== c.second && luma(c.second) >= OUTLINE_LUMA + 0.08 ? c.second
+    : mix(mix(body, [1, 1, 1], TOP_LIFT), c.accent, TOP_TINT);
+  const goods: RGB[] = [c.accent, mix(c.accent, [1, 1, 1], 0.4), hueShift(c.accent, 0.1), hueShift(c.accent, -0.12), top];
+  const L = (x: RGB) => lin(soften(x));
+  return { main: L(body), second: L(top), accent: L(c.accent), dark: L(c.dark), goods: goods.map(L) };
+}
+
+const _c = new THREE.Color(), _hsl = { h: 0, s: 0, l: 0 };
+/** `c` (sRGB) with its hue turned by `dh` (turns), its saturation kept at least 0.45 and its lightness in 0.4..0.7 (bright
+ *  packaging). */
+function hueShift(c: RGB, dh: number): RGB {
+  _c.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace).getHSL(_hsl, THREE.SRGBColorSpace);
+  _c.setHSL((_hsl.h + dh + 1) % 1, Math.max(0.45, _hsl.s), Math.min(0.7, Math.max(0.4, _hsl.l)), THREE.SRGBColorSpace);
+  const o = { r: 0, g: 0, b: 0 }; _c.getRGB(o, THREE.SRGBColorSpace);
+  return [o.r, o.g, o.b];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -264,7 +289,7 @@ export function buildMartShelf(out: ServiceSoups, f: Sized, c: PartColors, seed:
   const back: [number, number] = oneSided ? [0, G.divider] : [mid - G.divider / 2, mid + G.divider / 2];
   box(e, L - e, G.plinth, capY, back[0], back[1], k.main);
   roundedBlock(s, rect(0, L, 0, D), capY, f.height, 0, 0.06, ALL_OPEN, k.second, k.second, CORNER_SEGS[q]);
-  const goods = [k.accent, k.second, mix(k.accent, k.main, 0.4), mix(k.second, k.accent, 0.5)];
+  const goods = k.goods;
   const can = SMALL_SIDES[q];
   for (const side of oneSided ? [1] : [0, 1]) {
     const d0 = side === 0 ? G.edge : back[1], d1 = side === 0 ? back[0] : D - G.edge;
