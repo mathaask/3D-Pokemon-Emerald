@@ -14,7 +14,7 @@ import { runKit, disposeKit, warnFailure, type Family, type KitContext, type Fam
 import { FAMILIES } from '../kit/index';
 import { INTERIOR_FAMILIES } from '../kit/interior/index';
 import { interiorScope } from '../kit/interior/scope';
-import { wallVisible } from '../kit/interior/cutaway';
+import { runVisible } from '../kit/interior/cutaway';
 import type { WallDir } from '../kit/interior/room';
 import { analyze, queries, K, type MapAnalysis } from './analyze';
 import { emitLegacy } from './legacyQuads';
@@ -154,9 +154,12 @@ export class World {
     this.failFamily = name;
   }
 
-  /** Per frame: hides the interior walls the camera sees from outside (D5; `camBack`: kitUniforms.uCamBack). */
+  /** Per frame: hides the interior walls the camera sees from outside (D5; `camBack`: kitUniforms.uCamBack), and the
+   *  pocket sides (`userData.pocketDir`: the stairs alcove's side walls) with the walls whose pocket they are. */
   updateCutaway(camBack: THREE.Vector2): void {
-    for (const o of this.cutaway) o.visible = wallVisible(o.userData.wallDir as WallDir, camBack);
+    for (const o of this.cutaway) {
+      o.visible = runVisible(o.userData.wallDir as WallDir, (o.userData.pocketDir as WallDir | undefined) ?? null, camBack);
+    }
   }
 
   /** The families with the failing one's extract made to throw (setFailFamily). */

@@ -26,7 +26,7 @@ import { bgr555ToSrgb, scale, soften, type RGB } from '../../palette';
 import { lathe, lin, Soup } from '../../soup';
 import type { V3 } from '../../geom';
 import { scale4x } from '../../upscale';
-import { INNER_NORMAL } from '../cutaway';
+import { INNER_NORMAL, pocketDir } from '../cutaway';
 import { RECESS, WALL_H, WALL_T, windowRect, type DoorGap, type RoomLayout, type WallDir, type WallFeature, type WallRun } from '../room';
 import {
   SHELL, WINDOW, addWindow, maxProfileDepth, shellPalette, shellProfile, wallFrameAt, wallPath,
@@ -529,6 +529,9 @@ export interface ShellInput {
  *  places (uv filled by the caller from packDecals over `decals`); notes on what it could not place. */
 export interface ShellSoups {
   walls: Record<WallDir, Soup>;
+  /** The pocket sides (cutaway.ts pocketDir: the stairs alcove's side walls, back-wall steps), apart from `walls`: per
+   *  (direction, the direction whose cutaway takes them along) one soup, so the cutaway can hide them with it. */
+  pockets: { dir: WallDir; pocket: WallDir; walls: Soup }[];
   fixtures: Record<WallDir, Soup>;
   glass: Soup;
   partitions: Soup;
@@ -599,10 +602,17 @@ export function buildShellSoups(inp: ShellInput): ShellSoups {
     decalRects.push(decalRect(L, f, fy));
   }
 
-  // the outer walls
+  // the outer walls (a pocket side into its own soup)
+  const pockets: ShellSoups['pockets'] = [];
+  const pocketSoup = (dir: WallDir, pocket: WallDir) => {
+    let e = pockets.find((q) => q.dir === dir && q.pocket === pocket);
+    if (!e) pockets.push(e = { dir, pocket, walls: new Soup() });
+    return e.walls;
+  };
   for (const r of runs) {
     const list = (openings.get(r) ?? []).sort((p, q) => p.from - q.from);
-    addRun(walls[r.dir], r, runEnds(runs, r), list, C);
+    const pocket = pocketDir(runs, r);
+    addRun(pocket ? pocketSoup(r.dir, pocket) : walls[r.dir], r, runEnds(runs, r), list, C);
   }
 
   // partitions: loops and their lids (the footprint's half-cell rows at PARTITION_H)
@@ -611,7 +621,7 @@ export function buildShellSoups(inp: ShellInput): ShellSoups {
     for (const loop of loops) addPartition(partitions, loop, C);
     addPartitionLids(partitions, a, L, loops[0].floorY, C);
   }
-  return { walls, fixtures, glass, partitions, decals, decalRects, runs, skipped };
+  return { walls, pockets, fixtures, glass, partitions, decals, decalRects, runs, skipped };
 }
 
 /** The partitions' lids over their footprints: per half-cell row, its runs of solid half-cells as one quad each. */

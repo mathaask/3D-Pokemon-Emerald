@@ -2,6 +2,8 @@
 // the partitions in it), so no legacy face stands in front of the wall; it builds geom/shellParts.ts' geometry into
 // meshes:
 // - `walls<Dir>` (BUILDING_BODY): the wall profile, one mesh per direction.
+// - `walls<Dir>Pocket<P>` (BUILDING_BODY): the pocket sides (the stairs alcove's side walls, back-wall steps;
+//   cutaway.ts pocketDir), also tagged `userData.pocketDir`: the cutaway hides them with `P`'s walls too.
 // - `fixtures<Dir>` (BUILDING_BODY): window casings and sills, clocks, door frames and slabs.
 // - `roomWindows` (ROOM_GLASS): the glass ('N').
 // - `wallDecals` (facadeMaterial): the wall art's Scale4x pixels ('N').
@@ -68,7 +70,8 @@ export const shellFamily: Family<ShellPlacement | null> = {
     const S = buildShellSoups({ a, L: p.layout, colors: p.colors, clockColors: (f) => clockColors(a, f) });
     const g = new THREE.Group();
     g.name = 'shell';
-    const add = (geo: THREE.BufferGeometry, o: KitMaterialOptions, name: string, dir: WallDir | null, cast: boolean) => {
+    const add = (geo: THREE.BufferGeometry, o: KitMaterialOptions, name: string, dir: WallDir | null, cast: boolean,
+      pocket: WallDir | null = null) => {
       const km = kitMaterial(kit.uniforms, o);
       const mesh = new THREE.Mesh(geo, km.material);
       applyKitMaterial(mesh, km);
@@ -76,12 +79,14 @@ export const shellFamily: Family<ShellPlacement | null> = {
       mesh.castShadow = cast;
       mesh.receiveShadow = true;
       if (dir) mesh.userData.wallDir = dir;
+      if (pocket) mesh.userData.pocketDir = pocket;
       g.add(mesh);
     };
     for (const d of SHELL_DIRS) {
       if (!S.walls[d].empty) add(S.walls[d].geometry(), BUILDING_BODY, `walls${d}`, d, true);
       if (!S.fixtures[d].empty) add(S.fixtures[d].geometry(), BUILDING_BODY, `fixtures${d}`, d, true);
     }
+    for (const q of S.pockets) if (!q.walls.empty) add(q.walls.geometry(), BUILDING_BODY, `walls${q.dir}Pocket${q.pocket}`, q.dir, true, q.pocket);
     if (!S.glass.empty) add(S.glass.geometry(), ROOM_GLASS, 'roomWindows', 'N', true);
     if (!S.partitions.empty) add(S.partitions.geometry(), BUILDING_BODY, 'partitions', null, true);
     if (S.decals.length) {
