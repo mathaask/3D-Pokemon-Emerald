@@ -18,7 +18,7 @@ import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
-import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
+import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, actorFloorShare, indoorCardLight, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
 import { createHdWorldMaterials, createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
@@ -131,6 +131,8 @@ export class OverworldView {
   private charLight = new THREE.Color(1, 1, 1);
   /** The light the inflated actors' and models' floor follows (charLight; raised in an in-scope room at night, D8). */
   private actorFloor = new THREE.Color(1, 1, 1);
+  /** INDOOR_DAY's card light (scratch). */
+  private dayCard = new THREE.Color();
   /** What the actor layer reads each frame (one object, updated in place). */
   private actorFrame: ActorFrame = {
     style: 'modern',
@@ -650,18 +652,17 @@ export class OverworldView {
       (skyColor.b * hemiI + sunColor.b * sunI * 0.75) * k,
     );
     this.actorFloor.copy(this.charLight);
-    // (D8: in an in-scope room the actors keep at least ACTOR_NIGHT_FLOOR of the room's day light, per channel: the
-    // cards through charLight, the inflated actors and models — lit by the room's lights, floored at LIGHT_FLOOR ×
-    // their floor light — through a floor light raised as the night comes, to ACTOR_NIGHT_FLOOR × the day's at full
-    // night; by day both are today's exactly)
+    // (D8: in an in-scope room the actors keep near the room's day light, per channel: the cards through charLight (at
+    // least ACTOR_NIGHT_FLOOR of the day's), the inflated actors and models — lit by the room's lights, floored at
+    // LIGHT_FLOOR × their floor light — through a floor light holding actorFloorShare(nightK) of the day's, which rises
+    // ahead of the room's dimming over dusk and dawn; by day both are today's exactly)
     if (lit && indoor) {
-      const D = INDOOR_DAY;
-      const day = (c: 'r' | 'g' | 'b') => (D.sky[c] * D.hemiI + D.sunColor[c] * D.sunI * 0.75) * k;
-      const card = ACTOR_NIGHT_FLOOR, floor = (ACTOR_NIGHT_FLOOR * nightOut) / LIGHT_FLOOR;
-      this.charLight.setRGB(Math.max(this.charLight.r, day('r') * card), Math.max(this.charLight.g, day('g') * card),
-        Math.max(this.charLight.b, day('b') * card));
-      this.actorFloor.setRGB(Math.max(this.charLight.r, day('r') * floor), Math.max(this.charLight.g, day('g') * floor),
-        Math.max(this.charLight.b, day('b') * floor));
+      const day = indoorCardLight(INDOOR_DAY, this.dayCard);
+      const card = ACTOR_NIGHT_FLOOR, floor = actorFloorShare(nightOut) / LIGHT_FLOOR;
+      this.charLight.setRGB(Math.max(this.charLight.r, day.r * card), Math.max(this.charLight.g, day.g * card),
+        Math.max(this.charLight.b, day.b * card));
+      this.actorFloor.setRGB(Math.max(this.charLight.r, day.r * floor), Math.max(this.charLight.g, day.g * floor),
+        Math.max(this.charLight.b, day.b * floor));
     }
   }
 

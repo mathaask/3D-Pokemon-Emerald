@@ -78,3 +78,25 @@ export function indoorLight(nightK: number, out?: IndoorLight): IndoorLight {
 /** The actors' light floor at night in an in-scope room, as a share of the day's charLight (D8): their charLight is per
  *  channel max(the blended light's, ACTOR_NIGHT_FLOOR × INDOOR_DAY's), so characters stay as readable as by day. */
 export const ACTOR_NIGHT_FLOOR = 0.95;
+
+/** The light flat sprite cards get under `L` (updateLighting's charLight: a Lambert surface facing the camera,
+ *  (sky × hemisphere + sun × 0.75) / π), into `out`. */
+export function indoorCardLight(L: Readonly<IndoorLight>, out = new THREE.Color()): THREE.Color {
+  const k = 1 / Math.PI;
+  return out.setRGB(
+    (L.sky.r * L.hemiI + L.sunColor.r * L.sunI * 0.75) * k,
+    (L.sky.g * L.hemiI + L.sunColor.g * L.sunI * 0.75) * k,
+    (L.sky.b * L.hemiI + L.sunColor.b * L.sunI * 0.75) * k,
+  );
+}
+
+/** By this night factor the inflated actors' floor holds its full ACTOR_NIGHT_FLOOR: ahead of the room's dimming (it
+ *  has lost only ~11 % of its light there), so the actors never dip with it over dusk and dawn. */
+export const ACTOR_FLOOR_RAMP = 0.2;
+
+/** The share of the day's light the inflated actors' and models' floor holds at night factor `nightK` (D8): 0 by day
+ *  (today's floor exactly), smoothstep up to ACTOR_NIGHT_FLOOR by ACTOR_FLOOR_RAMP, then held. Their light is about
+ *  max(the room's, this share) of the day's: 0.89–1 at every hour (tests/timeOfDay.test.ts). */
+export function actorFloorShare(nightK: number): number {
+  return ACTOR_NIGHT_FLOOR * THREE.MathUtils.smoothstep(nightK, 0, ACTOR_FLOOR_RAMP);
+}
