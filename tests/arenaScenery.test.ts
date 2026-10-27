@@ -7,9 +7,14 @@ import { battleCamera, frameTop, sightCap, stageKeepOut, SCENERY_SEED } from '..
 import { battleFrameCamera } from '../src/render/battle/parts/frame';
 import { duneGeometry, duneMounds, onDune } from '../src/render/battle/parts/dunes';
 import { treeGeometry } from '../src/render/kit/trees';
+import { BLADES, clump } from '../src/render/kit/grass';
+import { flowerGeometry } from '../src/render/kit/flowers';
+import { rng } from '../src/render/kit/geom';
+import { BOULDER_TOP } from '../src/render/battle/parts/rock';
+import { PALM_TOP } from '../src/render/battle/parts/water';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
 import { boulderGeometry, rockPlacements } from '../src/render/battle/parts/rocks';
-import { arenaClear, CLUMP_TOP, REED, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
+import { arenaClear, CLUMP_TOP, FLOWER_TOP, REED, flowerPlacements, grassPlacements, treePlacements, TREE_CAST_R, type ArenaTree } from '../src/render/battle/parts/flora';
 import { groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
@@ -76,6 +81,34 @@ describe('arena scenery', () => {
     }
   });
 
+  it("holds the heights the placements fit the kit's shapes with to those shapes (a taller blade, flower, boulder or palm fails here)", () => {
+    const top = (g: THREE.BufferGeometry) => { g.computeBoundingBox(); return g.boundingBox!.max.y; };
+    // the grass clump: every variant the arena draws (the distance bands' 0..2, the skirts' 0) at every blade count (each
+    // quality's, the far band's half)
+    let clumpTop = 0;
+    for (const q of ['low', 'medium', 'high'] as const) for (const blades of [BLADES[q], Math.max(BLADES.low, Math.round(BLADES[q] * 0.5))]) {
+      for (const v of [0, 1, 2]) clumpTop = Math.max(clumpTop, top(clump(blades, v)));
+    }
+    expect(CLUMP_TOP).toBeGreaterThanOrEqual(clumpTop);
+    expect(CLUMP_TOP).toBeLessThan(clumpTop * 1.05);
+    const flowerTop = top(flowerGeometry());
+    expect(FLOWER_TOP).toBeGreaterThanOrEqual(flowerTop);
+    expect(FLOWER_TOP).toBeLessThan(flowerTop * 1.05);
+    // a boulder's top over the ground for its width, sunk 0.12 of it as rock.ts sets it (its seeds and widths: any)
+    const r = rng(0xb01d);
+    let boulder = 0;
+    for (let i = 0; i < 300; i++) {
+      const size = 0.15 + 2.4 * r();
+      boulder = Math.max(boulder, top(boulderGeometry(Math.floor(r() * 1e6), size, [0.5, 0.5, 0.5])) / size - 0.12);
+    }
+    expect(BOULDER_TOP).toBeGreaterThanOrEqual(boulder);
+    // the palm's fronds' tips at every crown detail
+    let palm = 0;
+    for (const d of [0, 1, 2, 3]) palm = Math.max(palm, top(treeGeometry('palm', 0, d)));
+    expect(PALM_TOP).toBeGreaterThanOrEqual(palm);
+    expect(PALM_TOP).toBeLessThan(palm * 1.05);
+  });
+
   it('keeps grass and flowers under the camera\'s sight lines to the platform tops', () => {
     const cap = sightCap(STAGE);
     for (const kind of ['grass', 'longGrass', 'plain', 'sand', 'pond'] as const) {
@@ -83,7 +116,14 @@ describe('arena scenery', () => {
         expect(groundHeight(kind, c.x, c.z, STAGE) + CLUMP_TOP * c.scale).toBeLessThanOrEqual(cap(c.x, c.z) + 1e-9);
       }
     }
-    for (const f of flowerPlacements('grass', STAGE, 1)) expect(cap(f.x, f.z)).toBeGreaterThan(groundHeight('grass', f.x, f.z, STAGE));
+    // (a flower's top: the kit flower's own, at its scale)
+    const flowerGeo = flowerGeometry();
+    flowerGeo.computeBoundingBox();
+    for (const kind of ['grass', 'plain'] as const) {
+      const flowers = flowerPlacements(kind, STAGE, 1);
+      expect(flowers.length, kind).toBeGreaterThan(50);
+      for (const f of flowers) expect(groundHeight(kind, f.x, f.z, STAGE) + flowerGeo.boundingBox!.max.y * f.scale, kind).toBeLessThanOrEqual(cap(f.x, f.z) + 1e-9);
+    }
     // in front of the enemy's platform the line is low; behind the stage nothing is in the way
     expect(cap(STAGE.enemy.x, STAGE.enemy.z + 2)).toBeLessThan(0.5);
     expect(cap(STAGE.centre.x, STAGE.centre.z - 12)).toBe(Infinity);

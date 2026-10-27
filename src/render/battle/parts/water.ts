@@ -413,10 +413,13 @@ const ISLET = { size: [4, 5.5] as const, height: [0.5, 0.65] as const, r: [15, 2
   palms: [2, 3] as const, scale: [0.62, 0.82] as const };
 /** An islet's footprint is this much narrower front to back. */
 const ISLET_DEPTH = 0.75;
-/** A palm's crown starts this high over its foot at scale 1 and its fronds' tips reach this high (kit/trees.ts palmGeo:
- *  the fronds at the trunk's top, 2.0, rising to 2.26); the tips stand at least CROWN_CLEAR under the frame's top (the
- *  crown whole, clear of the edge: with only its foot 0.4 under it, the tips stood 21–28 px from the idle frame's top). */
-const PALM_CROWN = 2.0, PALM_TOP = 2.26, CROWN_CLEAR = 0.45;
+/** A palm's crown starts this high over its foot at scale 1 (kit/trees.ts palmGeo: the fronds at the trunk's top, 2.0);
+ *  its fronds' tips stand at least CROWN_CLEAR under the frame's top (the crown whole, clear of the edge: with only its
+ *  foot 0.4 under it, the tips stood 21–28 px from the idle frame's top). */
+const PALM_CROWN = 2.0, CROWN_CLEAR = 0.45;
+/** A palm's fronds' tips over its foot at scale 1 (rising from the trunk's top to 2.26: arenaScenery.test.ts holds it to
+ *  the kit's palm). */
+export const PALM_TOP = 2.26;
 /** Palms stand on an islet's near half (towards the camera: lower on the dome and in the frame), `e` of its radius out. */
 const PALM_E = [0.2, 0.5] as const;
 

@@ -222,7 +222,7 @@ export function makeGrass(kind: ArenaKind, stage: Stage, seed: number, quality: 
   return out;
 }
 
-/** A clump's top over its root, at scale 1 (the kit's blades: 0.48–0.7, leaning). */
+/** A clump's top over its root, at scale 1 (the kit's blades: 0.48–0.7, leaning; arenaScenery.test.ts holds it to the kit). */
 export const CLUMP_TOP = 0.72;
 /** A clump the sight cap shrinks below this scale is left out. */
 const MIN_CLUMP = 0.4;
@@ -259,8 +259,8 @@ export function makeFlowers(kind: ArenaKind, stage: Stage, seed: number): ArenaC
 /** The kit's flower (0.3 tall: a cell's) at the battle's size: on grass a little over the blades, smaller on the plain's
  *  open lawn. */
 const FLOWER_SCALE: Record<'grass' | 'plain', number> = { grass: 1.45, plain: 1.15 };
-/** A flower's top over its root, at scale 1. */
-const FLOWER_TOP = 0.36;
+/** A flower's top over its root, at scale 1 (the kit's flowerGeometry: 0.3955; arenaScenery.test.ts holds it to the kit). */
+export const FLOWER_TOP = 0.4;
 
 /** Petal colours: the background's accent and three soft ones (sRGB). */
 const WHITE: RGB = [0.97, 0.96, 0.92], SOFT_YELLOW: RGB = [0.98, 0.88, 0.42], SOFT_PINK: RGB = [0.96, 0.66, 0.74];

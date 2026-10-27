@@ -321,7 +321,8 @@ export function stalagmitePlacements(kind: ArenaKind, stage: Stage, seed: number
 export interface ArenaBoulder { x: number; z: number; size: number; seeds: number[]; talus?: true }
 
 /** A boulder's top over the ground for its width (rocks.ts boulderGeometry, sunk 0.12 of its width as the part sets
- *  it), and the width from which a boulder is tall (on the tall rule, as rocks.ts TALL_SIZE). */
+ *  it: at most ≈ 0.54, held to the kit by arenaScenery.test.ts), and the width from which a boulder is tall (on the tall
+ *  rule, as rocks.ts TALL_SIZE). */
 export const BOULDER_TOP = 0.65, TALL_SIZE = 1.1;
 
 /** A kind's boulders: clusters at the stage's sides (on the tall rule, out from behind the battlers), scree on the ground
