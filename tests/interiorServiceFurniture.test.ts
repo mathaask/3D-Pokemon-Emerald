@@ -90,6 +90,12 @@ describe('service furniture geometry', () => {
     expect(sq).toHaveLength(1); expect(sq[0]).toMatchObject({ x0: 2, x1: 4, z1: 6 }); expect(sq[0].z0).toBeCloseTo(5.1, 6);
     const side = counterRects([[2, 4], [3, 4]], [fit(2, 2, 4, 4, 0.9, 1), fit(3, 3, 4, 4, 0.9, 1)]);
     expect(side).toHaveLength(1);
+    // the nurse's U against the wall (z 1.525): the west arm runs from the wall down to the bar; a walkable cell caps it
+    const U: [number, number][] = [[4, 1], [4, 2], [4, 3], [5, 3], [6, 3]];
+    const wall = (x: number, y: number) => { const f = fit(x, x, y, y, 0.9, 1.05); return { ...f, z0: Math.max(f.z0, 1.525) }; };
+    const uf = U.map(([x, y]) => wall(x, y)); uf[1] = { ...uf[1], height: 0.45 };
+    const ur = counterRects(U, uf);
+    expect(ur.map((r) => [r.x0, r.x1, r.z0, r.z1, r.height])).toEqual([[4, 5, 1.525, 3, 0.45], [4, 7, 3, 4, 1.05]]);
   });
 
   it('follows an L-shaped counter cell by cell, never over the walkable cell inside the L', () => {
@@ -113,6 +119,10 @@ describe('service furniture geometry', () => {
     inside(all(o), f); expect(all(o).max.y).toBeCloseTo(1.6, 3); expect(o.low.empty).toBe(true);
     expect(hash(run(7))).toBe(hash(o)); expect(hash(run(8))).not.toBe(hash(o));
     expect(tris(run(7, 'low'))).toBeLessThan(tris(run(7, 'high')));
+    // a wall unit (one-sided) has half the shelves of a gondola on the same footprint
+    const wf = { ...f, z0: f.z1 - 0.41 }, one = soups(), two = soups();
+    buildMartShelf(one, wf, COLORS, 7, 'medium', true); buildMartShelf(two, wf, COLORS, 7, 'medium');
+    inside(all(one), wf); expect(tris(one)).toBeLessThan(tris(two));
     // a gondola deeper than wide runs along z
     const g = fit(5, 5, 2, 4, 1.4, 1.6), d = soups(); buildMartShelf(d, { ...g, z0: g.z1 - 2.5 }, COLORS, 3, 'medium');
     inside(all(d), { ...g, z0: g.z1 - 2.5 });

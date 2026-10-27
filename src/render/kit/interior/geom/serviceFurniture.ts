@@ -96,15 +96,18 @@ export function roundedBlock(s: Soup, r: Rect, y0: number, y1: number, inset: nu
 // ---------------------------------------------------------------------------------------------------------------------
 // Counters (the nurse's and the shops')
 
-/** A rectangle of a counter's cells: cells cx0..cx1 × cy0..cy1, its world rectangle and which sides are open. */
-export interface CounterRect extends Rect { cx0: number; cx1: number; cy0: number; cy1: number; open: Sides }
+/** A rectangle of a counter's cells: cells cx0..cx1 × cy0..cy1, its world rectangle, which sides are open, and its
+ *  height cap (the lowest of its cells' footprints: a walkable cell's is low; Infinity when the feet carry none). */
+export interface CounterRect extends Rect { cx0: number; cx1: number; cy0: number; cy1: number; open: Sides; height: number }
 
 /** A counter component's cells (grid `xy`, with each cell's own footprint `feet` in the same order) as rectangles, cell
- *  by cell: row runs, merged down while their columns match; each rectangle's world extent is its south row's
- *  footprints (a counter is as deep as its spec, anchored south). A rectangle right under another reaches north to it
- *  (the L's arm meets its bar); touching sides are closed. Nothing reaches over a cell that is not the component's. */
-export function counterRects(xy: readonly (readonly [number, number])[], feet: readonly Rect[]): CounterRect[] {
-  const foot = new Map<string, Rect>();
+ *  by cell: row runs, merged down while their columns match. A rectangle with more rows than columns is a bar running
+ *  north–south: it spans its north row's footprint to its south row's; any other runs east–west, as deep as its south
+ *  row's footprints (a counter is as deep as its spec, anchored south). A rectangle right under another reaches north to
+ *  it (the L's arm, a ring's sides meet its bar); touching sides are closed. Nothing reaches over a cell that is not the
+ *  component's (the walkable cells inside a ring or an L stay clear). */
+export function counterRects(xy: readonly (readonly [number, number])[], feet: readonly (Rect & { height?: number })[]): CounterRect[] {
+  const foot = new Map<string, Rect & { height?: number }>();
   xy.forEach(([x, y], i) => foot.set(`${x},${y}`, feet[i]));
   const rows = new Map<number, number[]>();
   for (const [x, y] of xy) {
@@ -120,16 +123,17 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
       const cx0 = xs[i], cx1 = xs[j];
       const above = rects.find((r) => r.cx0 === cx0 && r.cx1 === cx1 && r.cy1 === y - 1);
       if (above) above.cy1 = y;
-      else rects.push({ cx0, cx1, cy0: y, cy1: y, x0: 0, x1: 0, z0: 0, z1: 0, y: 0, open: { n: true, e: true, s: true, w: true } });
+      else rects.push({ cx0, cx1, cy0: y, cy1: y, x0: 0, x1: 0, z0: 0, z1: 0, y: 0, open: { n: true, e: true, s: true, w: true }, height: Infinity });
       i = j + 1;
     }
   }
   for (const r of rects) {
-    const south: Rect[] = [];
-    for (let x = r.cx0; x <= r.cx1; x++) south.push(foot.get(`${x},${r.cy1}`)!);
+    const row = (y: number) => { const fs: (Rect & { height?: number })[] = []; for (let x = r.cx0; x <= r.cx1; x++) fs.push(foot.get(`${x},${y}`)!); return fs; };
+    const south = row(r.cy1), north = r.cy1 - r.cy0 > r.cx1 - r.cx0 ? row(r.cy0) : south;
     r.x0 = Math.min(...south.map((f) => f.x0)); r.x1 = Math.max(...south.map((f) => f.x1));
-    r.z0 = Math.max(...south.map((f) => f.z0)); r.z1 = Math.max(...south.map((f) => f.z1));
+    r.z0 = Math.max(...north.map((f) => f.z0)); r.z1 = Math.max(...south.map((f) => f.z1));
     r.y = south[0].y;
+    for (let y = r.cy0; y <= r.cy1; y++) for (const f of row(y)) r.height = Math.min(r.height, f.height ?? Infinity);
   }
   const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 1e-6;
   for (const a of rects) {
@@ -151,14 +155,16 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
 /** Counter proportions: top slab, toe kick, the nurse's front band, insets and corner radius. */
 export const COUNTER = { top: 0.07, kick: 0.08, kickInset: 0.1, bodyInset: 0.05, bandInset: 0.035, band: [0.6, 0.76], radius: 0.12 };
 
-/** A counter over its rectangles, `height` tall: a toe kick in dark, a body in main, a top in second (overhanging the
- *  body on its open sides); `band` (the nurse's counter) adds a front band in accent round its open sides. Low. */
-export function buildCounter(s: Soup, rects: readonly CounterRect[], height: number, c: PartColors, q: Quality, band: boolean): void {
+/** A counter over its rectangles, `top` tall (a rectangle's own cap lower): a toe kick in dark, a body in main, a top in
+ *  second (overhanging the body on its open sides); `band` (the nurse's counter) adds a front band in accent round its
+ *  open sides. Low. */
+export function buildCounter(s: Soup, rects: readonly CounterRect[], top: number, c: PartColors, q: Quality, band: boolean): void {
   const k = serviceColors(c), segs = CORNER_SEGS[q], C = COUNTER;
   for (const r of rects) {
+    const height = Math.min(top, r.height);
     roundedBlock(s, r, 0, C.kick, C.kickInset, C.radius - C.kickInset, r.open, k.dark, k.dark, segs);
     roundedBlock(s, r, C.kick, height - C.top, C.bodyInset, C.radius - C.bodyInset, r.open, k.main, k.main, segs);
-    if (band) roundedBlock(s, r, C.band[0], C.band[1], C.bandInset, C.radius - C.bandInset, r.open, k.accent, k.accent, segs);
+    if (band && C.band[1] < height - C.top) roundedBlock(s, r, C.band[0], C.band[1], C.bandInset, C.radius - C.bandInset, r.open, k.accent, k.accent, segs);
     roundedBlock(s, r, height - C.top, height, 0, C.radius, r.open, k.second, k.second, segs);
   }
 }
@@ -240,10 +246,11 @@ export const GONDOLA = { plinth: 0.1, end: 0.05, divider: 0.06, shelf: 0.03, lev
 
 /** A double-sided gondola over `f` (`f.height` tall), along its longer side: a dark plinth, end panels and a divider in
  *  main, shelves in second on both faces, a rounded top cap, and rows of goods (boxes and cans, seeded) in the tile's
- *  accent and second colours, front-aligned on every shelf. Tall. */
-export function buildMartShelf(out: ServiceSoups, f: Sized, c: PartColors, seed: number, q: Quality): void {
+ *  accent and second colours, front-aligned on every shelf. `oneSided` (a wall unit, the wall north of it): along x,
+ *  its back panel at the north edge, one face looking south. Tall. */
+export function buildMartShelf(out: ServiceSoups, f: Sized, c: PartColors, seed: number, q: Quality, oneSided = false): void {
   const k = serviceColors(c), G = GONDOLA, s = out.tall, rand = rng(seed >>> 0);
-  const alongX = f.x1 - f.x0 >= f.z1 - f.z0;
+  const alongX = oneSided || f.x1 - f.x0 >= f.z1 - f.z0;
   const L = alongX ? f.x1 - f.x0 : f.z1 - f.z0, D = alongX ? f.z1 - f.z0 : f.x1 - f.x0;
   const o: V3 = [f.x0, f.y, f.z0], u: V3 = alongX ? [1, 0, 0] : [0, 0, 1], w: V3 = alongX ? [0, 0, 1] : [1, 0, 0];
   const box = (s0: number, s1: number, y0: number, y1: number, d0: number, d1: number, col: RGB) => s.box(o, u, w, s0, s1, y0, y1, d0, d1, col);
@@ -254,12 +261,13 @@ export function buildMartShelf(out: ServiceSoups, f: Sized, c: PartColors, seed:
   box(e, L - e, 0, G.plinth, 0.08, D - 0.08, k.dark);
   box(0, e, 0, capY, G.edge / 2, D - G.edge / 2, k.main);
   box(L - e, L, 0, capY, G.edge / 2, D - G.edge / 2, k.main);
-  box(e, L - e, G.plinth, capY, mid - G.divider / 2, mid + G.divider / 2, k.main);
+  const back: [number, number] = oneSided ? [0, G.divider] : [mid - G.divider / 2, mid + G.divider / 2];
+  box(e, L - e, G.plinth, capY, back[0], back[1], k.main);
   roundedBlock(s, rect(0, L, 0, D), capY, f.height, 0, 0.06, ALL_OPEN, k.second, k.second, CORNER_SEGS[q]);
   const goods = [k.accent, k.second, mix(k.accent, k.main, 0.4), mix(k.second, k.accent, 0.5)];
   const can = SMALL_SIDES[q];
-  for (const side of [0, 1]) {
-    const d0 = side === 0 ? G.edge : mid + G.divider / 2, d1 = side === 0 ? mid - G.divider / 2 : D - G.edge;
+  for (const side of oneSided ? [1] : [0, 1]) {
+    const d0 = side === 0 ? G.edge : back[1], d1 = side === 0 ? back[0] : D - G.edge;
     G.levels.forEach((lv, li) => {
       if (lv + G.shelf >= capY) return;
       box(e, L - e, lv, lv + G.shelf, d0, d1, k.second);
