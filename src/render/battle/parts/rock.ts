@@ -16,7 +16,7 @@ import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import { glslFloat } from '../../actors/glsl';
 import { ARENA_SETTING, type ArenaKind } from '../arenaKind';
 import type { ArenaContext, ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, WATER_Y, type Stage } from '../stage';
+import { BATTLE_CAMERA, GROUND_Y, WATER_Y, type Stage } from '../stage';
 import { CAVE_POND, groundHeight, moonlitAsGround, smooth } from './ground';
 import { rockCluster } from './rocks';
 import { arenaClear } from './flora';
@@ -398,23 +398,35 @@ const LAVA_YAWS = [0, -0.9, 0.9];
  *  one). */
 interface LavaFrame { project: ReturnType<typeof frameProjector>; boxes: FrameRect[] }
 const lavaFrame = (stage: Stage, yaw: number): LavaFrame => ({ project: frameProjector(stage, yaw), boxes: battlerBoxes(stage, yaw) });
-/** A pool's middle: its centre and 8 points LAVA_FRAMED.margin of its radius out. */
-function poolMiddle(p: LavaPool, each: (x: number, z: number) => boolean): boolean {
+/** A pool's middle: its centre and `points` (default 8) points LAVA_FRAMED.margin of its radius out. */
+function poolMiddle(p: LavaPool, each: (x: number, z: number) => boolean, points = 8): boolean {
   if (!each(p.x, p.z)) return false;
-  for (let q = 0; q < 8; q++) {
-    const a = (q / 8) * Math.PI * 2, d = poolRadius(p, a) * LAVA_FRAMED.margin;
+  for (let q = 0; q < points; q++) {
+    const a = (q / points) * Math.PI * 2, d = poolRadius(p, a) * LAVA_FRAMED.margin;
     if (!each(p.x + Math.cos(a) * d, p.z + Math.sin(a) * d)) return false;
   }
   return true;
 }
+/** Whether the frame's point `v` (NDC) lies in a battler's box there. */
+const inBox = (f: LavaFrame, v: THREE.Vector3) => f.boxes.some((b) => v.x > b[0] && v.x < b[2] && v.y > b[1] && v.y < b[3]);
 /** Whether a pool shows in a frame (LAVA_FRAMED); `clear`: and its middle lies over neither battler's box there. */
 function poolShows(p: LavaPool, f: LavaFrame, clear = false): boolean {
   return poolMiddle(p, (x, z) => {
     const v = f.project(x, GROUND_Y, z, _v);
     if (v.z >= 1 || Math.abs(v.x) > LAVA_FRAMED.side || v.y > LAVA_FRAMED.top || v.y < LAVA_FRAMED.bottom) return false;
-    return !clear || !f.boxes.some((b) => v.x > b[0] && v.x < b[2] && v.y > b[1] && v.y < b[3]);
+    return !clear || !inBox(f, v);
   });
 }
+/** The idle camera through its sway (BATTLE_CAMERA.sway either side of yaw 0): every pool's middle keeps off both
+ *  battlers' boxes in each of these frames, wherever else it shows — as the stadiums' pillars and spikes (stadium.ts
+ *  battlerOverlap). */
+const IDLE_YAWS = [-BATTLE_CAMERA.sway, 0, BATTLE_CAMERA.sway];
+/** Whether a pool's middle — densely: 24 points round it, the 8 let a battler's box slip between them — lies over neither
+ *  battler's box in a frame (in it or not). */
+const poolOffBattlers = (p: LavaPool, f: LavaFrame) => poolMiddle(p, (x, z) => {
+  const v = f.project(x, GROUND_Y, z, _v);
+  return v.z >= 1 || !inBox(f, v);
+}, 24);
 const _v = new THREE.Vector3();
 
 /** Groudon's lava pools: 3–5 (the seed picks), radius 1.2–2.1, r 4.5–14 from the stage centre (the brief's 7–14 left the
@@ -422,7 +434,8 @@ const _v = new THREE.Vector3();
  *  (LAVA_FRAMED: over the text box, its middle off the battlers' boxes) — the first two the nearest darts that do, the rest
  *  those showing in most of the frames the camera swings to (yaw ∓0.9) as well, then the nearest; a pool that fits there
  *  nowhere is tried a quarter smaller, then in any of the three frames (its middle off the battlers' boxes there): the
- *  idle frame, between and round its battlers, holds two; the rest show as the camera swings. Their outlines and banks
+ *  idle frame, between and round its battlers, holds two; the rest show as the camera swings. Through the idle camera's
+ *  sway (IDLE_YAWS) every pool's middle keeps off the battlers' boxes too, framed or not. Their outlines and banks
  *  (+ LAVA.margin) keep off the platforms × 1.25 (the keep-outs) and the strip in front of the player's, their outlines
  *  off the ground just behind each battler (LAVA.behind); a pool that fits nowhere at all is left out. `o.ring`: another
  *  annulus for the darts (Magma's hideout, parts/stadium.ts: outside its rim); `o.keep`: where the banks may lie besides
@@ -432,6 +445,7 @@ export function lavaPools(stage: Stage, seed: number, o: LavaPoolOptions = {}): 
   const r = rng(seed * 3371 + 0x1a4a);
   const n = LAVA.count[0] + Math.floor(r() * (LAVA.count[1] - LAVA.count[0] + 1));
   const ko = stageKeepOut(stage), clear = arenaClear(stage), frames = LAVA_YAWS.map((y) => lavaFrame(stage, y));
+  const idle = IDLE_YAWS.map((y) => (y === 0 ? frames[0] : lavaFrame(stage, y)));
   const radii = Array.from({ length: n }, () => LAVA.r[0] + (LAVA.r[1] - LAVA.r[0]) * r());
   const seeds = Array.from({ length: n }, () => Math.floor(r() * 1e6));
   const fits = (p: LavaPool) => {
@@ -458,7 +472,7 @@ export function lavaPools(stage: Stage, seed: number, o: LavaPoolOptions = {}): 
         const p: LavaPool = { x: cx + Math.cos(ang) * rad, z: cz + Math.sin(ang) * rad, r: pr, seed: seeds[k] };
         if (!out.every((o) => Math.hypot(o.x - p.x, o.z - p.z) >= (o.r + p.r) * (1 + LAVA.wobble) + LAVA.gap)) continue;
         if (pass.idle ? !poolShows(p, frames[0], true) : !frames.some((f) => poolShows(p, f, true))) continue;
-        if (!fits(p)) continue;
+        if (!idle.every((f) => poolOffBattlers(p, f)) || !fits(p)) continue;
         // (the first two: the nearest; the rest: shown in most of the swung frames, then the nearest)
         const swung = k < 2 ? 0 : (poolShows(p, frames[1]) ? 1 : 0) + (poolShows(p, frames[2]) ? 1 : 0);
         const score = swung * 100 - near(p);

@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { rockWallGeometry, stalagmiteGeometry, lavaGeometry } from '../src/render/battle/parts/rock';
 import { stageKeepOut } from '../src/render/battle/parts/scatter';
-import { PLATFORM_FOOTPRINT, STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
+import { BATTLE_CAMERA, PLATFORM_FOOTPRINT, STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
 import { stadiumLava } from '../src/render/battle/parts/stadium';
 import {
   BOULDER_TOP, LAVA_MATERIAL, ROCK_PART, ROCK_RULES, SMALL_FRONT, TALL_SIZE, TIP_SHOWN, WALL_SEED, boulderPlacements,
   clusterSpires, lavaPools, poolRadius, stalagmitePlacements, wallRadius, type LavaPool,
 } from '../src/render/battle/parts/rock';
 import { SCENERY_SEED, behindBattler, frameProjector, frameTop, sightCap } from '../src/render/battle/parts/scatter';
+import { battleFrameCamera, battlerBoxes } from '../src/render/battle/parts/frame';
 import { arenaClear } from '../src/render/battle/parts/flora';
 import { CAVE_POND, groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
@@ -147,6 +148,31 @@ describe('rock arenas: bands, placements, the part', () => {
       for (const pool of pools) expect(frames.some((f) => shows(pool, f)), `seed ${seed} framed`).toBe(true);
       for (const pool of pools) expect(Math.hypot(pool.x - STAGE.centre.x, pool.z - STAGE.centre.z)).toBeGreaterThanOrEqual(4.5 * 0.75 - 1e-9);
     }
+  });
+
+  it("keeps every lava pool's middle off both battlers' boxes through the idle sway (yaw −0.04, 0, +0.04): Groudon's and Magma's", () => {
+    // (an oracle through the frame's own camera and boxes at each yaw: the pool's centre and 24 points half its radius out —
+    // its glow round a battler's silhouette, as the pillars and spikes keep off them through the sway)
+    const yaws = [-BATTLE_CAMERA.sway, 0, BATTLE_CAMERA.sway], v = new THREE.Vector3();
+    let checked = 0;
+    for (const yaw of yaws) {
+      const cam = battleFrameCamera(STAGE, yaw), boxes = battlerBoxes(STAGE, yaw);
+      for (const seed of [SCENERY_SEED, ...SEEDS.slice(1), 4, 5]) {
+        for (const [what, pools] of [['groudon', lavaPools(STAGE, seed)], ['magma', stadiumLava(STAGE, seed)]] as const) {
+          for (const pool of pools) {
+            for (let q = 0; q <= 24; q++) {
+              const a = (q / 24) * Math.PI * 2, d = q === 24 ? 0 : poolRadius(pool, a) * 0.5;
+              v.set(pool.x + Math.cos(a) * d, GROUND_Y, pool.z + Math.sin(a) * d).project(cam);
+              if (v.z >= 1) continue;
+              checked++;
+              expect(boxes.some((b) => v.x > b[0] && v.x < b[2] && v.y > b[1] && v.y < b[3]),
+                `${what} seed ${seed} pool (${pool.x.toFixed(2)}, ${pool.z.toFixed(2)}) at yaw ${yaw}`).toBe(false);
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(500);
   });
 
   it('keeps boulders, scree and the talus on the rules and off the lava', () => {
