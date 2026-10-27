@@ -130,9 +130,13 @@ const crossingMargin = (buildMs: number) => Math.max(40, 0.5 * buildMs);
  * Scene-change entries (`sceneChange`: a battle's entry from the overworld, or its exit back to it) walk exactly as the
  * crossing entries do (the first step an idle settle of ≥ 30 frames, every frame drained) and record the same
  * CrossingStats, into stats (`sceneChange`). 'record' gates nothing (today's cost, reported); 'gate' fails the run (the
- * shot stays) when a program compiles during the walk or a frame takes longer than SCENE_CHANGE_MS (spec §10's rebuild
+ * shot stays) when a program compiles from the entry's eval on — the settle included: an entry's eval finishes the boot
+ * precompile (PRECOMPILED), and battle_enter's settle already draws the wild battle transition (frames 1-86 of its state;
+ * its effect's programs are the renderer's screen precompile's), so the programs count from right after the eval (from the
+ * settle's end for an entry without one) — or a frame of the walk takes longer than SCENE_CHANGE_MS (spec §10's rebuild
  * budget) — except the frame that makes the session's first world build (`firstBuildAt`): a save state that starts in a
  * battle builds the overworld for the first time on its way back, which play, having walked into the battle, does not.
+ * (The frame times and that exemption still count from the settle's end: its first frame is the page's first.)
  */
 const SCENE_CHANGE_MS = 150;
 
@@ -414,12 +418,13 @@ interface EntryStats {
 
 /** A crossing or scene-change entry's walk (the steps after the settle): frame CPU ms with the GPU drained (`maxAt` and
  *  `slowest`, [frame, ms] × 5, count frames of the walk: frame f of the walk is frame `settle` + f from the state's load),
- *  the session's world builds and programs after the settle → at the end (null: the page exposes no build counter), the
- *  last world build's ms, and the walk frame that made the session's first world build (null: one was made before the
- *  walk, or none). */
+ *  the session's world builds after the settle → at the end (null: the page exposes no build counter), its programs from
+ *  `programsFrom` → at the end (a crossing's and an entry's without an eval: after the settle; a scene change's with one:
+ *  right after its eval, see SCENE_CHANGE_MS), the last world build's ms, and the walk frame that made the session's
+ *  first world build (null: one was made before the walk, or none). */
 interface CrossingStats {
   frames: number; maxMs: number; maxAt: number; medianMs: number; slowest: [number, number][];
-  builds: [number | null, number | null]; programs: [number, number]; lastBuildMs: number | null;
+  builds: [number | null, number | null]; programs: [number, number]; programsFrom: 'eval' | 'settle'; lastBuildMs: number | null;
   settle: number; firstBuildAt: number | null;
 }
 
@@ -430,14 +435,16 @@ interface WalkPoint { programs: number; builds?: number; lastBuildMs?: number }
 const walkOf = (e: LiveEntry): 'crossing' | 'sceneChange' | null => (e.crossings ? 'crossing' : e.sceneChange ? 'sceneChange' : null);
 
 /** A walk's CrossingStats from its frames' ms and the session's builds after each, the settle's length and the renderer's
- *  stats after the settle and at the end. */
-function walkStats(walk: number[], walkBuilds: (number | undefined)[], settle: number, settled: WalkPoint, end: WalkPoint): CrossingStats {
+ *  stats after the settle and at the end; `evaluated`: its stats right after the entry's eval (a scene change's programs
+ *  count from there; none: from the settle). */
+function walkStats(walk: number[], walkBuilds: (number | undefined)[], settle: number, settled: WalkPoint, end: WalkPoint,
+  evaluated?: WalkPoint): CrossingStats {
   const order = walk.map((t, i) => [i + 1, round(t, 2)] as [number, number]).sort((a, b) => b[1] - a[1]);
   const first = settled.builds === 0 ? walkBuilds.findIndex((b) => (b ?? 0) > 0) : -1;
   return {
     frames: walk.length, maxMs: order[0][1], maxAt: order[0][0], medianMs: round(median(walk), 2), slowest: order.slice(0, 5),
-    builds: [settled.builds ?? null, end.builds ?? null], programs: [settled.programs, end.programs],
-    lastBuildMs: end.lastBuildMs ?? null, settle, firstBuildAt: first >= 0 ? first + 1 : null,
+    builds: [settled.builds ?? null, end.builds ?? null], programs: [(evaluated ?? settled).programs, end.programs],
+    programsFrom: evaluated ? 'eval' : 'settle', lastBuildMs: end.lastBuildMs ?? null, settle, firstBuildAt: first >= 0 ? first + 1 : null,
   };
 }
 
@@ -465,7 +472,7 @@ function walkReport(e: LiveEntry, c: CrossingStats): { line: string; broken: str
     if (ms > SCENE_CHANGE_MS) broken.push(`frame ${at(f)}: ${ms} ms > ${SCENE_CHANGE_MS} ms`);
   }
   const line = ` | scene change, frames ${at(1)}-${at(c.frames)}: max ${c.maxMs} ms @${at(c.maxAt)}, median ${c.medianMs},`
-    + ` slowest ${c.slowest.map(([f, ms]) => `${ms}@${at(f)}`).join(' ')}, programs ${c.programs.join(' → ')}, builds`
+    + ` slowest ${c.slowest.map(([f, ms]) => `${ms}@${at(f)}`).join(' ')}, programs ${c.programs.join(' → ')}${c.programsFrom === 'eval' ? ' (from the eval)' : ''}, builds`
     + ` ${c.builds.map((b) => b ?? '?').join(' → ')}${c.firstBuildAt !== null ? ` (the session's first @${at(c.firstBuildAt)}${e.sceneChange === 'gate' ? ': no frame gate' : ''})` : ''}`
     + (e.sceneChange === 'gate' ? (broken.length ? ` SCENE-CHANGE GATES FAILED: ${broken.join('; ')}` : ' (gated: passed)') : ' (recorded)');
   return { line, broken };
@@ -1001,6 +1008,8 @@ async function main(): Promise<void> {
               throw new Error(`a ${walkKind} entry starts with an idle settle of ≥ 30 frames, then walks`);
             }
             if (e.eval) await page.evaluate(e.eval);
+            // (a scene change's programs count from right after its eval: the settle's frames included, see SCENE_CHANGE_MS)
+            const evaluated = e.sceneChange && e.eval ? await page.evaluate('emu.renderer.stats()') as WalkPoint : undefined;
             // the entry's first frame builds the world and compiles programs (seconds, varying with
             // Chrome's program cache): stepMsMax is the largest frame time after it
             stepMsMax = 0;
@@ -1019,7 +1028,9 @@ async function main(): Promise<void> {
                 walkBuilds.push(...builds);
               }
             }
-            if (walkKind) walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint);
+            if (walkKind) {
+              walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint, evaluated);
+            }
             // the GBA's own frame of a battle entry (the review's reference column)
             if (isBattleEntry(e)) {
               const png = await page.evaluate('emu.gbaPng()') as string;
