@@ -18,6 +18,7 @@ import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, PLATFORM_FOOTPRINT, STAGE, WATER_Y, type Stage } from '../stage';
 import { FLOOR_COURT, FLOOR_STYLE, courtColor, hallFloorMaterial } from './floor';
+import { polarIndex } from './mesh';
 
 export const GROUND_GRID = 72;   // cells (1 unit each) around stage.centre
 export const POND = { dz: -1, rx: 15, rz: 10 }, CAVE_POND = { dz: -1, rx: 18, rz: 12 };
@@ -42,8 +43,8 @@ const FLAT_R = 9, ROLL_R = 22;
  *  under the platform's rim) out to a noise-frayed edge between `outer`'s two radii. Painted in the ground's shader
  *  (analytic: the terrain's warped cell borders broke a cell-painted ring into lobed patches). */
 export const WORN_RING = { inner: 1.0, outer: [1.4, 1.62] as const };
-/** GLSL's smoothstep(e0, e1, x). */
-const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
+/** GLSL's smoothstep(e0, e1, x) (the arena parts' shared one). */
+export const smooth = (e0: number, e1: number, x: number) => THREE.MathUtils.smoothstep(x, e0, e1);
 
 /** The ground at night: warm earth turns this far (× uNight) to a neutral of `lift` × its luminance (the kit's NIGHT_SOIL
  *  is 0.85 / 1.7: on the worn ring a flat slate band), and the worn ring fades this far into the field. (The platform
@@ -56,22 +57,35 @@ export const GROUND_NIGHT = { mix: 0.55, lift: 1.4, ringFade: 0.4 };
  *  `out` (a channel of `rgb` at 0 keeps factor 1). */
 export function groundNightScale(rgb: RGB, night: number, out: RGB): RGB {
   const warm = smooth(0, 0.08, rgb[0] - rgb[2]) * (1 - smooth(0, 0.08, rgb[1] - rgb[0]));
-  const l = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) * GROUND_NIGHT.lift, t = night * GROUND_NIGHT.mix * warm;
+  return nightScale(rgb, GROUND_NIGHT.lift, night * GROUND_NIGHT.mix * warm, out);
+}
+
+/** A moonlit colour as a material-colour factor (linear): per channel mix(rgb, luminance(rgb) × `lift`, `t`) / rgb into
+ *  `out` (a channel of `rgb` at 0 keeps factor 1) — groundNightScale's, and the kit's NIGHT_SOIL (kit/palette.ts
+ *  nightSoilScale, the same line: lift 1.7, t = night × 0.85). */
+export function nightScale(rgb: RGB, lift: number, t: number, out: RGB): RGB {
+  const l = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) * lift;
   for (let i = 0; i < 3; i++) out[i] = rgb[i] > 0 ? (rgb[i] + (l - rgb[i]) * t) / rgb[i] : 1;
   return out;
 }
 
-/** Moonlights `mesh` at night as the arena ground does warm earth (groundNightScale of `rgb`, linear, through its
- *  material's colour, set before each draw from `night`: no program of its own). A cool colour (no warmth) is left as it
- *  is, with no hook. The material is the mesh's own (a pooled kit material, its colour reset when it is handed out again). */
-export function moonlitAsGround(mesh: THREE.Object3D, material: THREE.MeshStandardMaterial, rgb: RGB, night: { value: number }): void {
+/** Moonlights `mesh` at night by `scale` of `rgb` (linear; default groundNightScale: as the arena ground does warm earth —
+ *  the platform bodies take the kit's nightSoilScale) through its material's colour, set before each draw from `night`:
+ *  no program of its own. A colour `scale` leaves alone at full night (groundNightScale: a cool one, no warmth) is left as
+ *  it is, with no hook. The material is the mesh's own (a pooled kit material, its colour reset when it is handed out
+ *  again). */
+export function moonlit(mesh: THREE.Object3D, material: THREE.MeshStandardMaterial, rgb: RGB, night: { value: number },
+  scale: (rgb: RGB, night: number, out: RGB) => RGB = groundNightScale): void {
   const k: RGB = [1, 1, 1];
-  if (groundNightScale(rgb, 1, k).every((v) => v === 1)) return;
+  if (scale(rgb, 1, k).every((v) => v === 1)) return;
   mesh.onBeforeRender = () => {
-    groundNightScale(rgb, night.value, k);
+    scale(rgb, night.value, k);
     material.color.setRGB(k[0], k[1], k[2]);
   };
 }
+/** moonlit as the arena ground (groundNightScale). */
+export const moonlitAsGround = (mesh: THREE.Object3D, material: THREE.MeshStandardMaterial, rgb: RGB, night: { value: number }): void =>
+  moonlit(mesh, material, rgb, night);
 
 /** A cloud's shadow darkens the ground at most this much (soft: arenaClouds' smooth cover, per vertex). */
 export const CLOUD_SHADOW = 0.15;
@@ -89,9 +103,9 @@ const POND_BED: RGB = [0.6, 0.56, 0.42], POND_BEACH: RGB = [0.86, 0.78, 0.56];
  *  pond's centre — and reaches past 64 everywhere.) */
 export const GROUND_RADIUS: { readonly default: number } & Readonly<Partial<Record<ArenaKind, number>>> = { default: 64, rayquaza: 14 };
 /** A kind's ground radius (GROUND_RADIUS). */
-export const groundRadius = (kind: ArenaKind): number => GROUND_RADIUS[kind] ?? GROUND_RADIUS.default;
+const groundRadius = (kind: ArenaKind): number => GROUND_RADIUS[kind] ?? GROUND_RADIUS.default;
 /** The disc: segments, rings (densest near the stage: ring k at radius groundRadius · (k / DISC_RINGS)^DISC_POW). */
-export const DISC_SEGMENTS = 96;
+const DISC_SEGMENTS = 96;
 const DISC_RINGS = 48, DISC_POW = 1.35;
 
 /** Per cell rgb = sRGB tint, a = mat << 4 | 8 (the terrain family's layout): groundMat / ground everywhere, tints ±6 % by
@@ -198,12 +212,24 @@ export function groundHeight(kind: ArenaKind, x: number, z: number, stage: Stage
 // branches (build-time values), so a kind without them pays nothing. The caustics are kit/water.ts's seabed term. At
 // night (uNight, outdoor kinds only) warm ground is moonlit.
 
-/** The stage's two platforms (world x, z, footprint rx, rz) and its centre in the terrain's cell space at GROUND_Y. */
-const stageGlsl = (stage: Stage) => /* glsl */ `
-const vec4 ARENA_PLATFORMS[2] = vec4[2](
+/** GLSL: `stage`'s two platforms as the constant `name` — vec4[2], the player's then the enemy's: world x, z, footprint
+ *  rx, rz (the ground's worn ring, the ripple rings and the hall floor's stage tops measure from them; built from the
+ *  build's stage, ArenaContext.stage). */
+export function platformsGlsl(name: string, stage: Stage): string {
+  return /* glsl */ `const vec4 ${name}[2] = vec4[2](
   vec4(${stage.player.x.toFixed(4)}, ${stage.player.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rz.toFixed(4)}),
   vec4(${stage.enemy.x.toFixed(4)}, ${stage.enemy.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rz.toFixed(4)}));
-const vec2 ARENA_CELL_CENTRE = vec2(${stage.centre.x.toFixed(4)}, ${(stage.centre.z - GROUND_Y).toFixed(4)});
+`;
+}
+/** GLSL: the elliptical distance of `p` (a vec2, world x, z) from the nearer of the platforms `name` (platformsGlsl) — 1 on
+ *  its footprint's edge. */
+export function nearerPlatformGlsl(name: string, p: string): string {
+  return `min(length((${p} - ${name}[0].xy) / ${name}[0].zw), length((${p} - ${name}[1].xy) / ${name}[1].zw))`;
+}
+
+/** The stage's two platforms (platformsGlsl) and its centre in the terrain's cell space at GROUND_Y. */
+const stageGlsl = (stage: Stage) => /* glsl */ `
+${platformsGlsl('ARENA_PLATFORMS', stage)}const vec2 ARENA_CELL_CENTRE = vec2(${stage.centre.x.toFixed(4)}, ${(stage.centre.z - GROUND_Y).toFixed(4)});
 `;
 
 /** The battle ground's border warp (terrainFragColor's): the terrain's, cheaper — only within WARP_R of the stage (the
@@ -244,7 +270,7 @@ varying float vArenaCloud;
 const GROUND_COLOR = /* glsl */ `
 if (uRing > 0.0) {
   vec2 rp = vKitWorld.xz;
-  float re = min(length((rp - ARENA_PLATFORMS[0].xy) / ARENA_PLATFORMS[0].zw), length((rp - ARENA_PLATFORMS[1].xy) / ARENA_PLATFORMS[1].zw));
+  float re = ${nearerPlatformGlsl('ARENA_PLATFORMS', 'rp')};
   if (re < ${WORN_RING.outer[1].toFixed(2)}) {
     float fray = kitNoise2(rp * 1.3), wear = kitNoise2(rp * 2.6 + 11.0);
     float outer = mix(${WORN_RING.outer[0].toFixed(2)}, ${WORN_RING.outer[1].toFixed(2)}, fray);
@@ -306,23 +332,6 @@ export function arenaGroundMaterial(tex: THREE.Texture, min: THREE.Vector2, size
   };
 }
 
-/** A disc's index: a fan from vertex 0 to its first ring, then `rings` − 1 bands, each ring `segments` vertices from 1. */
-function discIndex(rings: number, segments: number): Uint32Array {
-  const idx = new Uint32Array((segments + (rings - 1) * segments * 2) * 3);
-  const vi = (k: number, s: number) => 1 + (k - 1) * segments + (s % segments);
-  let t = 0;
-  // (counter-clockwise seen from above: +y faces up)
-  for (let s = 0; s < segments; s++) { idx[t++] = 0; idx[t++] = vi(1, s + 1); idx[t++] = vi(1, s); }
-  for (let k = 1; k < rings; k++) {
-    for (let s = 0; s < segments; s++) {
-      const a = vi(k, s), b = vi(k, s + 1), c = vi(k + 1, s + 1), d = vi(k + 1, s);
-      idx[t++] = a; idx[t++] = b; idx[t++] = c;
-      idx[t++] = a; idx[t++] = c; idx[t++] = d;
-    }
-  }
-  return idx;
-}
-
 /** The pond's disc: rings round the POND ellipse's centre along the rays from it (the ellipse's parametric angle, evenly
  *  along its shore), `segments` round — `inner` rings scaling the ellipse (to `innerE` of it), then rings at the signed
  *  distances `shore` from the waterline (pondShore: one ring on the waterline, dense over the beach and the lip: the water
@@ -352,7 +361,7 @@ function pondDisc(stage: Stage): THREE.BufferGeometry {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setIndex(new THREE.BufferAttribute(discIndex(rings.length, P.segments), 1));
+  g.setIndex(new THREE.BufferAttribute(new Uint32Array(polarIndex(rings.length, P.segments)), 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
   return g;
@@ -375,7 +384,7 @@ export function groundDisc(kind: ArenaKind, stage: Stage): THREE.BufferGeometry 
       pos[o++] = x; pos[o++] = groundHeight(kind, x, z, stage); pos[o++] = z;
     }
   }
-  const idx = discIndex(DISC_RINGS, DISC_SEGMENTS);
+  const idx = new Uint32Array(polarIndex(DISC_RINGS, DISC_SEGMENTS));
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
@@ -441,7 +450,7 @@ export const GROUND_PART: ArenaPart = {
     const floor = FLOOR_STYLE[ctx.kind];
     const shade = FLOOR_COURT[ctx.kind];
     const court = shade ? { stage: ctx.stage, color: courtColor(ctx.palette, shade) } : null;
-    const material = floor ? kitMaterial(ctx.uniforms, hallFloorMaterial(floor, ctx.palette.ground, court)).material
+    const material = floor ? kitMaterial(ctx.uniforms, hallFloorMaterial(floor, ctx.palette.ground, court, ctx.stage)).material
       : arenaGround(ctx, ctx.ground, ring);
     const mesh = new THREE.Mesh(groundDisc(ctx.kind, ctx.stage), material);
     mesh.receiveShadow = true;

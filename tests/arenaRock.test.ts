@@ -5,10 +5,10 @@ import { stageKeepOut } from '../src/render/battle/parts/scatter';
 import { PLATFORM_FOOTPRINT, STAGE, GROUND_Y, WATER_Y } from '../src/render/battle/stage';
 import { stadiumLava } from '../src/render/battle/parts/stadium';
 import {
-  BEHIND_REACH, BOULDER_TOP, LAVA_MATERIAL, ROCK_PART, ROCK_RULES, SMALL_FRONT, TALL_SIZE, TIP_SHOWN, WALL_SEED, boulderPlacements,
+  BOULDER_TOP, LAVA_MATERIAL, ROCK_PART, ROCK_RULES, SMALL_FRONT, TALL_SIZE, TIP_SHOWN, WALL_SEED, boulderPlacements,
   clusterSpires, lavaPools, poolRadius, stalagmitePlacements, wallRadius, type LavaPool,
 } from '../src/render/battle/parts/rock';
-import { SCENERY_SEED, frameProjector, frameTop, sightCap } from '../src/render/battle/parts/scatter';
+import { SCENERY_SEED, behindBattler, frameProjector, frameTop, sightCap } from '../src/render/battle/parts/scatter';
 import { arenaClear } from '../src/render/battle/parts/flora';
 import { CAVE_POND, groundHeight } from '../src/render/battle/parts/ground';
 import { ModernArena } from '../src/render/battle/modernArena';
@@ -83,8 +83,6 @@ describe('rock arenas: bands, placements, the part', () => {
   const KINDS: ArenaKind[] = ['mountain', 'cave', 'cavePond', 'groudon', 'kyogre'];
   /** The arenas' seed and a few more: the rules hold whatever the seed. */
   const SEEDS = [SCENERY_SEED, 2, 3];
-  const behind = (x: number, z: number, reach: number) =>
-    [STAGE.player, STAGE.enemy].some((p) => z < p.z && z > p.z - reach && Math.abs(x - p.x) < 3.5);
 
   it("stands every kind's band on the tall rule, facing the stage, under 20 k vertices, closing the frame's top band", () => {
     for (const kind of KINDS) {
@@ -119,7 +117,7 @@ describe('rock arenas: bands, placements, the part', () => {
           expect(ground + s.height, `${kind} tip`).toBeLessThanOrEqual(top(s.x, s.z) - TIP_SHOWN + 1e-9);
           for (const c of clusterSpires(s.seeds, s.height)) {
             if (c.height > 1) expect(ko.tallOk(s.x + c.dx, s.z + c.dz), `${kind} tall`).toBe(true);
-            expect(behind(s.x + c.dx, s.z + c.dz, BEHIND_REACH), `${kind} behind`).toBe(false);
+            expect(behindBattler(STAGE, s.x + c.dx, s.z + c.dz), `${kind} behind`).toBe(false);
           }
         } else {
           expect(clear(s.x, s.z) && s.z <= STAGE.centre.z + SMALL_FRONT, `${kind} small`).toBe(true);

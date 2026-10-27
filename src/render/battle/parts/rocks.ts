@@ -13,7 +13,7 @@ import type { ArenaKind } from '../arenaKind';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import type { Stage } from '../stage';
 import { groundHeight, moonlitAsGround } from './ground';
-import { SCENERY_SEED, scatter, stageKeepOut } from './scatter';
+import { SCENERY_SEED, behindBattler, scatter, stageKeepOut } from './scatter';
 import { duneMounds, duneSurface } from './dunes';
 import { arenaClear, treePlacements } from './flora';
 
@@ -80,8 +80,8 @@ const ROCKS: Partial<Record<ArenaKind, RockRule>> = {
 };
 /** A rock of this width or more is tall (scatter.ts's tall rule). */
 const TALL_SIZE = 1.1;
-/** Rocks keep this far from the trees, and this far to the side (x) of the ground behind each battler. */
-const ROCK_TREE_GAP = 2.5, BEHIND_HALF = 3.5;
+/** Rocks keep this far from the trees. */
+const ROCK_TREE_GAP = 2.5;
 
 export interface ArenaRock { x: number; z: number; size: number; seeds: number[] }
 
@@ -95,10 +95,10 @@ export function rockPlacements(kind: ArenaKind, stage: Stage, seed: number): Are
   const ko = stageKeepOut(stage), clear = arenaClear(stage);
   // (off the trees' feet: a palm grows out of no boulder)
   const trees = treePlacements(kind, stage, seed);
-  // (and out from behind the battlers: the ground the camera frames over a battler's head stays clear for its silhouette)
-  const behind = (p: { x: number; z: number }, x: number, z: number) => z < p.z && Math.abs(x - p.x) < BEHIND_HALF;
+  // (and out from behind the battlers, all the way back: the ground the camera frames over a battler's head stays clear for
+  // its silhouette)
   const free = (x: number, z: number) => trees.every((t) => Math.hypot(t.x - x, t.z - z) >= ROCK_TREE_GAP)
-    && !behind(stage.player, x, z) && !behind(stage.enemy, x, z);
+    && !behindBattler(stage, x, z, { reach: Infinity });
   const big = sizes.filter((s) => s >= TALL_SIZE), small = sizes.filter((s) => s < TALL_SIZE);
   const at = (n: number, salt: number, accept: (x: number, z: number) => boolean) =>
     scatter(seed * 4099 + salt, { centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: n, minGap: 3, accept });

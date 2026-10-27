@@ -4,12 +4,12 @@ import { POND } from '../src/render/battle/parts/ground';
 import { STAGE, WATER_Y } from '../src/render/battle/stage';
 import * as THREE from 'three';
 import {
-  WATER_LOOK, WATER_RENDER_ORDER, arenaWaterMaterial, isletPlacements, kelpPlacements, padPlacements, shaftGeometry,
+  KELP_BEHIND, WATER_LOOK, WATER_RENDER_ORDER, arenaWaterMaterial, isletPlacements, kelpPlacements, padPlacements, shaftGeometry,
   waterRocks, waterSheets,
 } from '../src/render/battle/parts/water';
 import { CAVE_POND, GROUND_RENDER_ORDER, TOPS_RENDER_ORDER, groundHeight } from '../src/render/battle/parts/ground';
 import { CLUMP_TOP, PALM, REED, arenaClear, grassPlacements } from '../src/render/battle/parts/flora';
-import { battleCamera, frameProjector, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
+import { battleCamera, behindBattler, frameProjector, frameTop, insideEllipse, sightCap, stageKeepOut } from '../src/render/battle/parts/scatter';
 import { arenaPalette } from '../src/render/battle/palette';
 import { arenaLook } from '../src/render/battle/look';
 import { ModernArena } from '../src/render/battle/modernArena';
@@ -218,9 +218,10 @@ describe('arena water: sheets, order, placements', () => {
     for (const c of reeds) expect(groundHeight('pond', c.x, c.z, STAGE) + CLUMP_TOP * c.scale * REED.tall).toBeLessThanOrEqual(cap(c.x, c.z) + 1e-9);
     const kelp = kelpPlacements(STAGE, 1);
     expect(kelp.length).toBeGreaterThanOrEqual(30);
-    // (every stalk on the tall rule and out from behind a battler up to 9 units back)
-    const behind = (x: number, z: number) => [STAGE.player, STAGE.enemy].some((p) => z < p.z && z > p.z - 9 && Math.abs(x - p.x) < 3.5);
-    for (const k of kelp) expect(ko.tallOk(k.x, k.z) && !behind(k.x, k.z), `kelp (${k.x.toFixed(1)}, ${k.z.toFixed(1)})`).toBe(true);
+    // (every stalk on the tall rule and out from behind a battler up to KELP_BEHIND units back)
+    for (const k of kelp) {
+      expect(ko.tallOk(k.x, k.z) && !behindBattler(STAGE, k.x, k.z, { reach: KELP_BEHIND }), `kelp (${k.x.toFixed(1)}, ${k.z.toFixed(1)})`).toBe(true);
+    }
     const p = shaftGeometry(STAGE, 1)!.getAttribute('position');
     expect(p.count).toBeGreaterThan(0);
     // (each shaft's foot: its first vertex of 10)

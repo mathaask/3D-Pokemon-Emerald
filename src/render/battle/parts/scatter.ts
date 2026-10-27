@@ -112,6 +112,18 @@ export function stageKeepOut(stage: Stage): { ellipses: Ellipse[]; tallOk(x: num
   return { ellipses, tallOk };
 }
 
+/** The ground behind a battler (its silhouette's background) the scenery keeps out of: `half` units to either side of it,
+ *  up to `reach` units behind it — further back, a thing shows over the battler's head (the frame's top band), not behind
+ *  its silhouette. The water's rocks and islets, the stalagmites and the cave boulders keep to these; the kelp, the
+ *  scree, the field rocks and the lava pools to reaches (and a half) of their own. */
+export const BEHIND = { half: 3.5, reach: 12 } as const;
+
+/** Whether (x, z) lies on the ground behind a battler (BEHIND, or `o`'s half and reach: Infinity — all the way back). */
+export function behindBattler(stage: Stage, x: number, z: number, o: { half?: number; reach?: number } = {}): boolean {
+  const half = o.half ?? BEHIND.half, reach = o.reach ?? BEHIND.reach;
+  return [stage.player, stage.enemy].some((p) => z < p.z && z > p.z - reach && Math.abs(x - p.x) < half);
+}
+
 /** Yaws the sight cap and the frame top check the camera at (the user's ±0.9, in steps), the intro sweep's steps
  *  (ease 1: settled … 0: its first frame) and the user's zooms the sight cap checks (their range's ends: a sight line to a
  *  platform's near edge runs lower the further out the camera stands — zoomed out —, and lower beyond the point it looks

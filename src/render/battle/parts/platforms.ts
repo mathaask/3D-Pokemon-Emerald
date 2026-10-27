@@ -17,9 +17,10 @@ import { BLADES, GRASS_MATERIAL, clump } from '../../kit/grass';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint } from '../stage';
-import { arenaGround, arenaGroundMaterial, uniformCells, TOPS_RENDER_ORDER } from './ground';
+import { GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT, STAGE, type Footprint, type Stage } from '../stage';
+import { arenaGround, arenaGroundMaterial, moonlit, nearerPlatformGlsl, platformsGlsl, uniformCells, TOPS_RENDER_ORDER } from './ground';
 import { FLOOR_STYLE, hallFloorMaterial } from './floor';
+import { polarIndex, ringBands } from './mesh';
 
 export type PlatformStyle = 'earthGrass' | 'sandMound' | 'stoneSlab' | 'lilyPad' | 'rippleRing' | 'caveRock' | 'seabedRock';
 
@@ -38,7 +39,7 @@ export interface PlatformMeshes {
   body: THREE.BufferGeometry | null;   // position, normal, color(3): SOIL_MATERIAL (smooth) or CLIFF_MATERIAL (stoneSlab, caveRock, seabedRock: faceted)
   top: THREE.BufferGeometry | null;    // position, normal: drawn with the arena ground's material (its cells paint it)
   skirt: Float32Array | null;          // earthGrass: x, z, scale, yaw per grass clump on the rim
-  ripple: THREE.BufferGeometry | null; // rippleRing: position, normal (RIPPLE_MATERIAL)
+  ripple: THREE.BufferGeometry | null; // rippleRing: position, normal (rippleMaterial)
 }
 
 /** The shapes' dimensions (world units; e = elliptical radius in units of the footprint). */
@@ -71,17 +72,11 @@ function polarTop(f: Footprint, rings: number, segments: number, eAt: (k: number
   return polarIndexed(pos, rings, segments);
 }
 
-/** Indexes a centre + rings × segments vertex layout (counter-clockwise from above) and computes smooth normals. */
+/** Indexes a centre + rings × segments vertex layout (polarIndex: facing up) and computes smooth normals. */
 function polarIndexed(pos: Float32Array, rings: number, segments: number): THREE.BufferGeometry {
-  const idx: number[] = [];
-  const vi = (k: number, s: number) => 1 + (k - 1) * segments + (s % segments);
-  for (let s = 0; s < segments; s++) idx.push(0, vi(1, s + 1), vi(1, s));
-  for (let k = 1; k < rings; k++) {
-    for (let s = 0; s < segments; s++) idx.push(vi(k, s), vi(k, s + 1), vi(k + 1, s + 1), vi(k, s), vi(k + 1, s + 1), vi(k + 1, s));
-  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setIndex(idx);
+  g.setIndex(polarIndex(rings, segments));
   g.computeVertexNormals();
   return g;
 }
@@ -99,16 +94,11 @@ function band(rows: number, segments: number, ring: (k: number, a: number, s: nu
       o += 3;
     }
   }
-  const idx: number[] = [];
-  const vi = (k: number, s: number) => k * segments + (s % segments);
-  // (row k above row k + 1; seen from outside, a → a + 1 runs counter-clockwise from above: wound to face outwards)
-  for (let k = 0; k + 1 < rows; k++) {
-    for (let s = 0; s < segments; s++) idx.push(vi(k, s), vi(k, s + 1), vi(k + 1, s + 1), vi(k, s), vi(k + 1, s + 1), vi(k + 1, s));
-  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setIndex(idx);
+  // (row k above row k + 1: ringBands faces it outwards)
+  g.setIndex(ringBands(rows, segments));
   g.computeVertexNormals();
   // (normal before colour in the attribute order three keys programs by: irrelevant — names are sorted)
   return g;
@@ -275,7 +265,7 @@ function lilyPad(f: Footprint, seed: number, p: ArenaPalette): PlatformMeshes {
   return { body: g, top: null, skirt: null, ripple: null };
 }
 
-/** Ripple rings: an annulus 0.6–1.25 × footprint just over the water, drawn by RIPPLE_MATERIAL. */
+/** Ripple rings: an annulus 0.6–1.25 × footprint just over the water, drawn by rippleMaterial. */
 function rippleRing(f: Footprint): PlatformMeshes {
   const R = RIPPLE, n = (R.rings + 1) * R.segments;
   const pos = new Float32Array(n * 3);
@@ -287,15 +277,11 @@ function rippleRing(f: Footprint): PlatformMeshes {
       pos[o++] = Math.cos(a) * f.rx * e; pos[o++] = R.y; pos[o++] = Math.sin(a) * f.rz * e;
     }
   }
-  const idx: number[] = [];
-  const vi = (k: number, s: number) => k * R.segments + (s % R.segments);
-  for (let k = 0; k < R.rings; k++) {
-    for (let s = 0; s < R.segments; s++) idx.push(vi(k, s), vi(k, s + 1), vi(k + 1, s + 1), vi(k, s), vi(k + 1, s + 1), vi(k + 1, s));
-  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
-  g.setIndex(idx);
+  // (each ring outside the last: facing up)
+  g.setIndex(ringBands(R.rings + 1, R.segments));
   return { body: null, top: null, skirt: null, ripple: g };
 }
 
@@ -311,18 +297,13 @@ export function platformMeshes(style: PlatformStyle, f: Footprint, seed: number,
   }
 }
 
-// The ripples' rings: elliptical radius e (× footprint) from the nearer platform of the battle stage (its two platforms,
-// fixed), three foam rings drifting out from the battler at 0.6 to fade by 1.22, and a soft collar at its feet; the
-// annulus' edges soft. Alpha only: the material's colour is the foam's.
-const RIPPLE_HEAD = /* glsl */ `
-const vec4 RIPPLE_PLATFORMS[2] = vec4[2](
-  vec4(${STAGE.player.x.toFixed(4)}, ${STAGE.player.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rz.toFixed(4)}),
-  vec4(${STAGE.enemy.x.toFixed(4)}, ${STAGE.enemy.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rz.toFixed(4)}));
-`;
+// The ripples' rings: elliptical radius e (× footprint) from the nearer platform of the build's stage (its two platforms:
+// platformsGlsl), three foam rings drifting out from the battler at 0.6 to fade by 1.22, and a soft collar at its feet;
+// the annulus' edges soft. Alpha only: the material's colour is the foam's.
 const RIPPLE_COLOR = /* glsl */ `
 {
   vec2 rp = vKitWorld.xz;
-  float e = min(length((rp - RIPPLE_PLATFORMS[0].xy) / RIPPLE_PLATFORMS[0].zw), length((rp - RIPPLE_PLATFORMS[1].xy) / RIPPLE_PLATFORMS[1].zw));
+  float e = ${nearerPlatformGlsl('RIPPLE_PLATFORMS', 'rp')};
   float n = kitNoise2(rp * 2.6 + vec2(uTime * 0.21, -uTime * 0.17));
   float a = 0.0;
   for (int k = 0; k < 3; k++) {
@@ -337,10 +318,12 @@ const RIPPLE_COLOR = /* glsl */ `
 }
 `;
 
-/** transparent, depthWrite false: foam rings expanding from the battler (uTime), soft edges. */
-export const RIPPLE_MATERIAL: KitMaterialOptions = {
-  transparent: true, depthWrite: false, roughness: 0.35, fragHead: RIPPLE_HEAD, fragColor: RIPPLE_COLOR, hookKey: 'ripple',
-};
+/** The ripple rings' material round `stage`'s platforms (default STAGE: every arena builds on it, ModernArena's
+ *  ctx.stage): transparent, depthWrite false, foam rings expanding from the battler (uTime), soft edges. */
+export function rippleMaterial(stage: Stage = STAGE): KitMaterialOptions {
+  return { transparent: true, depthWrite: false, roughness: 0.35, fragHead: `\n${platformsGlsl('RIPPLE_PLATFORMS', stage)}`,
+    fragColor: RIPPLE_COLOR, hookKey: 'ripple' };
+}
 
 /** The bodies' materials: smooth soil (earth, lily pads) or faceted cliff (stone, rock). */
 const BODY_MATERIAL: Record<PlatformStyle, KitMaterialOptions> = {
@@ -370,7 +353,7 @@ export const PLATFORM_PART: ArenaPart = {
       { material: SOIL_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: true },
       { material: CLIFF_MATERIAL, mesh: 'mesh', attrs: PNC, castShadow: true },
       { material: GRASS_MATERIAL, mesh: 'instancedColors', attrs: PNC, castShadow: false },
-      { material: RIPPLE_MATERIAL, mesh: 'mesh', attrs: PN, castShadow: false },
+      { material: rippleMaterial(), mesh: 'mesh', attrs: PN, castShadow: false },
       // (the tops: the ground's program; in a hall, the hall floor's)
       { material: arenaGroundMaterial(ph(), new THREE.Vector2(), new THREE.Vector2(), 0, 0), mesh: 'mesh', attrs: PN, castShadow: false },
       { material: hallFloorMaterial('stage', [1, 1, 1]), mesh: 'mesh', attrs: PN, castShadow: false },
@@ -386,7 +369,7 @@ export const PLATFORM_PART: ArenaPart = {
       // (the tops' own cells, all platform: the field's would show at their rims, where the terrain's warped lookup
       // reaches past the footprint's cells; in a hall, polished stage tops of the hall floor's program: floor.ts)
       let material: THREE.Material;
-      if (FLOOR_STYLE[ctx.kind]) material = kitMaterial(ctx.uniforms, hallFloorMaterial('stage', ctx.palette.platformTop)).material;
+      if (FLOOR_STYLE[ctx.kind]) material = kitMaterial(ctx.uniforms, hallFloorMaterial('stage', ctx.palette.platformTop, null, ctx.stage)).material;
       else {
         const cells = uniformCells(ctx.palette.platformMat, ctx.palette.platformTop);
         ctx.disposables.push(cells.tex);
@@ -410,19 +393,13 @@ export const PLATFORM_PART: ArenaPart = {
       mesh.receiveShadow = true;
       // soil and stone (their colours: the side's × k) moonlit at night as the kit's berry soil (NIGHT_SOIL, through the
       // material's colour from uNight: no program of their own; never near-black); lily pads stay leaf green
-      if (style !== 'lilyPad') {
-        const side = toLinear(ctx.palette.platformSide), night = ctx.uniforms.uNight, k: RGB = [1, 1, 1], material = km.material;
-        mesh.onBeforeRender = () => {
-          nightSoilScale(side, night.value, k);
-          material.color.setRGB(k[0], k[1], k[2]);
-        };
-      }
+      if (style !== 'lilyPad') moonlit(mesh, km.material, toLinear(ctx.palette.platformSide), ctx.uniforms.uNight, nightSoilScale);
       group.add(mesh);
     }
     const ripple = merged(meshes, 'ripple');
     if (ripple) {
       const foam = mix(ctx.palette.platformTop, [1, 1, 1], 0.65);
-      const mesh = new THREE.Mesh(ripple, kitMaterial(ctx.uniforms, { ...RIPPLE_MATERIAL, color: _c.setRGB(...toLinear(foam)) }).material);
+      const mesh = new THREE.Mesh(ripple, kitMaterial(ctx.uniforms, { ...rippleMaterial(ctx.stage), color: _c.setRGB(...toLinear(foam)) }).material);
       mesh.name = 'platformRipples';
       mesh.receiveShadow = true;
       group.add(mesh);

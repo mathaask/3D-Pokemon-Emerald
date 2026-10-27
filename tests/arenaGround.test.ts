@@ -2,13 +2,15 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   groundCells, groundDisc, groundHeight, CAVE_POND, POND, POND_BANK, GROUND_GRID, WORN_RING, arenaGroundMaterial, wornRing,
-  GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS,
+  GROUND_NIGHT, groundNightScale, moonlitAsGround, GROUND_PART, GROUND_RADIUS, nearerPlatformGlsl, platformsGlsl,
 } from '../src/render/battle/parts/ground';
 import type { ArenaContext } from '../src/render/battle/modernArena';
 import { arenaLook } from '../src/render/battle/look';
 import type { RGB } from '../src/render/kit/palette';
 import { arenaPalette } from '../src/render/battle/palette';
-import { STAGE, GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
+import { STAGE, Stage, GROUND_Y, WATER_Y, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
+import { PLATFORM_PART, rippleMaterial } from '../src/render/battle/parts/platforms';
+import { hallFloorMaterial } from '../src/render/battle/parts/floor';
 import { GroundMat } from '../src/render/kit/terrain';
 import { ModernArena } from '../src/render/battle/modernArena';
 import { defaultArenaColors } from '../src/render/battle/bgSample';
@@ -206,5 +208,56 @@ describe('the worn ring (the ground shader)', () => {
     const w = wornRing(arenaPalette('grass', null));
     expect(w.strength).toBe(1);
     expect(w.tint[0]).toBeGreaterThan(w.tint[1]); expect(w.tint[1]).toBeLessThan(1);   // green field → brown earth
+  });
+});
+
+describe("the stage's platforms in the battle shaders (platformsGlsl: the worn ring, the ripple rings, the hall floor's stage tops)", () => {
+  /** The fragment shader a kit material compiles to (onBeforeCompile on a stub). */
+  const frag = (m: THREE.Material) => {
+    const s = { uniforms: {}, vertexShader: THREE.ShaderLib.standard.vertexShader, fragmentShader: THREE.ShaderLib.standard.fragmentShader };
+    m.onBeforeCompile(s as unknown as THREE.WebGLProgramParametersWithUniforms, undefined as unknown as THREE.WebGLRenderer);
+    return s.fragmentShader;
+  };
+  /** A stage of its own: the platforms moved off STAGE's. */
+  const moved = new Stage();
+  moved.player.x += 1.5;
+  moved.enemy.z -= 0.75;
+
+  it("carries each platform's place and footprint, and measures the nearer one alike in the ground and the ripples", () => {
+    for (const stage of [STAGE, moved]) {
+      for (const [c, f] of [[stage.player, PLATFORM_FOOTPRINT.player], [stage.enemy, PLATFORM_FOOTPRINT.enemy]] as const) {
+        expect(platformsGlsl('P', stage)).toContain(`vec4(${c.x.toFixed(4)}, ${c.z.toFixed(4)}, ${f.rx.toFixed(4)}, ${f.rz.toFixed(4)})`);
+      }
+      expect(arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0, undefined, stage).fragHead)
+        .toContain(platformsGlsl('ARENA_PLATFORMS', stage));
+      expect(rippleMaterial(stage).fragHead).toContain(platformsGlsl('RIPPLE_PLATFORMS', stage));
+      expect(hallFloorMaterial('stage', [1, 1, 1], null, stage).fragHead).toContain(platformsGlsl('FLOOR_PLATFORMS', stage));
+      // (a court's stage is the floor's)
+      expect(hallFloorMaterial('tiles', [1, 1, 1], { stage, color: [1, 0, 0] }).fragHead).toContain(platformsGlsl('FLOOR_PLATFORMS', stage));
+    }
+    expect(rippleMaterial(moved).fragHead).not.toBe(rippleMaterial(STAGE).fragHead);
+    expect(rippleMaterial().fragHead).toBe(rippleMaterial(STAGE).fragHead);
+    expect(rippleMaterial().fragColor).toContain(`float e = ${nearerPlatformGlsl('RIPPLE_PLATFORMS', 'rp')};`);
+    expect(arenaGroundMaterial(new THREE.Texture(), new THREE.Vector2(), new THREE.Vector2(1, 1), 1, 0).fragColor)
+      .toContain(`float re = ${nearerPlatformGlsl('ARENA_PLATFORMS', 'rp')};`);
+  });
+
+  it("builds them on the build's stage (ArenaContext.stage): the ripples round its platforms, a hall's floor and stage tops", () => {
+    const build = (kind: ArenaKind, part: typeof GROUND_PART) => {
+      const palette = arenaPalette(kind, defaultArenaColors(kind)), cells = groundCells(kind, palette, moved);
+      const tex = new THREE.DataTexture(cells.data, cells.w, cells.h);
+      const ctx: ArenaContext = { uniforms: createKitUniforms(), quality: 'medium', disposables: [tex], kind, colors: defaultArenaColors(kind),
+        stage: moved, palette, ground: { tex, min: new THREE.Vector2(cells.min[0], cells.min[1]), size: new THREE.Vector2(cells.w, cells.h) },
+        look: arenaLook(kind, palette, 12) };
+      return part.build(ctx)!;
+    };
+    const ripples = build('water', PLATFORM_PART).getObjectByName('platformRipples') as THREE.Mesh;
+    expect(frag(ripples.material as THREE.Material)).toContain(platformsGlsl('RIPPLE_PLATFORMS', moved));
+    const tops = build('gym', PLATFORM_PART).getObjectByName('platformTops') as THREE.Mesh;
+    expect(frag(tops.material as THREE.Material)).toContain(platformsGlsl('FLOOR_PLATFORMS', moved));
+    const floor = build('gym', GROUND_PART) as THREE.Mesh;
+    expect(frag(floor.material as THREE.Material)).toContain(platformsGlsl('FLOOR_PLATFORMS', moved));
+    const field = build('grass', GROUND_PART) as THREE.Mesh;
+    expect(frag(field.material as THREE.Material)).toContain(platformsGlsl('ARENA_PLATFORMS', moved));
   });
 });

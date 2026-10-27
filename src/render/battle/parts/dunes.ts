@@ -12,6 +12,7 @@ import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import type { Stage } from '../stage';
 import { groundHeight, moonlitAsGround } from './ground';
 import { SCENERY_SEED, stageKeepOut } from './scatter';
+import { polarIndex } from './mesh';
 
 /** A mound: centre, half-extents along its own axes (turned by `yaw`), crest height. */
 export interface DuneMound { x: number; z: number; rx: number; rz: number; h: number; yaw: number; seed: number }
@@ -114,12 +115,8 @@ export function duneGeometry(seed: number, stage: Stage, color: RGB): THREE.Buff
       const e = Math.sqrt(k / RINGS);
       for (let j = 0; j < SEGMENTS; j++) put(o + 1 + (k - 1) * SEGMENTS + j, e, (j / SEGMENTS) * Math.PI * 2);
     }
-    const vi = (k: number, j: number) => o + 1 + (k - 1) * SEGMENTS + (j % SEGMENTS);
-    // (wound as the platforms' polar tops: facing up)
-    for (let j = 0; j < SEGMENTS; j++) idx.push(o, vi(1, j + 1), vi(1, j));
-    for (let k = 1; k < RINGS; k++) {
-      for (let j = 0; j < SEGMENTS; j++) idx.push(vi(k, j), vi(k, j + 1), vi(k + 1, j + 1), vi(k, j), vi(k + 1, j + 1), vi(k + 1, j));
-    }
+    // (facing up)
+    polarIndex(RINGS, SEGMENTS, { base: o, out: idx });
   });
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));

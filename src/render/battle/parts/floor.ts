@@ -12,7 +12,8 @@ import type { KitMaterialOptions } from '../../kit/materials';
 import { mix, toLinear, type RGB } from '../../kit/palette';
 import type { ArenaKind } from '../arenaKind';
 import type { ArenaPalette } from '../palette';
-import { PLATFORM_FOOTPRINT, STAGE, type Stage } from '../stage';
+import { STAGE, type Stage } from '../stage';
+import { platformsGlsl } from './ground';
 
 /** A floor's pattern: wooden boards along z, square tiles, or a platform's top. */
 export type FloorStyle = 'boards' | 'tiles' | 'stage';
@@ -46,19 +47,13 @@ export const FLOOR_COURT: Readonly<Partial<Record<ArenaKind, number>>> = { gym: 
 /** A court's colour (sRGB): the floor turned 0.55 towards the arena's accent, × `shade` (the GBA's tan band). */
 export const courtColor = (p: ArenaPalette, shade: number): RGB => mix(p.ground, p.accent, 0.55).map((v) => v * shade) as RGB;
 
-// The battle's two platforms (world x, z, footprint rx, rz): the 'stage' tops' rings. Baked from STAGE into the program
-// (as ground.ts's and platforms.ts's ripple constants), while the court's rectangle comes from the build's stage
-// (hallFloorMaterial's `court.stage`): the two agree because every arena builds on STAGE (ModernArena's ctx.stage) — a
-// build on another stage would need these constants from it.
-const FLOOR_HEAD = /* glsl */ `
+const FLOOR_UNIFORMS = /* glsl */ `
 uniform vec4 uFloor;      // style (0 boards, 1 tiles, 2 stage), size, seam darkness, tone spread
 uniform vec3 uFloorAlt;   // tiles: the alternate tiles' factor; stage: the rim inlay's
 uniform vec4 uFloorCourt; // a court's rectangle (x0, z0, x1, z1; empty: none) ...
 uniform vec3 uFloorCourtColor; // ... and its colour (linear), in place of the floor's
-const vec4 FLOOR_PLATFORMS[2] = vec4[2](
-  vec4(${STAGE.player.x.toFixed(4)}, ${STAGE.player.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.player.rz.toFixed(4)}),
-  vec4(${STAGE.enemy.x.toFixed(4)}, ${STAGE.enemy.z.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rx.toFixed(4)}, ${PLATFORM_FOOTPRINT.enemy.rz.toFixed(4)}));
-// A seam's coverage at fract coordinate f (one period = 1), halfW its half width (periods), the pixel fw periods across:
+`;
+const FLOOR_SEAM = /* glsl */ `// A seam's coverage at fract coordinate f (one period = 1), halfW its half width (periods), the pixel fw periods across:
 // antialiased; where a pixel spans much of a period, the seams' share of it (no moire).
 float floorSeam(float f, float halfW, float fw) {
   float d = min(f, 1.0 - f);
@@ -66,6 +61,9 @@ float floorSeam(float f, float halfW, float fw) {
   return mix(line, 2.0 * halfW, smoothstep(0.12, 0.45, fw));
 }
 `;
+/** The floor's head: its uniforms, the build's stage's two platforms (platformsGlsl: the 'stage' tops' rings; the court's
+ *  rectangle comes from the same stage, hallFloorMaterial) and the seam function. */
+const floorHead = (stage: Stage) => FLOOR_UNIFORMS + platformsGlsl('FLOOR_PLATFORMS', stage) + FLOOR_SEAM;
 
 const FLOOR_COLOR = /* glsl */ `
 {
@@ -125,9 +123,11 @@ const FLOOR_COLOR = /* glsl */ `
 `;
 
 /** The hall floor's material for `style` in sRGB `tint`: the floor's colour, its pattern (FLOOR_PATTERN) in the uniforms;
- *  `court`: a court (COURT_BOUNDS round the stage's centre) in its sRGB colour. hookKey 'hallFloor' — one program for
- *  every style. */
-export function hallFloorMaterial(style: FloorStyle, tint: RGB, court: { stage: Stage; color: RGB } | null = null): KitMaterialOptions {
+ *  `court`: a court (COURT_BOUNDS round its stage's centre) in its sRGB colour; `stage`: the stage whose platforms the
+ *  'stage' tops ring (the court's, else STAGE: every arena builds on it, ModernArena's ctx.stage). hookKey 'hallFloor' —
+ *  one program for every style (on one stage). */
+export function hallFloorMaterial(style: FloorStyle, tint: RGB, court: { stage: Stage; color: RGB } | null = null,
+  stage: Stage = court?.stage ?? STAGE): KitMaterialOptions {
   const f = FLOOR_PATTERN[style];
   const c = court ? court.stage.centre : null;
   const rect = c ? new THREE.Vector4(c.x - COURT_BOUNDS.x, c.z + COURT_BOUNDS.z[0], c.x + COURT_BOUNDS.x, c.z + COURT_BOUNDS.z[1])
@@ -137,7 +137,7 @@ export function hallFloorMaterial(style: FloorStyle, tint: RGB, court: { stage: 
     roughness: f.roughness,
     uniforms: { uFloor: { value: new THREE.Vector4(STYLE_ID[style], f.size, f.seam, f.tone) }, uFloorAlt: { value: new THREE.Vector3(...f.alt) },
       uFloorCourt: { value: rect }, uFloorCourtColor: { value: new THREE.Color(...toLinear(court ? court.color : tint)) } },
-    fragHead: FLOOR_HEAD,
+    fragHead: floorHead(stage),
     fragColor: FLOOR_COLOR,
     hookKey: 'hallFloor',
   };

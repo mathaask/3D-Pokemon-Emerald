@@ -26,7 +26,8 @@ import { CAVE_POND, POND, POND_BANK, groundHeight, moonlitAsGround, pondShore } 
 import { addPad } from './platforms';
 import { boulderGeometry, rockCluster } from './rocks';
 import { arenaClear, arenaTreeMaterial, PALM } from './flora';
-import { SCENERY_SEED, frameTop, scatter, stageKeepOut, type Ellipse } from './scatter';
+import { SCENERY_SEED, behindBattler, frameTop, scatter, stageKeepOut, type Ellipse } from './scatter';
+import { polarIndex, ringBands } from './mesh';
 
 export interface WaterField { data: Uint8Array; w: number; h: number; min: [number, number] }
 
@@ -238,7 +239,7 @@ const POND_SHEET = { out: 1, core: 3.5, coreRings: 16, rimRings: 4, segments: 96
 /** An indexed sheet at WATER_Y facing up: the rings `ring(k)` (k = 0..rings: radii (rx, rz) around (cx, cz)) of
  *  `segments` vertices, closed with a centre vertex when ring 0 is a point (rx = rz = 0). position + normal. */
 function sheet(cx: number, cz: number, rings: number, segments: number, ring: (k: number) => [number, number]): THREE.BufferGeometry {
-  const pos: number[] = [], idx: number[] = [];
+  const pos: number[] = [];
   const [rx0, rz0] = ring(0);
   const fan = rx0 === 0 && rz0 === 0;
   if (fan) pos.push(cx, WATER_Y, cz);
@@ -250,12 +251,8 @@ function sheet(cx: number, cz: number, rings: number, segments: number, ring: (k
       pos.push(cx + Math.cos(a) * rx, WATER_Y, cz + Math.sin(a) * rz);
     }
   }
-  const vi = (k: number, s: number) => (fan ? 1 + (k - 1) * segments : k * segments) + (s % segments);
-  // (counter-clockwise seen from above, as the ground's disc: +y faces up)
-  if (fan) for (let s = 0; s < segments; s++) idx.push(0, vi(1, s + 1), vi(1, s));
-  for (let k = first; k < rings; k++) {
-    for (let s = 0; s < segments; s++) idx.push(vi(k, s), vi(k, s + 1), vi(k + 1, s + 1), vi(k, s), vi(k + 1, s + 1), vi(k + 1, s));
-  }
+  // (facing up, as the ground's disc: its centre and rings 1..rings, or rings 0..rings)
+  const idx = fan ? polarIndex(rings, segments) : ringBands(rings + 1, segments);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(pos.map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
@@ -364,8 +361,6 @@ const WATER_ROCKS: Partial<Record<ArenaKind, { count: [number, number]; r: [numb
 /** A cave pond's rocks stand inside this elliptical radius of its CAVE_POND ellipse (in its water, off its shore). */
 const POND_ROCK_E = 0.9;
 const SMALL_ROCK = 1.2;
-/** Rocks and islets keep out of the ground behind each battler (its silhouette's background), this far to its side. */
-const BEHIND_HALF = 3.5;
 /** A rock sinks this share of its width under the water (its widest part at the waterline). */
 const ROCK_SINK = 0.25;
 
@@ -378,17 +373,11 @@ function cornersWithin(x: number, z: number, r: number): { x: number; z: number 
   return out.length ? out : [{ x: Math.round(x), z: Math.round(z) }];
 }
 
-/** Whether (x, z) lies on the ground behind a battler (its silhouette's background), up to `reach` behind it. */
-function behindBattler(stage: Stage, x: number, z: number, reach = Infinity): boolean {
-  return [stage.player, stage.enemy].some((p) => z < p.z && z > p.z - reach && Math.abs(x - p.x) < BEHIND_HALF);
-}
-/** Far enough behind a battler, a rock shows over its head (the frame's top band), not behind its silhouette. */
-const BEHIND_REACH = 12;
 /** Rocks in the water stand within this angle of straight behind the stage (the camera's view at any yaw). */
 const BACK_ARC = 1.3;
 
 /** water 6–9 rocks (r 9–30), kyogre 3–5 (r 9–26), cavePond 3–4 (r 9–16) inside POND_ROCK_E of its pond: within BACK_ARC of straight behind, on the tall
- *  rule, out from behind the battlers (BEHIND_REACH); each centred on a field corner (narrow) or a cell's middle (wide). */
+ *  rule, out from behind the battlers (scatter.ts BEHIND); each centred on a field corner (narrow) or a cell's middle (wide). */
 export function waterRocks(kind: ArenaKind, stage: Stage, seed: number): WaterRock[] {
   const rule = WATER_ROCKS[kind];
   if (!rule) return [];
@@ -397,7 +386,7 @@ export function waterRocks(kind: ArenaKind, stage: Stage, seed: number): WaterRo
   const ko = stageKeepOut(stage), pond = pondOf(kind);
   const inPond = (x: number, z: number) => !pond || Math.hypot((x - stage.centre.x) / pond.rx, (z - stage.centre.z - pond.dz) / pond.rz) < POND_ROCK_E;
   const pts = scatter(seed * 6007 + 0x5ea, { centre: stage.centre, r0: rule.r[0], r1: rule.r[1], count: n, minGap: 3.5,
-    accept: (x, z) => ko.tallOk(x, z) && !behindBattler(stage, x, z, BEHIND_REACH) && inPond(x, z)
+    accept: (x, z) => ko.tallOk(x, z) && !behindBattler(stage, x, z) && inPond(x, z)
       && Math.abs(Math.atan2(x - stage.centre.x, stage.centre.z - z)) <= BACK_ARC });
   return pts.map((p) => {
     const size = rule.size[0] + (rule.size[1] - rule.size[0]) * r(), rs = Math.floor(r() * 1e6);
@@ -435,7 +424,7 @@ const PALM_E = [0.2, 0.5] as const;
 const isletProfile = (height: number, e: number) => height * Math.pow(Math.max(0, 1 - e * e), 1.3) - 0.12 * Math.max(0, e - 0.9) * 10;
 
 /** The sea's islets: one each side of straight behind the stage (r 15–20, 0.35–0.8 rad off), on the tall rule, out from
- *  behind the battlers (BEHIND_REACH); 2–3 palms on each, on its near half (PALM_E), sunk until their fronds' tips stand
+ *  behind the battlers (scatter.ts BEHIND); 2–3 palms on each, on its near half (PALM_E), sunk until their fronds' tips stand
  *  CROWN_CLEAR under the frame's top at every settled yaw (a palm that would have to sink its whole trunk is left out). */
 export function isletPlacements(stage: Stage, seed: number): Islet[] {
   const r = rng(seed * 4513 + 0x15e7);
@@ -447,7 +436,7 @@ export function isletPlacements(stage: Stage, seed: number): Islet[] {
     for (let t = 0; t < 40 && !at; t++) {
       const rad = ISLET.r[0] + (ISLET.r[1] - ISLET.r[0]) * r(), ang = side * (ISLET.angle[0] + (ISLET.angle[1] - ISLET.angle[0]) * r());
       const x = stage.centre.x + Math.sin(ang) * rad, z = stage.centre.z - Math.cos(ang) * rad;
-      if (ko.tallOk(x, z) && !behindBattler(stage, x, z, BEHIND_REACH)) at = { x, z };
+      if (ko.tallOk(x, z) && !behindBattler(stage, x, z)) at = { x, z };
     }
     if (!at) continue;
     const cx = Math.floor(at.x) + 0.5, cz = Math.floor(at.z - WATER_Y - 0.15) + 0.5;
@@ -474,7 +463,7 @@ export function isletPlacements(stage: Stage, seed: number): Islet[] {
 /** An islet's dome (`size` wide, ISLET_DEPTH as deep, `height` over the water at y = 0; its rim a little under it): a
  *  smooth, gently lumpy mound, wet sand at the waterline, dry sand, a grassy crown (`sand`, `grass` sRGB). position,
  *  normal (smooth), color(3) (linear). */
-export function isletGeometry(seed: number, size: number, height: number, sand: RGB, grass: RGB): THREE.BufferGeometry {
+function isletGeometry(seed: number, size: number, height: number, sand: RGB, grass: RGB): THREE.BufferGeometry {
   const RINGS = 8, SEG = 48;
   const pos: number[] = [], col: number[] = [];
   const s = toLinear(sand), g = toLinear(grass), o = (seed % 997) * 0.37;
@@ -495,17 +484,11 @@ export function isletGeometry(seed: number, size: number, height: number, sand: 
     const e = k <= RINGS ? k / RINGS : 1.15;
     for (let q = 0; q < SEG; q++) put(e, (q / SEG) * Math.PI * 2);
   }
-  const idx: number[] = [];
-  const vi = (k: number, q: number) => 1 + (k - 1) * SEG + (q % SEG);
-  // (counter-clockwise from above: +y faces up)
-  for (let q = 0; q < SEG; q++) idx.push(0, vi(1, q + 1), vi(1, q));
-  for (let k = 1; k <= RINGS; k++) {
-    for (let q = 0; q < SEG; q++) idx.push(vi(k, q), vi(k, q + 1), vi(k + 1, q + 1), vi(k, q), vi(k + 1, q + 1), vi(k + 1, q));
-  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geo.setIndex(idx);
+  // (its centre and RINGS + 1 rings, the last under the water: facing up)
+  geo.setIndex(polarIndex(RINGS + 1, SEG));
   geo.computeVertexNormals();
   return geo;
 }
@@ -540,15 +523,17 @@ function fanned(stage: Stage, r: () => number, angles: readonly number[], r0: nu
   return out;
 }
 
+/** The kelp keeps out of the ground behind a battler this far back (behindBattler; further back, it rises over a battler's
+ *  head). */
+export const KELP_BEHIND = 9;
 /** The sea floor's kelp forests: two in the frame's back band (0.15–0.5 rad off straight behind, r 15–21) and one each
  *  side (0.8–1.2 rad off, r 11–16: in view as the camera swings), on the tall rule and out from behind the battlers (9
  *  units: beyond, they rise over a battler's head); 30–50 kelp round them (within 3 units of one, r 6–24, each on the
  *  tall rule — the camera's sight lines and the stage stay clear — and out from behind the battlers), scale 0.75–1.15. */
-const KELP_BEHIND = 9;
 export function kelpPlacements(stage: Stage, seed: number): { x: number; z: number; scale: number; yaw: number; shade: number; variant: number }[] {
   const r = rng(seed * 811 + 0x6e1b);
   const ko = stageKeepOut(stage);
-  const ok = (x: number, z: number) => ko.tallOk(x, z) && !behindBattler(stage, x, z, KELP_BEHIND);
+  const ok = (x: number, z: number) => ko.tallOk(x, z) && !behindBattler(stage, x, z, { reach: KELP_BEHIND });
   const back = (u: number) => 0.15 + 0.35 * u, side = (u: number) => 0.8 + 0.4 * u;
   const forests = [...fanned(stage, r, [-back(r()), back(r())], 15, 21, ok), ...fanned(stage, r, [-side(r()), side(r())], 11, 16, ok)];
   const n = 30 + Math.floor(r() * 21);
@@ -574,13 +559,13 @@ const KELP_SWAY = { wind: 0.3, windHeight: 3.5 };
 
 /** The sea floor's 8 boulders (r 7–24): wide ones (≥ 1.1) on the tall rule, small ones off the platforms and the strip in
  *  front of the player's; out from behind the battlers. */
-export function seaFloorRocks(stage: Stage, seed: number): { x: number; z: number; size: number; seeds: number[] }[] {
+function seaFloorRocks(stage: Stage, seed: number): { x: number; z: number; size: number; seeds: number[] }[] {
   const r = rng(seed * 4099 + 0x5eaf);
   const sizes = Array.from({ length: 8 }, () => 0.8 + 1.3 * r());
   const ko = stageKeepOut(stage), clear = arenaClear(stage);
   const big = sizes.filter((s) => s >= 1.1), small = sizes.filter((s) => s < 1.1);
   const at = (count: number, salt: number, accept: (x: number, z: number) => boolean) =>
-    scatter(seed * 4099 + salt, { centre: stage.centre, r0: 7, r1: 24, count, minGap: 3, accept: (x, z) => accept(x, z) && !behindBattler(stage, x, z) });
+    scatter(seed * 4099 + salt, { centre: stage.centre, r0: 7, r1: 24, count, minGap: 3, accept: (x, z) => accept(x, z) && !behindBattler(stage, x, z, { reach: Infinity }) });
   const pts = [...at(big.length, 0xb16, ko.tallOk).map((p, i) => ({ ...p, size: big[i] })),
     ...at(small.length, 0x5a1, clear).map((p, i) => ({ ...p, size: small[i] }))];
   return pts.map((p) => ({ ...p, seeds: Array.from({ length: 1 + Math.floor(r() * 3) }, () => Math.floor(r() * 1e6)) }));
@@ -608,7 +593,7 @@ const SHAFT_EMISSIVE = /* glsl */ `
 totalEmissiveRadiance += uShaft;
 `;
 /** The shafts' material (`light` linear, `alpha` their strength). */
-export function shaftMaterial(light: THREE.Color, alpha: number): KitMaterialOptions {
+function shaftMaterial(light: THREE.Color, alpha: number): KitMaterialOptions {
   return { vertexColors: true, transparent: true, depthWrite: false, color: 0x000000, roughness: 1,
     uniforms: { uShaft: { value: light }, uShaftAlpha: { value: alpha } },
     fragHead: SHAFT_HEAD, fragColor: SHAFT_COLOR, fragEmissive: SHAFT_EMISSIVE, hookKey: 'arenaShaft' };
