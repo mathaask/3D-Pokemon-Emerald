@@ -362,14 +362,16 @@ interface HallLayout {
  *  the gyms: four pillars on the back wall (the inner pair at the frame's edges) and one on each side wall, a banner in
  *  the middle bay and one in each bay beyond the inner pillars — the Leader's two more on its side walls; the
  *  Frontier: three pillars along each side wall and one in each back corner, its six light panels along the barrier,
- *  four left of the enemy's stretch (the outer one clear of the player's) and two right of it. Counts as HALLS gives them. */
+ *  four left of the enemy's stretch (the outer one clear of the player's) and two right of it. All of them clear of both
+ *  battlers' boxes through the idle sway (± 0.04 yaw: the building's middle window was at s −0.3 and the Frontier's
+ *  second panel at −0.72 rad, each touching a box at +0.04). Counts as HALLS gives them. */
 export function hallLayout(kind: HallKind): HallLayout {
   const h = HALLS[kind], hw = h.halfWidth;
   const sym = (xs: number[]) => xs.flatMap((x) => (x === 0 ? [0] : [-x, x])).sort((a, b) => a - b);
   const on = (wall: Wall) => (s: number) => ({ wall, s });
   switch (kind) {
     case 'building':
-      return { pillars: [], banners: [], windows: [-16.5, -8.9, -0.3, 11.8].map(on('back')), shelves: [-12.7, -4.6, 7.6, 15.7].map(on('back')),
+      return { pillars: [], banners: [], windows: [-16.5, -8.9, -0.6, 11.8].map(on('back')), shelves: [-12.7, -4.6, 7.6, 15.7].map(on('back')),
         lights: [] };
     case 'gym': case 'leader': {
       const pillars = [...sym([7.5, 16]).map(on('back')), on('left')(8), on('right')(-8)];
@@ -379,7 +381,7 @@ export function hallLayout(kind: HallKind): HallLayout {
     }
     case 'frontier': {
       const side = [16, 9.5, 3].flatMap((z) => [on('left')(z), on('right')(-z)]);
-      return { pillars: [...side, ...sym([hw - 3.5]).map(on('back'))], banners: [], windows: [], shelves: [], lights: [-1.02, -0.72, -0.3, -0.06, 0.62, 0.95] };
+      return { pillars: [...side, ...sym([hw - 3.5]).map(on('back'))], banners: [], windows: [], shelves: [], lights: [-1.02, -0.74, -0.3, -0.06, 0.62, 0.95] };
     }
   }
 }

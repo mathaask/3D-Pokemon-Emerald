@@ -104,8 +104,10 @@ interface Stump { x: number; z: number; radius: number; height: number; seed: nu
 
 /** The stumps as (angle off straight behind the stage, radius from its centre, the break's height): placed against the
  *  idle frame (.scratch/t11/grid.ts: over the player's head, between the battlers, right of the enemy) and round the
- *  sides (seen as the camera swings), inside the edge. */
-const STUMPS: readonly [number, number, number][] = [[-0.06, 10.6, 1.05], [0.66, 10.1, 1.7], [-0.86, 11.2, 2.2], [-1.0, 10.4, 2.7],
+ *  sides (seen as the camera swings), inside the edge; clear of both battlers' boxes through the idle sway (± 0.04 yaw:
+ *  the first, between the battlers, stood at (−0.06, 10.6), over the player's box at −0.04) and its plinth of the drum
+ *  behind it. */
+const STUMPS: readonly [number, number, number][] = [[-0.01, 10.2, 1.05], [0.66, 10.1, 1.7], [-0.86, 11.2, 2.2], [-1.0, 10.4, 2.7],
   [1.12, 11.2, 1.35], [-1.55, 11.6, 1.9], [1.62, 11.4, 2.5]];
 const STUMP_R = 0.5;
 

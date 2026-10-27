@@ -222,15 +222,16 @@ const ITEM = {
  *  stands between the battlers, far back (r 16.25, before the rock band's alcove there): ≥ 24 px clear of both 64 × 64
  *  sprite boxes through the idle sway (± 0.04 yaw). Left of the player's sprite no place works: there the sway moves a
  *  pillar ≈ 115 px against the sprite, and one clear of the crest at +0.04 stands half out of the frame at −0.04 (at
- *  −0.42 rad its plinth stood on a back sprite's crest). */
+ *  −0.42 rad its plinth stood on a back sprite's crest). Every prop clear of both battlers' boxes through the idle sway
+ *  (Glacia's crystal between the battlers was at (−0.05, 11.6), its small one at −0.07: each over a box at −0.04). */
 const ITEMS: Readonly<Partial<Record<StadiumKind, readonly [StadiumItem['kind'], number, number, number?][]>>> = {
   aqua: [['fountain', -0.3, 13.6], ['fountain', 0.72, 10.6], ['fountain', -1.2, 11.6], ['fountain', 1.25, 11.6]],
   champion: [['fountain', -0.06, 12.9], ['fountain', 0.74, 10.6], ['fountain', -1.15, 11.4], ['fountain', 1.2, 11.4]],
   phoebe: [['candelabrum', -0.34, 13.2], ['candelabrum', -0.04, 11.8], ['candelabrum', 0.55, 10.7], ['candelabrum', -1.0, 11.2],
     ['candelabrum', 1.08, 11.2], ['candelabrum', -1.55, 12.2], ['candelabrum', 1.6, 12.2],
     ['candles', -0.06, 8.1], ['candles', 0.72, 8.2], ['candles', -0.95, 8.6], ['candles', 1.15, 8.6]],
-  glacia: [['crystal', -0.32, 13.4, 2.5], ['crystal', -0.05, 11.6, 1.9], ['crystal', 0.68, 10.4, 2.3], ['crystal', -1.1, 11.4, 2.8],
-    ['crystal', 1.15, 11.6, 2.6], ['crystal', 0.72, 8.1, 0.85], ['crystal', -0.07, 8.0, 0.7], ['crystal', -1.0, 8.6, 0.9],
+  glacia: [['crystal', -0.32, 13.4, 2.5], ['crystal', -0.03, 12.7, 1.9], ['crystal', 0.68, 10.4, 2.3], ['crystal', -1.1, 11.4, 2.8],
+    ['crystal', 1.15, 11.6, 2.6], ['crystal', 0.72, 8.1, 0.85], ['crystal', -0.04, 8.0, 0.7], ['crystal', -1.0, 8.6, 0.9],
     ['crystal', 1.2, 8.9, 0.8]],
   drake: [['pillar', -0.03, 16.25], ['pillar', 0.66, 12.6], ['pillar', -1.1, 13.0], ['pillar', 1.15, 13.0], ['pillar', -1.45, 14.2],
     ['pillar', 1.5, 14.2]],

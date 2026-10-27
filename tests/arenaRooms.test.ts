@@ -54,6 +54,8 @@ describe('indoor halls', () => {
 });
 
 const HALL_KINDS: HallKind[] = ['building', 'gym', 'leader', 'frontier'];
+/** The idle camera's yaws: its sway's ends (± BATTLE_CAMERA.sway) and the middle (index 1). */
+const SWAYS = [-BATTLE_CAMERA.sway, 0, BATTLE_CAMERA.sway] as const;
 
 /** A kit material's uniform as its build set it (the pooled material's slot: compile it on a stub to read them). */
 function kitUniformOf(mesh: THREE.Mesh, name: string): unknown {
@@ -179,33 +181,34 @@ describe('indoor halls: shells, furniture, floors, the part', () => {
     arena.dispose();
   });
 
-  it('keeps windows, bookcases, banners and light panels out from behind the battlers in the idle frame', () => {
+  it('keeps windows, bookcases, banners and light panels out from behind the battlers in the idle frame, through its sway', () => {
     // the battlers as the lava keeps off them (frame.ts battlerBoxes): a 2 × 2 box on each platform, projected by the idle
-    // camera
-    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0);
-    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
-    const overlaps = (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b));
-    let framed = 0;
-    for (const kind of HALL_KINDS) {
+    // camera at its sway's ends (± BATTLE_CAMERA.sway) and between them
+    const framed = new Set<string>();
+    for (const sway of SWAYS) for (const kind of HALL_KINDS) {
+      const cam = battleFrameCamera(STAGE, sway), boxes = battlerBoxes(STAGE, sway);
+      const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
+      const overlaps = (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b));
       const h = HALLS[kind], l = hallLayout(kind), F = wallFrame('back', h, STAGE);
       const items = [...l.windows.map((w) => ({ ...w, half: 1.35 })), ...l.shelves.map((s) => ({ ...s, half: 1.25 })),
         ...l.banners.map((b) => ({ ...b, half: 0.75 }))];
       for (const it of items.filter((i) => i.wall === 'back')) {
         const r = rect([F.at(it.s - it.half, 0.4, 0), F.at(it.s + it.half, 0.4, 0), F.at(it.s - it.half, 1.6, 0), F.at(it.s + it.half, 1.6, 0)]);
-        if (r[2] > -1 && r[0] < 1) framed++;
-        expect(overlaps(r), `${kind} back wall s ${it.s}`).toBe(false);
+        if (r[2] > -1 && r[0] < 1) framed.add(`${kind} s ${it.s}`);
+        expect(overlaps(r), `${kind} back wall s ${it.s}, sway ${sway}`).toBe(false);
       }
       for (const a of l.lights) {
         const rb = SEATS.r0 - SEATS.wall;
         const at = (b: number, y: number): [number, number, number] => [cx + Math.sin(b) * rb, GROUND_Y + y, cz - Math.cos(b) * rb];
         const half = PANEL.width / 2 / rb;
         const r = rect([at(a - half, PANEL.y0), at(a + half, PANEL.y0), at(a - half, PANEL.y1), at(a + half, PANEL.y1)]);
-        if (r[2] > -1 && r[0] < 1) framed++;
-        expect(overlaps(r), `${kind} light ${a}`).toBe(false);
+        if (r[2] > -1 && r[0] < 1) framed.add(`${kind} light ${a}`);
+        expect(overlaps(r), `${kind} light ${a}, sway ${sway}`).toBe(false);
       }
     }
-    // (and the idle frame shows some of them: windows and bookcases, the gyms' middle banners, light panels)
-    expect(framed).toBeGreaterThanOrEqual(10);
+    // (and the idle frame shows some of them through its sway: windows and bookcases, the gyms' middle banners, light
+    // panels — the Frontier's second at the frame's left edge, swayed in)
+    expect(framed.size).toBeGreaterThanOrEqual(10);
   });
 
   it('paints the court off the platforms: rings round each, the lines and the ball circle between them', () => {
@@ -455,11 +458,17 @@ describe('stadium rooms: the part, walls, props, colours', () => {
     }
   });
 
-  it('stands the props in the idle frame, never over a battler there, and the tall ones never before the stage in the intro', () => {
-    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0);
-    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
-    const overlaps = (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b));
+  it('stands the props in the idle frame, never over a battler there through its sway, and the tall ones never before the stage in the intro', () => {
     const framed = (r: FrameRect) => r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1;
+    // (the idle frame at its sway's ends and between them: a prop's part under the frame's top against the battlers' boxes)
+    const frames = SWAYS.map((sway) => {
+      const cam = battleFrameCamera(STAGE, sway), boxes = battlerBoxes(STAGE, sway), top = frameTop(STAGE, [sway]);
+      return { sway, top, rect: (pts: [number, number, number][]) => frameRect(cam, pts), overlaps: (r: FrameRect) => boxes.some((b) => rectsOverlap(r, b)) };
+    });
+    const at = (f: (typeof frames)[number], x: number, z: number, half: number, height: number) => {
+      const h = Math.min(height, f.top(x, z) - GROUND_Y);
+      return f.rect([[x - half, GROUND_Y, z], [x + half, GROUND_Y, z], [x - half, GROUND_Y + h, z], [x + half, GROUND_Y + h, z]]);
+    };
     for (const kind of KINDS) {
       const items = stadiumItems(kind, STAGE);
       const props = STADIUM_THEME[kind].props.filter((p) => ['pillars', 'fountains', 'candles', 'crystals'].includes(p));
@@ -468,10 +477,10 @@ describe('stadium rooms: the part, walls, props, colours', () => {
       if (!props.length) expect(items, kind).toEqual([]);
       let shown = 0;
       for (const it of items) {
-        const h = Math.min(it.height, top0(it.x, it.z) - GROUND_Y);
-        const r = rect([[it.x - it.half, GROUND_Y, it.z], [it.x + it.half, GROUND_Y, it.z], [it.x - it.half, GROUND_Y + h, it.z], [it.x + it.half, GROUND_Y + h, it.z]]);
-        expect(overlaps(r), `${kind} ${it.kind} at (${it.x.toFixed(2)}, ${it.z.toFixed(2)})`).toBe(false);
-        if (framed(r)) shown++;
+        for (const f of frames) {
+          expect(f.overlaps(at(f, it.x, it.z, it.half, it.height)), `${kind} ${it.kind} at (${it.x.toFixed(2)}, ${it.z.toFixed(2)}), sway ${f.sway}`).toBe(false);
+        }
+        if (framed(at(frames[1], it.x, it.z, it.half, it.height))) shown++;
         if (it.height > 1) expect(ko.tallOk(it.x, it.z), `${kind} ${it.kind} tall`).toBe(true);
         else expect(clear(it.x, it.z) && GROUND_Y + it.height <= cap(it.x, it.z) + 1e-9, `${kind} ${it.kind} small`).toBe(true);
         // (off the rim: they stand outside it)
@@ -699,8 +708,8 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
   });
 
   it('stands broken pillar stumps on the floor inside the edge, on the tall rule, off the battlers in the idle frame and the intro', () => {
-    const cam = battleFrameCamera(STAGE, 0), boxes = battlerBoxes(STAGE, 0), top0 = frameTop(STAGE, [0]);
-    const rect = (pts: [number, number, number][]) => frameRect(cam, pts);
+    // (the idle frame at its sway's ends and between them)
+    const frames = SWAYS.map((sway) => ({ sway, cam: battleFrameCamera(STAGE, sway), boxes: battlerBoxes(STAGE, sway), top: frameTop(STAGE, [sway]) }));
     const stumps = stumpPlacements(STAGE);
     expect(stumps.length).toBeGreaterThanOrEqual(5);
     let shown = 0;
@@ -709,10 +718,12 @@ describe('the Sky Pillar: its broken edge, the cloud sea, the stumps', () => {
       expect(Math.hypot(s.x - cx, s.z - cz) + half, 'on the floor').toBeLessThanOrEqual(EDGE.inner[0]);
       if (s.height > 1) expect(ko.tallOk(s.x, s.z), 'tall').toBe(true);
       expect(inFrontOfIntro(s.x, s.z, half, s.height), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}): intro`).toBe(false);
-      const h = Math.min(s.height, top0(s.x, s.z) - GROUND_Y);
-      const r = rect([[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
-      expect(boxes.some((b) => rectsOverlap(r, b)), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`).toBe(false);
-      if (r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1) shown++;
+      for (const f of frames) {
+        const h = Math.min(s.height, f.top(s.x, s.z) - GROUND_Y);
+        const r = frameRect(f.cam, [[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
+        expect(f.boxes.some((b) => rectsOverlap(r, b)), `stump at (${s.x.toFixed(1)}, ${s.z.toFixed(1)}), sway ${f.sway}`).toBe(false);
+        if (f.sway === 0 && r[2] > -1 && r[0] < 1 && r[3] > -1 && r[1] < 1) shown++;
+      }
     }
     expect(shown).toBeGreaterThanOrEqual(2);
   });
