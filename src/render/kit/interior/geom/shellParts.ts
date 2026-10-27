@@ -26,6 +26,7 @@ import { bgr555ToSrgb, scale, soften, type RGB } from '../../palette';
 import { lathe, lin, Soup } from '../../soup';
 import type { V3 } from '../../geom';
 import { scale4x } from '../../upscale';
+import { INNER_NORMAL } from '../cutaway';
 import { RECESS, WALL_H, WALL_T, windowRect, type DoorGap, type RoomLayout, type WallDir, type WallFeature, type WallRun } from '../room';
 import {
   SHELL, WINDOW, addWindow, maxProfileDepth, shellPalette, shellProfile, wallFrameAt, wallPath,
@@ -54,8 +55,8 @@ export const DOOR = { casing: 0.1, depth: 0.09, lining: 0.03, slab: 0.05, knob: 
 /** A wall clock's radius: at most this, else 0.45 of its feature's smaller side. */
 export const CLOCK_R = 0.32;
 
-/** Each wall direction's inner normal (into the room; world x, z) — the cutaway's INNER_NORMAL (Task 6). */
-export const RUN_NORMAL: Readonly<Record<WallDir, V2>> = { N: [0, 1], S: [0, -1], W: [1, 0], E: [-1, 0] };
+/** Each wall direction's inner normal (into the room; world x, z): the cutaway's INNER_NORMAL. */
+export const RUN_NORMAL: Readonly<Record<WallDir, V2>> = INNER_NORMAL;
 const DIRS: readonly WallDir[] = ['N', 'E', 'S', 'W'];
 const isNS = (d: WallDir) => d === 'N' || d === 'S';
 
@@ -496,6 +497,24 @@ function addPartition(s: Soup, loop: PartitionLoop, C: ShellPalette): void {
 
 // ------------------------------------------------------------------------------------------------- the build
 
+/** What a feature becomes: a clock is modelled; a window on a back wall's N run (spanning it) is glazed; the rest — decor,
+ *  unknown band cells, a window on a partition or on no run — is a decal. */
+export function featureRole(L: RoomLayout, runs: readonly ShellRun[], f: WallFeature): 'window' | 'clock' | 'decal' {
+  if (f.kind === 'clock') return 'clock';
+  if (f.kind === 'window' && !onPartition(L, f)) {
+    const z = windowRect(L, f).z;
+    if (runs.some((q) => q.dir === 'N' && q.line === z && q.from <= f.x0 && f.x1 <= q.to)) return 'window';
+  }
+  return 'decal';
+}
+
+/** The features the shell draws as decals (featureRole; a window whose opening would overlap another one also becomes
+ *  one at build, never seen on the 138 maps). */
+export function shellDecals(a: MapAnalysis, L: RoomLayout): WallFeature[] {
+  const runs = shellRuns(a, L);
+  return L.features.filter((f) => featureRole(L, runs, f) === 'decal');
+}
+
 export interface ShellInput {
   a: MapAnalysis;
   L: RoomLayout;
@@ -550,17 +569,18 @@ export function buildShellSoups(inp: ShellInput): ShellSoups {
   // wall art: windows on a back wall's run, clocks, the rest (and anything on a partition but clocks) decals
   const decals: WallFeature[] = [], decalRects: Omit<DecalQuad, 'uv'>[] = [];
   for (const f of L.features) {
-    const part = onPartition(L, f);
+    const part = onPartition(L, f), role = featureRole(L, runs, f);
     const z = windowRect(L, f).z;
-    const r = part ? undefined : runAt('N', z, f.x0, f.x1) ?? runs.find((q) => q.dir === 'N' && q.line === z && q.from < f.x1 && f.x0 < q.to);
+    const r = part ? undefined : runs.find((q) => q.dir === 'N' && q.line === z && q.from < f.x1 && f.x0 < q.to);
     const fy = r ? r.floorY : (L.runs.find((q) => q.partition) ?? L.runs[0])?.floorY ?? 0;
-    if (f.kind === 'window' && r && r.from <= f.x0 && f.x1 <= r.to) {
+    if (role === 'window' && r) {
       const w = windowRect(L, f);
       if (open(r, { from: w.x0, to: w.x1, h0: w.y0, h1: w.y1, door: false })) {
         const size: WindowSize = { ...WINDOW, width: w.x1 - w.x0, height: w.y1 - w.y0, sill: w.y0 };
         addWindow(fixtures.N, glass, wallFrameAt([0, fy, z + fy], [1, 0, 0], [0, 0, 1], [r.from, r.to]), (w.x0 + w.x1) / 2, colors.trim, size);
         continue;
       }
+      skipped.push(`window ${f.x0}…${f.x1} overlaps another opening: a decal`);
     }
     if (f.kind === 'clock') {
       const [s0, s1] = part ? PARTITION_SPAN : WALL_SPAN;
@@ -575,7 +595,6 @@ export function buildShellSoups(inp: ShellInput): ShellSoups {
       addClock(fixtures.N, [(f.x0 + f.x1) / 2, fy + cy, z + fy + d], radius, cc.face, cc.rim);
       continue;
     }
-    if (f.kind === 'window' && !part) skipped.push(`window ${f.x0}…${f.x1} on no N run: a decal`);
     decals.push(f);
     decalRects.push(decalRect(L, f, fy));
   }
