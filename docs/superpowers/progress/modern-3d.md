@@ -14,6 +14,9 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - 2026-10-20 → 2026-10-22: Phase 2 plan `docs/superpowers/plans/2026-10-20-phase2-characters.md` (12 tasks), executed
   subagent-driven on branch `phase2-characters`. **Phase 2 is complete** (see "Phase 2 result"); its ledger is in
   `docs/superpowers/progress/phase2-sdd-ledger.md`.
+- 2026-10-23 → 2026-10-27: Phase 3 plan `docs/superpowers/plans/2026-10-23-phase3-battles.md` (12 tasks + inserted 7b,
+  12a), executed subagent-driven on branch `phase3-battles`. **Phase 3 is complete** (see "Phase 3 result"); ledger
+  `docs/superpowers/progress/phase3-sdd-ledger.md`, final review `phase3-final-review.md`.
 - Regression baseline (`npx tsx tools/regress.ts --label before`, 16 maps × h11/h21, `out/regress/before/stats.json`):
   max calls 27, max triangles 111213 (route119), max buildMs 162 (route119 h21; build time is noisy, 108 at h11).
   NOTE: route119's legacy build already exceeds the 150 ms budget before Phase 1 (see ledger ruling).
@@ -326,12 +329,58 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
   - Model luminance above 1.15× Retro on rocks / Cut tree (accepted: the Retro cards average in black outlines).
   - The flat-card path (Retro, battles) still re-uploads instance buffers every walking frame (~0.1 ms); the atlas
     and the 4 field passes run on every synced frame even when no sprite changed (0.13–0.18 ms).
-  - GTAO's prepass ignores the kit's vertex hooks (Phase 1) and skips actors (no actor AO).
+  - GTAO's prepass ignores the kit's vertex hooks (Phase 1) and skips flat cards (no card AO). ~~skips actors~~ —
+    **fixed in Phase 3**: inflated actors write their own depth + normal into the prepass (both views).
   - First visits still compile Phase 1 world programs (Littleroot flowers 90–150 ms, Oldale water 558 ms) and a map
     crossing rebuilds the world (≈ 52–72 ms) — Phase 1 follow-up.
   - No live save state covers night, surfing or battles-with-actors; night/dusk are verified on static previews only.
 
+## Phase 3 result (2026-10-27)
+Modern style rebuilds every battle as a **3D arena per GBA battle background** (24 kinds): outdoor grass / long grass /
+plain / sand (trees, grass clumps, flowers, dunes, palms), water (sea with islets, pond with lily pads and a sandy shore,
+underwater with caustics, kelp, light shafts), rock (mountain, cave, cave pond, Groudon's lava, Kyogre's sea cave),
+indoor halls (building, gym, Leader, Frontier stadium), stadium rooms (Magma/Aqua hideouts, Sidney, Phoebe, Glacia,
+Drake, Champion) and the Sky Pillar over a sea of clouds. Colours are sampled from the battle background the game loads
+(BG3); outdoor arenas share the overworld's time of day; platforms are modelled per terrain (7 styles). Battlers and
+trainer intro pictures are Phase 2 **inflated sprites** (`BATTLE_INFLATE`, baked xBR); move effects, HUD, text and
+full-screen BG effects stay 2D. Every battle program is precompiled at boot (own catalogue + drift guard). Retro 3D is
+unchanged. Executed subagent-driven: 12 tasks + inserted 7b (draw order) and 12a (review backlog, two parallel agents);
+final review as three parallel area reviews (0 critical) + one fix wave in four parallel fixers, each re-reviewed.
+- **Numbers (final gate `p3final` @ f50992b, Medium, 1280×800):** Modern battle entries ≤ 56 draw calls, ≤ 268 K
+  triangles (b_longgrass) (budgets 150 / 1.5 M); warm arena builds ≤ 26.2 ms (budget 60); battle_enter's first battle
+  frame 60–123 ms (cold build of the kind; gate 150); battler luminance 0.966–1.136× Retro, median 1.006. Same-session
+  interleaved A/B (Task 12, quiet machine): arena Δgpu +0.61 … +2.77 ms (worst b_rayquaza; budget +3.0), Δcpu
+  −0.21 … +0.14; battlers +0.17 … +0.61 ms (budget +1.0). High: actor AO prepass +0.13 … +0.28 ms.
+- **Gates:** Retro 0.00 % vs `out/regress-live/p3-base` on every entry (70 shots + 39 GBA/ref pictures); Modern
+  overworld, `transition`, `battle_exit` 0.00 %; battle walks compile 0 programs at Medium and High (battle_enter gated
+  from right after the eval, so the transition is covered); High runs are deterministic (seeded GTAO noise: 36/36
+  byte-identical across runs). `npm test` 839 tests; smoke drift guards (battle + world catalogue) pass; `tsc` clean.
+- **Render orders (battle):** scenery and battlers ≤ 2, platform tops 2.5, ground 3, Sky Pillar clouds 3.5, deep
+  water −1, sky 10.
+- **Known gaps:**
+  - Both 3D styles: affine rotation and OBJ mosaic not reproduced; GBA blend registers (semi-transparent / brightened
+    effects) not emulated; full-screen BG move effects stay the 2D overlay; Dig/Memento/Mimic can show a flat battler
+    copy; BG-palette full fades dim the whole 3D frame, so battlers darken twice for a moment.
+  - Arena scope: the sky shows only in reflections and cloud shadows (the camera never frames the horizon); doubles
+    share the two platforms; all Frontier facilities share one hall; trainer intro pictures inflate like battlers.
+  - First battle of each kind per session pays one cold-build frame (≈ 60–120 ms) inside the battle intro.
+  - Look (night): setExposure follows only partly; moonlit field dim; slab tops/sides differ; islet and long-grass
+    saturation; rocks on grass moonlit. Look (day): long grass saturated, near blades flat; one palm height; kelp shape;
+    faint light shafts; heavy sea glint near the camera; pale mountain scree; Phoebe mid-purple rather than gloomy; the
+    Sky Pillar lip reads as a step; Groudon's pools sit behind battlers at yaw ±0.3–0.45 and Magma/Groudon show
+    ~65 % of their earlier lava after the sway-safe placement; Groudon's lava blooms (≈ 1–1.2 ms on the dev iGPU;
+    Magma's lava and Phoebe's candles stay under the bloom threshold).
+  - Camera edge cases: the intro sweep while zoomed to 0.6 can show bare trunks for ~0.5 s (zoom persists); islet
+    palms cut at zoom 0.6; no camera clamp beyond 21:9.
+  - High: flat cards (Retro, effects) still get no AO; the shadow map is re-rendered inside the AO prepass (unused).
+  - Code level: SortSprites ties break by oam.y not index; overworld flat decal footZ/height; no modelled-wall height
+    cap; a part that throws after taking a pooled kit material leaks it for the session (≤ 1 per failing key);
+    kit/palette `nightSoilScale` not folded onto the shared night helper; `Soup` repeats QuadWriter's winding rule;
+    monbg copy history treats a u32 frame-counter wrap like a rewind (one frame, every ~2.3 years of play).
+
 ## Next step
+- **Phase 3 is complete (2026-10-27)** and merged to `main`. Next candidates: terrain height solver v2 (mountain
+  ridges), Phase 4 (interiors, spec §8), or a battle look-polish pass (the Phase 3 known gaps above).
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
 - **2026-10-23: hitch fix done** (user chose "hitch fix, then Phase 3"; in-chat design approved; branch `hitch-fix`,
   reviewed + 1 fix round + re-review, merged):
@@ -351,20 +400,16 @@ deferred minors per task): `docs/superpowers/progress/phase2-sdd-ledger.md`.
     screen → 0.16–0.25 s. JIT warm-up build measured, no gain, not shipped.
   - Remaining: a crossing still costs one world build (≈ 30–75 ms; moving analysis off the main thread would fix it);
     detection relies on the BPEE rev 0 CameraMove address (unknown ROM → old behaviour, bounded by the cap).
-- **Phase 3 (battles) in progress (2026-10-23)** on branch `phase3-battles`: plan
-  `docs/superpowers/plans/2026-10-23-phase3-battles.md` (12 tasks) approved by the user as is ("Godkjenn og kjør"),
-  executed subagent-driven. SDD ledger `.superpowers/sdd/2026-10-23-phase3-battles/progress.md` (gitignored; read it
-  first after a reset; `Task N: complete` lines are done). Progress bar in every update. The terrain height solver v2
-  waits.
+- **Phase 3 (battles), 2026-10-23 → 2026-10-27:** plan `docs/superpowers/plans/2026-10-23-phase3-battles.md`
+  approved by the user as is ("Godkjenn og kjør"), executed subagent-driven (later with parallel agents at the user's
+  request) on branch `phase3-battles`, merged. Ledger: `docs/superpowers/progress/phase3-sdd-ledger.md`.
 
 ## Phase 3 status
 - [x] Plan (`docs/superpowers/plans/2026-10-23-phase3-battles.md`, 12 tasks)
 - [x] 1 battle harness entries + p3-base · [x] 2 arena kinds/ROM graphics/colours · [x] 3 static battle preview
 - [x] 4 BattleView split + battle precompile · [x] 5 inflated battlers · [x] 6 arena foundation · [x] 7 outdoor arenas · [x] 7b draw order (inserted; bake = per-kind contingency)
-- [x] 8 water arenas · [x] 9 rock arenas · [x] 10 indoor halls · [x] 11 hideouts/E4/Champion/Sky Pillar · [x] 12a backlog (inserted: robustness, frame defects, hygiene; two parallel agents) · [ ] 12 perf/docs (verify + docs in parallel)
-- Next: Task 12a (the review backlog that is robustness, frame defects or hygiene), Task 12 (verification + docs;
-  the rest of the backlog becomes documented known gaps), then the final whole-branch review, merge `phase3-battles` → `main` and push. Later: terrain height solver v2
-  (mountain ridges), Phase 4 (interiors). Subagents: `opus` only; progress bar in every update.
+- [x] 8 water arenas · [x] 9 rock arenas · [x] 10 indoor halls · [x] 11 hideouts/E4/Champion/Sky Pillar · [x] 12a backlog (inserted: robustness, frame defects, hygiene; two parallel agents) · [x] 12 perf/docs (verify + docs in parallel)
+- [x] Final review (3 parallel area reviews) · [x] fix wave (4 parallel fixers, re-reviewed) · [x] final gate `p3final` · [x] merged to `main`
 
 ## Phase 2 status
 - [x] Plan (`docs/superpowers/plans/2026-10-20-phase2-characters.md`, 12 tasks; preflight rulings applied @ 2546266)

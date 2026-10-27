@@ -5,16 +5,15 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 
 ## Active work (read this first after a context reset)
 - **Project:** Modern stylized 3D models (replace pixel-textured boxes/cards with real models).
-- **Phase 1 (outdoor environment) and Phase 2 (characters, Pokémon, field objects) are done** (merged to
+- **Phases 1 (outdoor environment), 2 (characters, Pokémon, field objects) and 3 (battles) are done** (merged to
   `main`; results, numbers and known gaps in the progress log; full rulings in `phase1-sdd-ledger.md` /
-  `phase2-sdd-ledger.md`).
+  `phase2-sdd-ledger.md` / `phase3-sdd-ledger.md`).
 - **Hitch fix done** (boot-time program catalogue, one build per map load).
-- **Phase 3 — battles — in progress** on branch `phase3-battles`, plan
-  `docs/superpowers/plans/2026-10-23-phase3-battles.md` (12 tasks, user-approved), executed subagent-driven.
-  Resume from the SDD ledger `.superpowers/sdd/2026-10-23-phase3-battles/progress.md` (gitignored; tasks with a
-  `Task N: complete` line are done) and the Phase 3 checklist in the progress log. The terrain height solver v2 waits. Write the plan first, then execute
-  subagent-driven (only `opus` subagents work here). Show the user a phase progress bar in every update
-  (they write Norwegian; reply in Norwegian). Merge + push to `origin` (private account) without asking.
+- **Next (not started; ask the user):** terrain height solver v2 (mountain ridges), Phase 4 (interiors, spec §8), or a
+  battle look-polish pass (Phase 3 known gaps). Write the plan first (`docs/superpowers/plans/`), then execute
+  subagent-driven (only `opus` subagents work here; the user wants parallel agents where files don't overlap). Show
+  the user a phase progress bar in every update (they write Norwegian; reply in Norwegian). Merge + push to `origin`
+  (private account) without asking.
 - **Spec:** `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - **Progress log (source of truth for where we are):** `docs/superpowers/progress/modern-3d.md`
   — update it after every completed task / milestone, and before long-running steps.
