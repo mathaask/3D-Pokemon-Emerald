@@ -133,8 +133,9 @@ const BETWEEN_MAX = 6;
  *  Also: a metatile-0x3FF block (`real3ff`, Sootopolis; its id null, its kind Void) is floor under the neighbourhood
  *  rule; a blocked cell with a floor id keeps its own kind; a blocked unknown cell (null / `legacy`) in the room that no
  *  family claimed stays legacy; a cell another family claimed CLAIM_SURFACE gets none. Tints: a 4-connected area of one
- *  kind takes its most common metatile tint (`floorTint`), so a rug's border metatiles and a floor's shadow variants do
- *  not read as patches. Heights: flat per room (`roomFloorHeights`). The back wall's band (not a partition): a quad only
+ *  kind (own kinds before the neighbourhood rule, final kinds after it) takes its most common metatile tint (`floorTint`),
+ *  so a rug's border metatiles and a floor's shadow variants do not read as patches. Heights: flat per room
+ *  (`roomFloorHeights`). The back wall's band (not a partition): a quad only
  *  in its recess row, from the wall's inner face (`north`); its rows behind the wall are cells (claimed: no legacy art
  *  behind the wall) without a quad. */
 export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], L: RoomLayout, claims: Claims): FloorCell[] {
@@ -159,31 +160,35 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     tint[i] = lookOf(a.mt[i]);
     if (walkable(a, i)) own[i] = 1;
   }
-  // one tint per 4-connected area of one kind: its most common
-  const seen = new Uint8Array(N);
-  const stack: number[] = [];
-  for (let s = 0; s < N; s++) {
-    if (kind[s] < 0 || seen[s]) continue;
-    const area: number[] = [];
-    seen[s] = 1;
-    stack.push(s);
-    while (stack.length) {
-      const i = stack.pop()!;
-      area.push(i);
-      const x = a.cellX(i), y = a.cellY(i);
-      for (const [dx, dy] of SIDES) {
-        if (!a.inside(x + dx, y + dy)) continue;
-        const j = a.idx(x + dx, y + dy);
-        if (!seen[j] && kind[j] === kind[s]) { seen[j] = 1; stack.push(j); }
+  /** One tint per 4-connected area of one kind: its most common. */
+  const unifyTints = () => {
+    const seen = new Uint8Array(N);
+    const stack: number[] = [];
+    for (let s = 0; s < N; s++) {
+      if (kind[s] < 0 || seen[s]) continue;
+      const area: number[] = [];
+      seen[s] = 1;
+      stack.push(s);
+      while (stack.length) {
+        const i = stack.pop()!;
+        area.push(i);
+        const x = a.cellX(i), y = a.cellY(i);
+        for (const [dx, dy] of SIDES) {
+          if (!a.inside(x + dx, y + dy)) continue;
+          const j = a.idx(x + dx, y + dy);
+          if (!seen[j] && kind[j] === kind[s]) { seen[j] = 1; stack.push(j); }
+        }
       }
+      area.sort((p, q) => p - q);
+      const count = new Map<RGB, number>();
+      for (const i of area) count.set(tint[i]!, (count.get(tint[i]!) ?? 0) + 1);
+      let best = tint[area[0]]!, bestN = 0;
+      for (const [t, n] of count) if (n > bestN) { best = t; bestN = n; }
+      for (const i of area) tint[i] = best;
     }
-    area.sort((p, q) => p - q);
-    const count = new Map<RGB, number>();
-    for (const i of area) count.set(tint[i]!, (count.get(tint[i]!) ?? 0) + 1);
-    let best = tint[area[0]]!, bestN = 0;
-    for (const [t, n] of count) if (n > bestN) { best = t; bestN = n; }
-    for (const i of area) tint[i] = best;
-  }
+  };
+  // over the own kinds (the neighbourhood votes below see one tint per area)
+  unifyTints();
 
   // the room's floor: floorTile's kind (its id on any cell) and look
   let roomKind = FloorMat.Boards;
@@ -237,6 +242,9 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
     kind[i] = best ? best.mat : roomKind;
     tint[i] = best ? best.tint : roomTint;
   }
+  // again over the final kinds: an own cell cut off from its area by cells that only now have a kind (Sootopolis' tile
+  // variant among 0x3FF blocks) joins it, and the cells it voted for with it
+  unifyTints();
 
   // border edges, heights
   const h = roomFloorHeights(a, L);

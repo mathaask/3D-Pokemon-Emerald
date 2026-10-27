@@ -100,6 +100,21 @@ describe('interior floor cells', () => {
     expect(at(3, 3).tint[0]).toBeGreaterThan(at(3, 3).tint[2]);      // the area's most common: red
   });
 
+  it('unifies tints over the final kinds: a tile variant among 0x3FF blocks takes its area\'s tint, and lends it nowhere', () => {
+    // Sootopolis (15.5): a darker tile variant by the cupboard, its tile neighbours 0x3FF blocks (no kind until the
+    // neighbourhood pass); it used to keep its own tint and vote it into the band cells above it
+    const { a, ids } = fakeInterior(['         ', ' WWWWWWW ', ' v_ttttt ', ' __ttttt ', ' ttttttt ', '         '],
+      { t: { mt: 0x211, blocked: false, id: 'tiles' }, v: { mt: 0x212, blocked: false, id: 'tiles' } });
+    a.info.bottom.fill(0x294a, 0x211 * 256, 0x212 * 256);            // 't': grey
+    a.info.bottom.fill(0x7c1f, 0x212 * 256, 0x213 * 256);            // 'v': purple
+    const cells = floorCells(a, ids, roomLayout(a, ids, []), new Claims(a.N));
+    const at = (x: number, y: number) => cells.find((c) => c.i === a.idx(x, y))!;
+    for (const [x, y] of [[1, 2], [1, 1], [2, 2], [1, 3]]) {
+      expect(at(x, y).mat, `${x},${y}`).toBe(FloorMat.Tiles);
+      expect(at(x, y).tint, `${x},${y}`).toEqual(at(5, 4).tint);
+    }
+  });
+
   it('gives furniture on a rug edge row the rug (between rug cells), and votes elsewhere with sides weighing twice', () => {
     // Brendan's 1F: the table and chairs stand on the rug's top rows; the north neighbours are boards
     const { a, ids } = fakeInterior(['          ', ' WWWWWWWW ', ' ........ ', ' .rcTTcr. ', ' .rcTTcr. ', ' .rrrrrr. ', ' ......c. ', ' ........ ', '          '],
