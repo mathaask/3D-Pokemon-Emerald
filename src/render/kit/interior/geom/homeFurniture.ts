@@ -68,7 +68,9 @@ const WHITE: RGB = [1, 1, 1];
 /** The GBA's dark blue-grey outline (0x424a6b, 0x52526b …): the most frequent colour of small objects, never a surface. */
 export const isOutline = (c: RGB) => luma(c) < 0.4 && saturation(c) < 0.3;
 /** Warm wood / yellow (red ≥ green ≥ blue, red well over blue). */
-export const isWood = (c: RGB) => c[0] >= c[1] - 0.02 && c[1] >= c[2] - 0.02 && c[0] - c[2] >= 0.15;
+export const isWood = (c: RGB) => c[0] >= c[1] - 0.02 && c[1] >= c[2] - 0.02 && c[0] - c[2] >= 0.15
+  // (an orange-to-yellow hue: green at least 0.3 of the way from blue to red — a red (0xd65242) or a peach cushion is no wood)
+  && c[1] - c[2] >= 0.3 * (c[0] - c[2]);
 const isWhite = (c: RGB) => luma(c) > 0.85 && saturation(c) < 0.12;
 const isGreen = (c: RGB) => c[1] > c[0] + 0.05 && c[1] > c[2] + 0.02;
 const same = (a: RGB, b: RGB) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 0.06;
@@ -103,7 +105,9 @@ export function homeColors(kind: HomeKind, c: PartColors): HomeColors {
   switch (kind) {
     case 'bed': {
       // a coloured blanket (the warm wood / gold of the GBA's frames stays the frame)
-      out.blanket = vivid(c, 0.2, (x) => !isWood(x)) ?? pick(c, (x) => !isWhite(x)) ?? BLANKET;
+      // (none: a white art's quilt is a pale blue-white — Brendan's and May's beds; else any other colour)
+      out.blanket = vivid(c, 0.2, (x) => !isWood(x)) ?? (pick(c, isWhite) ? mix(LINEN, BLANKET, 0.35) : null)
+        ?? pick(c, (x) => !isWhite(x)) ?? BLANKET;
       out.wood = pick(c, (x) => isWood(x) && !same(x, out.blanket)) ?? WOOD;
       out.linen = pick(c, isWhite) ? mix(pick(c, isWhite)!, LINEN, 0.5) : LINEN;
       break;
@@ -120,8 +124,10 @@ export function homeColors(kind: HomeKind, c: PartColors): HomeColors {
       break;
     }
     case 'bookshelf': {
-      // wood, else the outline's blue-grey lightened: a painted case (the GBA's teal-grey bookcases)
-      out.wood = pick(c, isWood) ?? mix(isOutline(c.main) ? c.main : [0.4, 0.45, 0.52], WHITE, 0.4);
+      // wood, else a white case (the lab's white bookcases), else the outline's blue-grey lightened: a painted case (the
+      // GBA's teal-grey bookcases)
+      out.wood = pick(c, isWood) ?? (pick(c, isWhite) ? mix(WHITE, [0.4, 0.45, 0.52], 0.12)
+        : mix(isOutline(c.main) ? c.main : [0.4, 0.45, 0.52], WHITE, 0.4));
       break;
     }
     case 'plant': {
@@ -244,15 +250,20 @@ function southRow(p: HomePiece): HomeRect {
   return { ...f, x0: Math.min(...row.map((c) => c.x0)), x1: Math.max(...row.map((c) => c.x1)) };
 }
 
-/** One rectangle per column of the piece (single items: chairs, plants, crates …), at the piece's depth; its height the
- *  lowest of the column's cells. No cells: the footprint. */
+/** One rectangle per column of the piece (single items: chairs, plants, crates …), at the piece's depth; its height its
+ *  south cell's. No cells: the footprint. */
 function columns(p: HomePiece): HomeRect[] {
   const f = p.foot;
   if (!p.cellFeet.length) return [f];
   const byX = new Map<number, HomeRect[]>();
   for (const c of p.cellFeet) { const k = Math.round(c.x0 * 1000); if (!byX.has(k)) byX.set(k, []); byX.get(k)!.push(c); }
   return [...byX.values()].sort((a, b) => a[0].x0 - b[0].x0)
-    .map((cs) => ({ ...f, x0: cs[0].x0, x1: cs[0].x1, height: Math.min(f.height, ...cs.map((c) => c.height)) }));
+    .map((cs) => {
+      // the model stands on the column's south cell (a plant's pot; its walkable leaves north of it, capped low by the
+      // family, never lower the plant): that cell's height
+      const south = cs.reduce((a, b) => (b.z1 > a.z1 ? b : a));
+      return { ...f, x0: cs[0].x0, x1: cs[0].x1, height: Math.min(f.height, south.height) };
+    });
 }
 
 const DIR: Readonly<Record<WallDir, [number, number]>> = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };

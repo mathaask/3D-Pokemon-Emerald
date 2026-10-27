@@ -199,6 +199,15 @@ describe('home furniture colours', () => {
     expect(c.blanket[2]).toBeGreaterThan(c.blanket[0]);              // lavender
     expect(Math.min(...c.linen)).toBeGreaterThan(0.8);
   });
+  it('takes no red for wood, and gives the white-art beds and bookcases white (look review, Phase B)', () => {
+    // the lab's bookcases: outline, white, red books → a white case, not red
+    const lab = homeColors('bookshelf', pc(hex('424252'), hex('ffffff'), hex('d65242')));
+    expect(Math.min(...lab.wood)).toBeGreaterThan(0.8);
+    // Brendan's bed: white quilt, orange-wood frame → a pale quilt, the orange on the frame
+    const bed = homeColors('bed', pc(hex('ffffff'), hex('52526b'), hex('e69421')));
+    expect(Math.min(...bed.blanket)).toBeGreaterThan(0.7);
+    expect(bed.wood[0] - bed.wood[2]).toBeGreaterThan(0.4);
+  });
   it('keeps plants green when the art has no green, and every colour soft', () => {
     const c = homeColors('plant', pc(hex('424a6b'), hex('d6d6b5'), hex('bdb531')));
     expect(c.leaf[1]).toBeGreaterThan(c.leaf[0]); expect(c.leaf[1]).toBeGreaterThan(c.leaf[2]);
