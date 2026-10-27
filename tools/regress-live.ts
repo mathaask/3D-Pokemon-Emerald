@@ -312,6 +312,9 @@ const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/const
   { name: 'b_groudon', q: 'battle=groudon&player=284&enemy=405' },
   { name: 'b_kyogre', q: 'battle=kyogre&player=284&enemy=404' },
   { name: 'b_rayquaza', q: 'battle=rayquaza&player=284&enemy=406' },
+  // (Phase 3 final review: the Sky Pillar at night — its fog's pull to the backdrop fades with the daylight, 3619ce4; its
+  // p3-base reference was captured from the base code, Task 4's 1e30bd6, which renders p3-base exactly)
+  { name: 'b_rayquaza_night', q: 'battle=rayquaza&player=284&enemy=406&hour=21' },
 ];
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
