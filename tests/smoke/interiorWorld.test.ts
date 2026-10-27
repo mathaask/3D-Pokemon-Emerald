@@ -48,6 +48,14 @@ describe('interior kit in the World', () => {
     expect(report(0, 10, 'modern')).toContain('terrain:true');  // outdoors as before
   });
 
+  it('draws the ground plane after the room in in-scope Modern interiors only (hidden by depth under the floor)', () => {
+    const base = () => world.group.children.find((o) => (o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry.type === 'PlaneGeometry')!;
+    build(2, 2, 'modern'); expect(base().renderOrder).toBe(1);
+    build(2, 2, 'retro'); expect(base().renderOrder).toBe(0);
+    build(8, 1, 'modern'); expect(base().renderOrder).toBe(0);  // out of scope
+    build(0, 10, 'modern'); expect(base().renderOrder).toBe(0);
+  });
+
   it('rolls a failing interior family back, warning once per map', () => {
     world.setFailFamily('furniture');
     expect(report(2, 2, 'modern')).toEqual(['furniture:false', 'shell:true', 'floor:true']);

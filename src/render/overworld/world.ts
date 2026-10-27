@@ -259,6 +259,9 @@ export class World {
     this.base.scale.set(model.maxX - model.minX + 40, 1, model.maxY - model.minY + 40);
     this.base.position.set((model.minX + model.maxX) / 2, -0.6, (model.minY + model.maxY) / 2); // below water (-0.3)
     const baseMat = this.base.material as THREE.MeshStandardMaterial;
+    // (an in-scope Modern interior draws its plane after the other opaques: it lies under the room's floor, which then
+    // hides it by depth instead of shading over it — 0.2–0.4 ms of the iGPU's frame, Task 13; the picture is the same)
+    this.base.renderOrder = this.interiorKitRan ? 1 : 0;
     if (opts.indoor || model.dominantFloor < 0) baseMat.color.setRGB(0.01, 0.01, 0.012);
     else {
       const c = averageColor(opts.info, model.dominantFloor);
