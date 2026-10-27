@@ -5,7 +5,7 @@ import { createKitUniforms } from '../src/render/kit/materials';
 import { lin } from '../src/render/kit/soup';
 import {
   fitFurniture, isLow, furnitureFamilyWith, FURNITURE_SPEC, WALL_BACK, WALKABLE_SEAT, FURNITURE_LOW, FURNITURE_TALL,
-  FURNITURE_GLASS_LOW, FURNITURE_GLOW_LOW, type FurniturePiece, type FurnitureOut,
+  FURNITURE_GLOW_LOW, type FurniturePiece, type FurnitureOut,
 } from '../src/render/kit/interior/furniture';
 import { RECESS, roomLayout } from '../src/render/kit/interior/room';
 import { FURNITURE_KINDS } from '../src/render/kit/tables/building';
@@ -30,11 +30,11 @@ describe('furniture fitting', () => {
     const f = fitFurniture('fridge', 6, 6, 1, 2, 0, 3 - RECESS + WALL_BACK);
     expect(f.z0).toBeCloseTo(2.59, 5); expect(f).toMatchObject({ z1: 3, height: 1.9 });
   });
-  it('never fades low furniture, its screens and glass included', () => {
+  it('never fades low furniture, its screens included', () => {
     expect(FURNITURE_KINDS.filter(isLow)).toEqual(['bed', 'table', 'chair', 'tv', 'pc', 'sink', 'cabinet', 'crate', 'trashCan',
       'vase', 'counter', 'pcCounter', 'stairsDown']);
     expect(FURNITURE_LOW.fade).toBeFalsy(); expect(FURNITURE_TALL.fade).toBe(true);
-    expect(FURNITURE_GLASS_LOW.fade).toBeFalsy(); expect(FURNITURE_GLOW_LOW.fade).toBeFalsy();
+    expect(FURNITURE_GLOW_LOW.fade).toBeFalsy();
   });
   it('has a spec for every kind, real-world high, never deeper than 2', () => {
     for (const k of FURNITURE_KINDS) {

@@ -61,9 +61,11 @@ export function shellPalette(c: ShellColors): ShellPalette {
 }
 
 /** The mitre of a corner between walls with inward normals `a` and `b` (at right angles: a + b); the offset point at d is
- *  P + d · mitre. */
+ *  P + d · mitre. Opposite normals (a U-turn path, or an `ends` normal equal to −own) have no mitre: throws, rather than
+ *  build Infinity offsets. */
 function mitre(a: V2, b: V2): V2 {
   const k = 1 + a[0] * b[0] + a[1] * b[1];
+  if (k < 1e-6) throw new Error(`wallPath: a corner between opposite normals (${a} / ${b}) has no mitre`);
   return [(a[0] + b[0]) / k, (a[1] + b[1]) / k];
 }
 

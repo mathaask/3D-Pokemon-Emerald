@@ -17,7 +17,7 @@ import { CLAIM_OBJECT, CLAIM_TOP, type Claims } from '../../overworld/claims';
 import type { Quality } from '../../post';
 import type { Family, KitContext, SemanticContext } from '../semantics';
 import { applyKitMaterial, kitMaterial, type KitMaterialOptions } from '../materials';
-import { BUILDING_BODY, BUILDING_GLASS } from '../buildings';
+import { BUILDING_BODY } from '../buildings';
 import { PROP_GLOW } from '../props';
 import { glowMesh } from '../glow';
 import { Soup } from '../soup';
@@ -37,12 +37,14 @@ export const FURNITURE_SPEC: Readonly<Record<FurnitureKind, FurnitureSpec>> = {
   tv: { height: 1.1, depth: 0.5 }, pc: { height: 1.2, depth: 0.6 }, bookshelf: { height: 2.1, depth: 0.45 },
   plant: { height: 1.3, depth: 0.7 }, fridge: { height: 1.9, depth: 0.5 }, sink: { height: 0.95, depth: 0.5 },
   cabinet: { height: 1.0, depth: 0.5 }, crate: { height: 0.8, depth: 0.8 }, trashCan: { height: 0.6, depth: 0.5 },
-  vase: { height: 0.6, depth: 0.5 }, counter: { height: 1.0, depth: 0.9 }, healer: { height: 1.3, depth: 0.8 },
-  pcCounter: { height: 1.05, depth: 0.9 }, martShelf: { height: 1.6, depth: 1.4 }, stairsUp: { height: 1.6, depth: 1 },
+  // (serving counters 0.88, under a real 1.0: the nurse and the clerks behind them read from the chest up at the default
+  // camera, as on the GBA — controller ruling I2, Task 10)
+  vase: { height: 0.6, depth: 0.5 }, counter: { height: 0.88, depth: 0.9 }, healer: { height: 1.3, depth: 0.8 },
+  pcCounter: { height: 0.88, depth: 0.9 }, martShelf: { height: 1.6, depth: 1.4 }, stairsUp: { height: 1.6, depth: 1 },
   stairsDown: { height: 0, depth: 1 },
 };
 
-/** Low furniture (≤ 1.2 high) never fades, its screens and glass included (D7: the nurse behind her counter). */
+/** Low furniture (≤ 1.2 high) never fades, its screens included (D7: the nurse behind her counter). */
 export const isLow = (k: FurnitureKind) => FURNITURE_SPEC[k].height <= 1.2;
 
 /** How a component of one kind becomes pieces: `component` one piece (furniture spanning cells: tables and counters
@@ -91,27 +93,25 @@ export interface FurniturePiece {
   colors: PartColors; seed: number;
 }
 
-/** Low pieces' screens and glass go into glowLow / glassLow (D7: they never fade). */
-export interface FurnitureOut { tall: Soup; low: Soup; glass: Soup; glow: Soup; glassLow: Soup; glowLow: Soup }
+/** Low pieces' screens go into glowLow (D7: they never fade). No kind draws glass (the Oldale glass cabinet and Steven's
+ *  case are labelled cabinet / floor), so the furniture has no glass soups. */
+export interface FurnitureOut { tall: Soup; low: Soup; glow: Soup; glowLow: Soup }
 export type FurnitureGenerator = (p: FurniturePiece, out: FurnitureOut, q: Quality) => void;
 
-/** Six empty soups. */
+/** Four empty soups. */
 export function newFurnitureOut(): FurnitureOut {
-  return { tall: new Soup(), low: new Soup(), glass: new Soup(), glow: new Soup(), glassLow: new Soup(), glowLow: new Soup() };
+  return { tall: new Soup(), low: new Soup(), glow: new Soup(), glowLow: new Soup() };
 }
 
 export const FURNITURE_TALL: KitMaterialOptions = BUILDING_BODY;
 export const FURNITURE_LOW: KitMaterialOptions = { vertexColors: true, roughness: 0.8 };
-export const FURNITURE_GLASS: KitMaterialOptions = BUILDING_GLASS;
-export const FURNITURE_GLASS_LOW: KitMaterialOptions = { ...BUILDING_GLASS, fade: false };
 export const FURNITURE_GLOW_LOW: KitMaterialOptions = { ...PROP_GLOW, fade: false };
 /** The glow soups' own light (linear, glowMesh's emissive): a screen's soft cool light. */
 export const FURNITURE_EMISSIVE: RGB = [0.3, 0.33, 0.36];
 
 const PNC = { position: 3, normal: 3, color: 3 };
-/** TALL / LOW on PNC, cast; PROP_GLOW and FURNITURE_GLOW_LOW on PNC, no cast (glowMesh). No generator fills the glass soups
- *  yet, so GLASS / GLASS_LOW are left out (the drift guard flags them the day one does). Joins
- *  INTERIOR_CATALOGUE at the group-C join (once the generators draw it: before, its entries would be drawn on no map). */
+/** TALL / LOW on PNC, cast; PROP_GLOW and FURNITURE_GLOW_LOW on PNC, no cast (glowMesh). Part of INTERIOR_CATALOGUE (the
+ *  drift guard checks that every material the family builds is in it). */
 export const FURNITURE_CATALOGUE: readonly InteriorCatalogueEntry[] = [
   { material: FURNITURE_TALL, attrs: PNC, castShadow: true },
   { material: FURNITURE_LOW, attrs: PNC, castShadow: true },
@@ -272,8 +272,6 @@ export function furnitureFamilyWith(generators: Partial<Record<FurnitureKind, Fu
       };
       solid(out.tall, FURNITURE_TALL, 'furnitureTall');
       solid(out.low, FURNITURE_LOW, 'furnitureLow');
-      solid(out.glass, FURNITURE_GLASS, 'furnitureGlass');
-      solid(out.glassLow, FURNITURE_GLASS_LOW, 'furnitureGlassLow');
       glow(out.glow, PROP_GLOW, 'furnitureGlow');
       glow(out.glowLow, FURNITURE_GLOW_LOW, 'furnitureGlowLow');
       return g.children.length ? g : null;

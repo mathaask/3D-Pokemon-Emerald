@@ -41,18 +41,20 @@ describe('interior id tables', () => {
     const seeded = Array.from({ length: a.N }, (_, i) => ids[i % 4]);
     seedInteriorIds(a, seeded);
     expect(interiorIds(a)).toBe(seeded);
+    // (a seed of another analysis's size — a fake built with another margin — fails loudly, never reads undefined)
+    expect(() => seedInteriorIds(a, seeded.slice(1))).toThrow(/length/);
   });
   it('scopes interiors', () => {
     const o = { indoor: true, primaryTileset: SYM.gTileset_Building, secondaryTileset: SYM.gTileset_PokemonCenter };
-    expect(interiorScope(o)).toBe(true);
-    expect(interiorScope({ ...o, indoor: false })).toBe(false);
-    expect(interiorScope({ ...o, secondaryTileset: 0 })).toBe(false);
-    expect(interiorScope({ ...o, primaryTileset: SYM.gTileset_General })).toBe(false);
+    expect(interiorScope(o, '2.2')).toBe(true);
+    expect(interiorScope({ ...o, indoor: false }, '2.2')).toBe(false);
+    expect(interiorScope({ ...o, secondaryTileset: 0 }, '2.2')).toBe(false);
+    expect(interiorScope({ ...o, primaryTileset: SYM.gTileset_General }, '2.2')).toBe(false);
   });
   it('leaves the Department Store rooftop out (an open-air roof on the Shop tileset)', () => {
     const o = { indoor: true, primaryTileset: SYM.gTileset_Building, secondaryTileset: SYM.gTileset_Shop };
     expect(interiorScope(o, '13.21')).toBe(false);
     expect(interiorScope(o, '13.20')).toBe(true);                  // the Dept Store's 5F
-    expect(interiorScope(o)).toBe(true);                           // (no map key: the tilesets decide)
+    expect(interiorScope(o, null)).toBe(false);                    // (no map key: fails closed — the exclusion always holds)
   });
 });

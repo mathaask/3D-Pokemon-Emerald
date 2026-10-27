@@ -112,8 +112,10 @@ describe('interiors on the real maps', () => {
   });
 
   it('models every interaction-behaviour cell as its kind', () => {
+    let n = 0;
     for (const m of IN_SCOPE) for (const i of cellsWithBehaviour(m, [MB.TELEVISION, MB.PC, MB.BOOKSHELF, MB.PICTURE_BOOK_SHELF,
-      MB.POKEMON_CENTER_BOOKSHELF, MB.SHOP_SHELF])) expect(pieceKindAt(m, i), `${m.name} ${i}`).toBe(BEHAVIOR_IDS.get(m.beh(i)));
+      MB.POKEMON_CENTER_BOOKSHELF, MB.SHOP_SHELF])) { n++; expect(pieceKindAt(m, i), `${m.name} ${i}`).toBe(BEHAVIOR_IDS.get(m.beh(i))); }
+    expect(n).toBeGreaterThan(300);                                  // (419 cells at Task 12: never a vacuous pass)
   });
 
   it('lays sound room layouts on every in-scope map', () => {

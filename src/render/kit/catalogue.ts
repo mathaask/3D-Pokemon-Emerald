@@ -176,7 +176,7 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
   kit(WATER_ROCK_MATERIAL, PNC, true);
   kit(SOIL_MATERIAL, PNC, false);
   kit(terrainMaterial(placeholder(), v2(), v2()), PN, true);
-  // the interior families' (Phase 4: shell, floor; the furniture's at the group-C join)
+  // the interior families' (Phase 4: shell, floor, furniture)
   for (const e of INTERIOR_CATALOGUE) kit(e.material, e.attrs, e.castShadow);
 
   // the legacy pixel geometry (World.addMesh: the water casts no shadow; the HD twins on in-scope interiors), its tree

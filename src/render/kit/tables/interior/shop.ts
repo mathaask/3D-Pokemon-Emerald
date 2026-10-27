@@ -1,7 +1,8 @@
-// gTileset_Shop (23 maps, 22 in scope: every Mart, the Dept Store 1F–5F and rooftop — out of scope, OUT_OF_SCOPE_MAPS —,
-// Lavaridge's Herb Shop, the Safari Zone entrance, the cycling-road gates): what its secondary ids (0x200–0x3FF) are, curated from its maps (Phase 4 Task 4b;
-// worklist out/interior-ids.task3.txt, sheet: npx tsx tools/map-atlas.ts --no-maps --sheet-only Shop --sheet-scale 5
-// --sheet-chunk 32).
+// gTileset_Shop (23 maps, 22 in scope: every Mart, the Dept Store 1F–5F, Lavaridge's Herb Shop, the Safari Zone
+// entrance, the cycling-road gates; the Dept Store rooftop is out of scope, OUT_OF_SCOPE_MAPS, Task 12 — its labels below
+// stay, unpinned and unread, for a later rooftop pass): what its secondary ids (0x200–0x3FF) are, curated from its maps
+// (Phase 4 Task 4b; worklist out/interior-ids.task3.txt, sheet: npx tsx tools/map-atlas.ts --no-maps --sheet-only Shop
+// --sheet-scale 5 --sheet-chunk 32).
 //
 // Two styles share it: the Mart (13 identical maps, green tiles, white walls) and the Dept Store / gate style (orange
 // swirl tiles, grey walls; the Dept Store's 2F–4F in Mart tiles, its 5F in pastel squares). Labelling rules beyond

@@ -11,7 +11,7 @@ import type { Quality } from '../../src/render/post';
 /** The test piece's colours (sRGB). */
 export const TEST_COLORS: PartColors = { main: [0.8, 0.6, 0.4], second: [0.5, 0.4, 0.3], accent: [0.2, 0.5, 0.8], dark: [0.15, 0.12, 0.1] };
 
-const SOUPS: readonly (keyof FurnitureOut)[] = ['tall', 'low', 'glass', 'glow', 'glassLow', 'glowLow'];
+const SOUPS: readonly (keyof FurnitureOut)[] = ['tall', 'low', 'glow', 'glowLow'];
 
 /** A 2 × 2 piece of `kind` on cells (2..3, 4..5) at floor 0, free-standing: foot = fitFurniture(kind, 2, 3, 4, 5, 0,
  *  −Infinity), cellFeet its four cells, TEST_COLORS, seed 1, no facing; `overrides` replace any field. */
@@ -26,10 +26,10 @@ export function piece(kind: FurnitureKind, overrides: Partial<FurniturePiece> = 
   };
 }
 
-/** Six empty soups. */
+/** Four empty soups. */
 export const newOut = (): FurnitureOut => newFurnitureOut();
 
-/** The bounding box of all six soups (empty: an empty box). */
+/** The bounding box of all four soups (empty: an empty box). */
 export function boxOf(out: FurnitureOut): THREE.Box3 {
   const b = new THREE.Box3();
   for (const k of SOUPS) if (!out[k].empty) b.expandByObject(new THREE.Mesh(out[k].geometry()));
@@ -61,7 +61,7 @@ export function hashOut(out: FurnitureOut): string {
   return (h >>> 0).toString(36);
 }
 
-/** Triangles in all six soups. */
+/** Triangles in all four soups. */
 export function tris(out: FurnitureOut): number {
   let n = 0;
   for (const k of SOUPS) if (!out[k].empty) n += out[k].geometry().getAttribute('position').count / 3;

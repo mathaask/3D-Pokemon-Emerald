@@ -27,7 +27,7 @@ const piece = (kind: HomeKind, o: Partial<HomePiece> = {}): HomePiece => ({
   foot: fit(kind, 2, 3, 4, 5), cellFeet: [fit(kind, 2, 2, 4, 4), fit(kind, 3, 3, 4, 4), fit(kind, 2, 2, 5, 5), fit(kind, 3, 3, 5, 5)],
   facing: null, colors: COLORS, seed: 1234, ...o,
 });
-const soups = (): HomeSoups => ({ body: new Soup(), glass: new Soup(), glow: new Soup() });
+const soups = (): HomeSoups => ({ body: new Soup(), glow: new Soup() });
 const run = (kind: HomeKind, q: Quality = 'medium', o: Partial<HomePiece> = {}) => {
   const s = soups();
   HOME_BUILDERS[kind](piece(kind, o), s, q);
@@ -38,10 +38,10 @@ const boxOf = (...ss: Soup[]) => {
   for (const s of ss) if (!s.empty) { const g = s.geometry(); g.computeBoundingBox(); b.union(g.boundingBox!); }
   return b;
 };
-const tris = (s: HomeSoups) => [s.body, s.glass, s.glow].reduce((n, x) => n + (x.empty ? 0 : x.geometry().getAttribute('position').count / 3), 0);
+const tris = (s: HomeSoups) => [s.body, s.glow].reduce((n, x) => n + (x.empty ? 0 : x.geometry().getAttribute('position').count / 3), 0);
 const hash = (s: HomeSoups) => {
   let h = 0;
-  for (const x of [s.body, s.glass, s.glow]) {
+  for (const x of [s.body, s.glow]) {
     if (x.empty) continue;
     const g = x.geometry();
     for (const a of ['position', 'normal', 'color']) for (const v of g.getAttribute(a).array as Float32Array) h = (Math.imul(h, 31) + Math.round(v * 1e4)) | 0;
@@ -53,13 +53,12 @@ const xs = (s: Soup) => [...(s.geometry().getAttribute('position').array as Floa
 
 describe('home furniture geometry', () => {
   it.each(HOME_KINDS)('%s stays inside its footprint at its height', (kind) => {
-    const s = run(kind), p = piece(kind), f = p.foot, b = boxOf(s.body, s.glass, s.glow);
+    const s = run(kind), p = piece(kind), f = p.foot, b = boxOf(s.body, s.glow);
     expect(b.min.x).toBeGreaterThanOrEqual(f.x0 - 1e-3); expect(b.max.x).toBeLessThanOrEqual(f.x1 + 1e-3);
     expect(b.min.z).toBeGreaterThanOrEqual(f.z0 - 1e-3); expect(b.max.z).toBeLessThanOrEqual(f.z1 + 1e-3);
     expect(b.min.y).toBeGreaterThanOrEqual(-1e-3);
     expect(b.max.y).toBeCloseTo(SPEC[kind].height, 2);
     expect(s.body.empty).toBe(false);
-    expect(s.glass.empty).toBe(true);
     expect(s.glow.empty).toBe(kind !== 'tv');                        // only the TV's screen glows
   });
 

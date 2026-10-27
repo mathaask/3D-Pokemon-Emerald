@@ -29,7 +29,7 @@ export interface WorldBuildContext {
   events: GridEvents;
   quality: Quality;
   /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build); also names the maps
-   *  `interiorScope` leaves out (OUT_OF_SCOPE_MAPS). */
+   *  `interiorScope` leaves out (OUT_OF_SCOPE_MAPS) — unset, no map is an in-scope interior (it fails closed). */
   mapKey?: string;
   /** The interior kit on in-scope interiors in Modern (default true; false: today's legacy room and light — the
    *  `--ab-feature interior` baseline). */
@@ -188,7 +188,7 @@ export class World {
     this.interiorKitRan = false;
     // the kit: Modern, not underground; outdoors the outdoor families, on an in-scope interior the interior ones
     const modern = ctx.style === 'modern' && !opts.underground;
-    const interior = modern && opts.indoor && interiorScope(opts, ctx.mapKey) && (ctx.interiorKit ?? true);
+    const interior = modern && opts.indoor && interiorScope(opts, ctx.mapKey ?? null) && (ctx.interiorKit ?? true);
     const families = !modern ? null : !opts.indoor ? this.families : interior ? this.interiorFamilies : null;
     if (families && families.length) {
       try {

@@ -54,8 +54,8 @@ describe('interior id tables on the real maps', () => {
     const keys = inScope().map((r) => r.key);
     expect(keys.length).toBe(137);
     expect(keys).not.toContain('13.21');                             // Dept Store rooftop (OUT_OF_SCOPE_MAPS)
-    for (const k of ['1.0', '2.2', '2.4', '1.4']) expect(keys, k).toContain(k);
-    expect(keys).not.toContain('8.1');                               // Petalburg Gym
+    for (const k of ['1.0', '2.0', '2.2', '2.4', '1.4']) expect(keys, k).toContain(k);    // (2.0: a GenericBuilding house)
+    for (const k of ['8.1', '25.0', '25.40']) expect(keys, k).not.toContain(k);    // Petalburg Gym, a secret base, the truck
   });
 
   it('labels each tileset to its target, agrees with the interaction behaviours, reads its pins; writes the worklist', () => {

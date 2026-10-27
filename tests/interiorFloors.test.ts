@@ -78,6 +78,8 @@ describe('floor family', () => {
     expect(floor.geometry.getAttribute('position').count).toBe(cells.length * 6);
     expect(shafts.castShadow).toBe(false);
     expect(shafts.geometry.getAttribute('color').itemSize).toBe(3);
+    // (every window is in the back wall: the shafts are cut away with it, never a stray streak at yaw π — review C1 M2)
+    expect(shafts.userData.wallDir).toBe('N'); expect(floor.userData.wallDir).toBeUndefined();
     expect(kit.disposables).toHaveLength(1);                              // the cell texture
   });
 

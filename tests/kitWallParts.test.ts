@@ -10,6 +10,12 @@ const hasXZ = (g: THREE.BufferGeometry, x: number, z: number) => {
   for (let i = 0; i < p.count; i++) if (Math.abs(p.getX(i) - x) < 1e-5 && Math.abs(p.getZ(i) - z) < 1e-5) return true;
   return false;
 };
+/** Some vertex of `g` lies at x with a normal of x-component `nx` (a square cap face). */
+const hasCap = (g: THREE.BufferGeometry, x: number, nx: number) => {
+  const p = g.getAttribute('position'), n = g.getAttribute('normal');
+  for (let i = 0; i < p.count; i++) if (Math.abs(p.getX(i) - x) < 1e-5 && Math.abs(n.getX(i) - nx) < 1e-3) return true;
+  return false;
+};
 describe('wall parts', () => {
   it('builds a closed rectangular room with mitred corners and no caps', () => {
     const s = new Soup(), T = SHELL.thick;
@@ -34,12 +40,30 @@ describe('wall parts', () => {
     wallPath(a, [[0, 0], [5, 0]], [[0, 1]], 0, prof, C, false);
     wallPath(b, [[0, 0], [5, 0]], [[0, 1]], 0, prof, C, true);
     expect(b.geometry().getAttribute('position').count).toBeGreaterThan(a.geometry().getAttribute('position').count);
+    // a square cap face at each end: −x normals at x = 0, +x normals at x = 5 (none without caps)
+    expect(hasCap(b.geometry(), 0, -1)).toBe(true); expect(hasCap(b.geometry(), 5, 1)).toBe(true);
+    expect(hasCap(a.geometry(), 0, -1)).toBe(false); expect(hasCap(a.geometry(), 5, 1)).toBe(false);
+  });
+  it('ignores caps on a closed path', () => {
+    const a = new Soup(), b = new Soup(), prof = shellProfile(2.6, SHELL.wainscot);
+    const path: [number, number][] = [[0, 0], [6, 0], [6, 4], [0, 4], [0, 0]], inward: [number, number][] = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+    wallPath(a, path, inward, 0, prof, C, false);
+    wallPath(b, path, inward, 0, prof, C, true);
+    expect(b.geometry().getAttribute('position').count).toBe(a.geometry().getAttribute('position').count);
+  });
+  it('throws on a corner between opposite normals (a U-turn, or an end meeting its own wall reversed)', () => {
+    const prof = shellProfile(2.6, SHELL.wainscot);
+    expect(() => wallPath(new Soup(), [[0, 0], [6, 0]], [[0, 1]], 0, prof, C, true, [[0, -1], null])).toThrow(/opposite/);
   });
   it('sizes a window by its argument and keeps the battle default', () => {
     const body = new Soup(), glass = new Soup(), F = wallFrameAt([0, 0, 0], [1, 0, 0], [0, 0, 1], [-5, 5]);
     addWindow(body, glass, F, 0, [1, 1, 1], { ...WINDOW, width: 1.2 });
     const g = glass.geometry(); g.computeBoundingBox();
     expect(g.boundingBox!.max.x - g.boundingBox!.min.x).toBeCloseTo(1.2, 5);
+    const glass2 = new Soup();
+    addWindow(new Soup(), glass2, F, 0, [1, 1, 1]);
+    const g2 = glass2.geometry(); g2.computeBoundingBox();
+    expect(WINDOW.width).toBe(2.3); expect(g2.boundingBox!.max.x - g2.boundingBox!.min.x).toBeCloseTo(2.3, 5);
   });
   it('sizes a bookcase to a footprint depth and height (battle default SHELF.depth)', () => {
     const body = new Soup(), F = wallFrameAt([0, 0, 0], [1, 0, 0], [0, 0, 1], [-5, 5]);

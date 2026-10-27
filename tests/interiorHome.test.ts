@@ -14,8 +14,8 @@ describe('home furniture generators', () => {
     expect(b.min.x).toBeGreaterThanOrEqual(f.x0 - 1e-3); expect(b.max.x).toBeLessThanOrEqual(f.x1 + 1e-3);
     expect(b.min.z).toBeGreaterThanOrEqual(f.z0 - 1e-3); expect(b.max.z).toBeLessThanOrEqual(f.z1 + 1e-3);
     expect(b.max.y).toBeCloseTo(FURNITURE_SPEC[kind].height, 1);
-    if (isLow(kind)) expect(out.tall.empty && out.glass.empty && out.glow.empty).toBe(true);
-    else expect(out.low.empty && out.glassLow.empty && out.glowLow.empty).toBe(true);
+    if (isLow(kind)) expect(out.tall.empty && out.glow.empty).toBe(true);
+    else expect(out.low.empty && out.glowLow.empty).toBe(true);
   });
   it('turns a chair to face its table', () => {
     const east = boxOf(run(HOME_GENERATORS, 'chair', 'medium', { facing: 'E' }));

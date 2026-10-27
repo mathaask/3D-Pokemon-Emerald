@@ -5,7 +5,7 @@
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
 //     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--interiors]
 //     [--review [--review-before <label>]]
-//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers] [--ab-aa]]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers|interior] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -70,14 +70,20 @@
 // (run it with --only <battle entries>: elsewhere both arms draw the same frames). --ab-feature battlers switches the
 // Modern battle's inflated battlers (with their field passes, the flat enemy shadow, the skipped OBJ-window masks) against
 // today's cards (Phase 3 Task 5, flagged over Phase 2's actor budget +1.0 ms GPU / +0.5 ms CPU), likewise on the battle
-// entries.
+// entries. --ab-feature interior switches Phase 4's interior kit on in-scope rooms (shell, floor, furniture, the HD legacy
+// cells and the clock-following light) against today's interior (flagged over +1.5 ms GPU / +0.5 ms CPU): every switch
+// rebuilds the world (the half's settle frames absorb it); run it with --only <indoor live entries, in-scope i_* entries>
+// (the previews of out-of-scope maps and the rooftop draw the same frames in both arms and are skipped).
 // Actor luminance (every run with both styles): after each screenshot the actors (both views' on the live page:
 // emu.renderer.setActorMask; the preview's) are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
 // Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table. A mask that is not the
 // shot's frame (more than MASK_MISMATCH_MAX of the pixels away from the actors differ: the transition's zoom moved on)
-// flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary).
+// flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary). Gated (Phase 4 Task 13)
+// on the in-scope day interior entries (dayActorGated: --interiors entries ending indoors, not OUT_OF_SCOPE_INTERIOR, not a
+// night / dusk twin) with a reliable measure: each within DAY_ACTOR_BAND, their median ≥ DAY_ACTOR_MEDIAN_MIN (a failure
+// fails the run; an entry without a measure is listed, not gated).
 // Night twins (every run with Modern; NIGHT_TWINS, Phase 4's D8): a night interior preview's Modern shot against its day
 // twin's — night / day mean luma of the room (non-actor pixels) and of the actors (`nightLum` on the night entry's Modern
 // key, and a table); gated on the in-scope pairs: room ≥ 0.45, actors 0.9-1.15, and both measurable (no actor measure, or
@@ -85,7 +91,8 @@
 // A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
 // entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
-// lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle.
+// lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle,
+// vigoroth_switch in an in-scope interior and vigoroth_v the classic 2D view (V) and back there.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -183,6 +190,14 @@ const LIVE: LiveEntry[] = [
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
+  // (Phase 4 Task 13) vigoroth with the world style switched to the other one and back mid-steps, in an in-scope room
+  // (the interior kit built, dropped and rebuilt): no page error, the same 30 frames end exactly as vigoroth (0 px) with as
+  // many programs (nothing compiled: the interior's programs are in the boot catalogue)
+  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, steps: [['', 10],
+    ['', 10, TOGGLE_STYLE], ['', 10, TOGGLE_STYLE]] },
+  // vigoroth through the classic 2D view (V) and back: the 3D room comes back exactly as it was (0 px)
+  { name: 'vigoroth_v', state: 'out/littleroot.state', sameAs: 'vigoroth', steps: [['', 10],
+    ['', 10, "emu.renderer.mode = 'classic'"], ['', 10, "emu.renderer.mode = 'auto'"]] },
   // Battles (Phase 3; frames counted from the state's load, probed with GameState: scene, animActive, sprites). The
   // first battle (Route 101, environment 9 PLAIN): Torchic vs Zigzagoon at the move menu; its intro (s28: from frame
   // 59 Zigzagoon slides in from the left, from 69 the player's back picture from the right, under the intro's palette
@@ -254,7 +269,8 @@ const LIVE: LiveEntry[] = [
  * screen: battle1, fuzz, s28, intro, intro2, pre_battle, s6, s30.
  */
 const INTERIOR_LIVE: Record<string, string> = {
-  vigoroth: '1.0', item_indoor: '1.3', truck_inside: '25.40', door_enter: '1.2', door_exit: '0.9',
+  vigoroth: '1.0', vigoroth_switch: '1.0', vigoroth_v: '1.0', item_indoor: '1.3', truck_inside: '25.40', door_enter: '1.2',
+  door_exit: '0.9',
 };
 
 /**
@@ -308,7 +324,8 @@ const STATIC: StaticEntry[] = [
  * the Low preset, night (D8: Modern in-scope interiors follow the clock — each night entry has a day twin with the same
  * camera: i_pc_night ↔ i_pc_1f, i_house_night ↔ i_house_1f, i_lab_night ↔ i_lab, i_mart_night ↔ i_mart, i_gym_night ↔
  * i_gym; dusk, Task 12: i_pc_dusk ↔ i_pc_1f, i_house_dusk ↔ i_house_1f), a stand-in player at the nurse's counter, the
- * furniture family's failure hook and out-of-scope controls (i_gym, i_gym_night, i_secret: Modern 0.00 % for ever).
+ * furniture family's failure hook and out-of-scope controls (i_gym, i_gym_night, i_secret, and i_dept_roof since Task 12
+ * ruled the rooftop out of scope: Modern 0.00 % for ever).
  * (Added in Phase 4 Task 1: their p4-base references are that task's capture; the dusk entries' are copies of their day
  * twins' — at p4-base the hour changed no room: every i_*_night shot equals its day twin's, 0 px, both styles.)
  */
@@ -324,7 +341,8 @@ const STATIC_INTERIOR: StaticEntry[] = [
   { name: 'i_flat', q: 'map=11.13&actors=1' },              // Rustboro Flat2 1F
   { name: 'i_fortree_house', q: 'map=12.0&actors=1' },      // 8×6
   { name: 'i_sootopolis_house', q: 'map=15.5&actors=1' },   // 8×7
-  { name: 'i_dept_1f', q: 'map=13.16&actors=1' }, { name: 'i_dept_roof', q: 'map=13.21&actors=1' },
+  { name: 'i_dept_1f', q: 'map=13.16&actors=1' },
+  { name: 'i_dept_roof', q: 'map=13.21&actors=1' },        // out of scope (Task 12: OUT_OF_SCOPE_MAPS): a control
   { name: 'i_league', q: 'map=16.10&actors=1' }, { name: 'i_weather', q: 'map=32.0&actors=1' },
   { name: 'i_trickhouse', q: 'map=29.2' },                  // corridor maze 15×24
   { name: 'i_gate', q: 'map=29.11&actors=1' },              // cycling road gate (Shop)
@@ -342,7 +360,7 @@ const STATIC_INTERIOR: StaticEntry[] = [
   // a stand-in player (&focus=1) at the counter: the nurse's template (local id 1, gfx 58) stands at 7,2, the counter
   // between, the stand-in two rows south at 7,4 (cell centre)
   { name: 'i_pc_nurse', q: 'map=2.2&actors=1&x=7.5&y=4.5&focus=1' },
-  // Task 6 on: furniture rolled back to legacy (until then the preview ignores kitFail: it equals i_house_1f)
+  // the furniture family made to fail (&kitFail): its cells legacy, the shell and the floor modelled, one warning
   { name: 'i_house_fail', q: 'map=1.0&kitFail=furniture' },
   { name: 'i_gym', q: 'map=8.1' },                           // out of scope: Modern 0.00 % for ever
   { name: 'i_gym_night', q: 'map=8.1&hour=21' },             // out of scope: today's fixed indoor light at night too
@@ -350,7 +368,7 @@ const STATIC_INTERIOR: StaticEntry[] = [
 ];
 
 /** The interior entries Phase 4 leaves alone in both styles (out of scope: Modern 0.00 % against p4-base for ever). */
-const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'truck_inside']);
+const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'i_dept_roof', 'truck_inside']);
 
 /**
  * D8's night twins: night entry → its day entry (the same map and camera at hour 11). After a run with Modern, each pair
@@ -434,6 +452,15 @@ const isInteriorEntry = (e: Entry): boolean => (e.kind === 'static' && e.name.st
 const interiorMap = (e: Entry): string | null => (e.kind === 'live' ? INTERIOR_LIVE[e.name] ?? null
   : /(?:^|&)map=(\d+\.\d+)/.exec(e.q)?.[1] ?? null);
 
+/** The day actor-luminance gate's entries (Phase 4): interior entries ending indoors (map group 0 is the towns and routes:
+ *  door_exit ends outside), in scope (not OUT_OF_SCOPE_INTERIOR), and not a night / dusk twin (NIGHT_TWINS gates those). */
+const dayActorGated = (e: Entry): boolean => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name) && !(e.name in NIGHT_TWINS)
+  && !(interiorMap(e)?.startsWith('0.') ?? true);
+/** In-scope day interiors' actors against Retro: each within the band, their median at least this (Phase 4: the inflated
+ *  actors lit as in Retro, the room's light round them). */
+const DAY_ACTOR_BAND: [number, number] = [0.9, 1.15];
+const DAY_ACTOR_MEDIAN_MIN = 0.95;
+
 /** The GBA's own picture of a battle entry (the review's GBA column): live gba_<entry>, static ref_<entry> (no .png). */
 const gbaName = (e: Entry): string => `${e.kind === 'live' ? 'gba' : 'ref'}_${e.name}`;
 
@@ -489,6 +516,16 @@ const AB_FEATURES: Record<string, AbFeature> = {
     live: (on) => `emu.renderer.battle.inflation = ${on}`,
     preview: (on) => `preview.setInflation(${on})`,
     previewWhen: (q) => q.startsWith('battle='),
+  },
+  // (Phase 4 Task 13: the interior kit on in-scope rooms against today's interior, light included — off, the world builds
+  // no kit there, so `interiorKitRan` is false: no night blend, uOutdoorNight 0. Each switch rebuilds the world: the
+  // half's settle frames absorb it. The previews of in-scope maps only: the rooftop 13.21 and the out-of-scope controls
+  // draw the same frames in both arms)
+  interior: {
+    what: 'Phase 4 interior kit (shell, floor, furniture, HD legacy, light) vs today\'s interior', gpuMs: 1.5, cpuMs: 0.5,
+    live: (on) => `emu.renderer.overworld.setInteriorKit(${on})`,
+    preview: (on) => `preview.setInteriorKit(${on})`,
+    previewWhen: (q) => /map=(1|2|11|12|13|15|16|29|32)\./.test(q) && !/map=13\.21(&|$)/.test(q),
   },
 };
 
@@ -1111,6 +1148,7 @@ async function main(): Promise<void> {
   if (!abFeature) throw new Error(`unknown --ab-feature ${abFeatureName} (${Object.keys(AB_FEATURES).join(', ')})`);
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
+  const dayActorFailures: string[] = []; // in-scope day interiors' actors outside DAY_ACTOR_BAND (or their median low)
   const nightRows: { name: string; n: NightLum }[] = [];
   const nightFailures: string[] = []; // in-scope night twins outside D8's bounds, or not measurable
   const shotThisRun = new Set<string>(); // the entry_style keys this run shot (and kept)
@@ -1461,6 +1499,19 @@ async function main(): Promise<void> {
       console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`
         + (ok.length < lumRows.length ? ` (${lumRows.length - ok.length} unreliable left out)` : ''));
     }
+    // the in-scope day interiors' gate (dayActorGated): each reliable measure within the band, their median ≥ the floor
+    const gated = ok.filter((x) => { const e = entries.find((y) => y.name === x.name); return !!e && dayActorGated(e); });
+    const unmeasured = entries.filter((e) => dayActorGated(e) && !gated.some((x) => x.name === e.name)).map((e) => e.name);
+    for (const x of gated) {
+      if (!(x.lum.ratio >= DAY_ACTOR_BAND[0] && x.lum.ratio <= DAY_ACTOR_BAND[1])) dayActorFailures.push(`${x.name} ${x.lum.ratio.toFixed(3)}`);
+    }
+    if (gated.length) {
+      const m = median(gated.map((x) => x.lum.ratio));
+      if (m < DAY_ACTOR_MEDIAN_MIN) dayActorFailures.push(`median ${m.toFixed(3)} < ${DAY_ACTOR_MEDIAN_MIN}`);
+      console.log(`in-scope day interiors (gated: ${DAY_ACTOR_BAND.join('-')}, median ≥ ${DAY_ACTOR_MEDIAN_MIN}): ${gated.length} entries, `
+        + `median ${m.toFixed(3)}, ${Math.min(...gated.map((x) => x.lum.ratio)).toFixed(3)}-${Math.max(...gated.map((x) => x.lum.ratio)).toFixed(3)}`
+        + (unmeasured.length ? `; not measured (not gated): ${unmeasured.join(', ')}` : ''));
+    }
   }
   if (nightRows.length) {
     console.log(`\nnight twins, Modern night / day (mean sRGB luma; gated in scope: room ≥ ${NIGHT_ROOM_MIN}, actors ${NIGHT_ACTOR_BAND.join('-')}):`);
@@ -1490,8 +1541,9 @@ async function main(): Promise<void> {
   }
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
   if (nightFailures.length) console.log(`night-twin gates (D8) failed in: ${nightFailures.join(', ')}`);
+  if (dayActorFailures.length) console.log(`day actor-luminance gate (in-scope interiors vs Retro) failed: ${dayActorFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length
-    || nightFailures.length) {
+    || nightFailures.length || dayActorFailures.length) {
     process.exitCode = 1;
   }
 }

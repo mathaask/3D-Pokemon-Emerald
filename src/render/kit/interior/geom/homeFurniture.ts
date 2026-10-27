@@ -1,8 +1,8 @@
 // Home furniture geometry (Phase 4 Task 9): beds, tables, chairs, TVs, bookcases, plants, fridges, kitchen counters,
 // cabinets, crates, bins and vases as soft, rounded models (Let's Go / BDSP rooms), coloured from the tiles. Pure: each
 // builder writes Soup geometry for one piece given its footprint rectangles, colours, facing and seed — the piece shape
-// is structurally Task 6's FurniturePiece, so furnitureHome.ts only routes the soups (low kinds into out.low / glassLow /
-// glowLow, tall ones into out.tall / glass / glow, by isLow).
+// is structurally Task 6's FurniturePiece, so furnitureHome.ts only routes the soups (low kinds into out.low /
+// glowLow, tall ones into out.tall / glow, by isLow).
 //
 // Rules built in (controller rulings):
 // - Real-world heights: each builder tops out at its footprint's `height` (FURNITURE_SPEC through fitFurniture), the
@@ -31,8 +31,8 @@ export interface HomeRect { x0: number; x1: number; z0: number; z1: number; y: n
 export interface HomePiece {
   foot: HomeRect; cellFeet: readonly HomeRect[]; facing: WallDir | null; colors: PartColors; seed: number;
 }
-/** Where a builder writes: the solid body, glass and glowing screens (the low or the tall set). */
-export interface HomeSoups { body: Soup; glass: Soup; glow: Soup }
+/** Where a builder writes: the solid body and glowing screens (the low or the tall set). */
+export interface HomeSoups { body: Soup; glow: Soup }
 export type HomeBuilder = (p: HomePiece, s: HomeSoups, q: Quality) => void;
 
 export const HOME_KINDS = ['bed', 'table', 'chair', 'tv', 'bookshelf', 'plant', 'fridge', 'sink', 'cabinet', 'crate',

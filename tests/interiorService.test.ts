@@ -3,7 +3,7 @@ import { piece, newOut, boxOf, run, countClusters, hashOut, tris } from './helpe
 import { SERVICE_GENERATORS, againstWall, cellsArea, flightDir } from '../src/render/kit/interior/furnitureService';
 import { FURNITURE_SPEC, fitFurniture, isLow } from '../src/render/kit/interior/furniture';
 import { RECESS } from '../src/render/kit/interior/room';
-import { BALL_RED, COUNTER } from '../src/render/kit/interior/geom/serviceFurniture';
+import { BALL_RED } from '../src/render/kit/interior/geom/serviceFurniture';
 
 const KINDS = ['pc', 'healer', 'pcCounter', 'counter', 'martShelf'] as const;
 
@@ -13,10 +13,10 @@ describe('service furniture', () => {
     const b = boxOf(out), f = p.foot;
     expect(b.min.x).toBeGreaterThanOrEqual(f.x0 - 1e-3); expect(b.max.x).toBeLessThanOrEqual(f.x1 + 1e-3);
     expect(b.min.z).toBeGreaterThanOrEqual(f.z0 - 1e-3); expect(b.max.z).toBeLessThanOrEqual(f.z1 + 1e-3);
-    // (serving counters stand COUNTER.height, under the spec: the clerk behind reads from the chest up — ruling I2)
-    expect(b.max.y).toBeCloseTo(kind === "counter" || kind === "pcCounter" ? COUNTER.height : FURNITURE_SPEC[kind].height, 1);
-    if (isLow(kind)) expect(out.tall.empty && out.glass.empty && out.glow.empty).toBe(true);
-    else expect(out.low.empty && out.glassLow.empty && out.glowLow.empty).toBe(true);
+    // (serving counters stand the spec's 0.88: the clerk behind reads from the chest up — ruling I2)
+    expect(b.max.y).toBeCloseTo(FURNITURE_SPEC[kind].height, 1);
+    if (isLow(kind)) expect(out.tall.empty && out.glow.empty).toBe(true);
+    else expect(out.low.empty && out.glowLow.empty).toBe(true);
   });
 
   it('gives the healing machine six cradles and a lit panel', () => {

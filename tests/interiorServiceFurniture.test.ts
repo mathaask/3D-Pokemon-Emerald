@@ -91,11 +91,11 @@ describe('service furniture geometry', () => {
     expect(clusters(o.tall, BALL_RED)).toBe(6);
   });
 
-  it.each([['counter', 1.0, false], ['pcCounter', 1.05, true]] as const)('builds a %s: low, inside its footprint, at its height', (_, height, band) => {
+  it.each([['counter', 0.88, false], ['pcCounter', 0.88, true], ['capped', 0.6, true]] as const)('builds a %s: low, inside its footprint, at its height', (_, height, band) => {
     const xy = cellsOf(2, 3, 4, 5), feet = xy.map(([x, y]) => fit(x, x, y, y, 0.9, height));
     const s = new Soup();
     buildCounter(s, counterRects(xy, feet), height, COLORS, 'medium', band);
-    const b = boxOf(s); inside(b, fit(2, 3, 4, 5, 0.9, height)); expect(b.max.y).toBeCloseTo(Math.min(height, COUNTER.height), 3);
+    const b = boxOf(s); inside(b, fit(2, 3, 4, 5, 0.9, height)); expect(b.max.y).toBeCloseTo(height, 3);
   });
 
   it('cuts a counter into rectangles cell by cell, an L arm reaching its bar', () => {

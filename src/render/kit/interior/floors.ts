@@ -48,6 +48,8 @@ export const floorFamily: Family<FloorCell[]> = {
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       mesh.renderOrder = 1;   // after the room's other transparent surfaces (the glass): light over them
+      // (every window is in the back wall, N: the shafts are cut away with it — no light from a hidden window)
+      mesh.userData.wallDir = 'N';
       group.add(mesh);
     }
     return group.children.length ? group : null;

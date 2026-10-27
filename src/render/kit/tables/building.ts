@@ -21,11 +21,16 @@ export type FurnitureKind = 'bed' | 'table' | 'chair' | 'tv' | 'pc' | 'bookshelf
 /** A floor kind, a wall part, a furniture kind, or `legacy` (keep the GBA art). */
 export type InteriorId = FloorKind | WallPart | FurnitureKind | 'legacy';
 
-export const FLOOR_KINDS: readonly FloorKind[] = ['boards', 'tiles', 'carpet', 'rug', 'mat'];
-export const WALL_PARTS: readonly WallPart[] = ['wall', 'window', 'decor', 'clock'];
+/** Every member of a union, once: a key list checked against the union at compile time (a kind added to the union but
+ *  not here, or a stray one, fails tsc). */
+const keysOf = <T extends string>(r: Record<T, true>): readonly T[] => Object.keys(r) as T[];
+
+export const FLOOR_KINDS: readonly FloorKind[] = keysOf<FloorKind>({ boards: true, tiles: true, carpet: true, rug: true, mat: true });
+export const WALL_PARTS: readonly WallPart[] = keysOf<WallPart>({ wall: true, window: true, decor: true, clock: true });
 /** In exactly the union's order above (Task 6's `isLow` test depends on it). */
-export const FURNITURE_KINDS: readonly FurnitureKind[] = ['bed', 'table', 'chair', 'tv', 'pc', 'bookshelf', 'plant', 'fridge',
-  'sink', 'cabinet', 'crate', 'trashCan', 'vase', 'counter', 'healer', 'pcCounter', 'martShelf', 'stairsUp', 'stairsDown'];
+export const FURNITURE_KINDS: readonly FurnitureKind[] = keysOf<FurnitureKind>({ bed: true, table: true, chair: true, tv: true,
+  pc: true, bookshelf: true, plant: true, fridge: true, sink: true, cabinet: true, crate: true, trashCan: true, vase: true,
+  counter: true, healer: true, pcCounter: true, martShelf: true, stairsUp: true, stairsDown: true });
 
 /** A pin: map-local cell (x, y) of map [group, num] must read as `id`. */
 export interface TablePin { map: [number, number]; x: number; y: number; id: InteriorId }
@@ -79,7 +84,9 @@ export function interiorIds(a: MapAnalysis): readonly (InteriorId | null)[] {
   return ids;
 }
 
-/** Test seam: makes `interiorIds(a)` return `ids` (fakeInterior's legend ids reach the families' extract this way). */
+/** Test seam: makes `interiorIds(a)` return `ids` (fakeInterior's legend ids reach the families' extract this way); `ids`
+ *  must have one entry per analysis cell (a.N), else it throws. */
 export function seedInteriorIds(a: MapAnalysis, ids: readonly (InteriorId | null)[]): void {
+  if (ids.length !== a.N) throw new Error(`seedInteriorIds: ${ids.length} ids for an analysis of ${a.N} cells (length mismatch)`);
   memo.set(a, ids);
 }

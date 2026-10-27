@@ -49,6 +49,8 @@ export class PreviewApp {
   private pitch = 0;
   private zoom = 0;
   private buildMs = 0;
+  /** The interior kit on (setInteriorKit). */
+  private interiorKit = true;
   /** Rebuilds the world (as crossing a map connection does, with warm code); returns the time in ms. */
   readonly rebuild: () => number;
   readonly name: string;
@@ -209,8 +211,10 @@ export class PreviewApp {
   }
 
   /** The interior kit on in-scope interiors on or off (Modern; off: today's legacy room and light — the harness's
-   *  `--ab-feature interior` baseline); rebuilds the world now. */
+   *  `--ab-feature interior` baseline); rebuilds the world now when it changes (as live play does, on its next sync). */
   setInteriorKit(on: boolean): void {
+    if (on === this.interiorKit) return;
+    this.interiorKit = on;
     this.view.setInteriorKit(on);
     this.rebuild();
   }

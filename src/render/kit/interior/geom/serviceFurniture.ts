@@ -3,7 +3,7 @@
 // soups (kit/soup.ts) from plain parameters — a footprint rectangle in world units, the part's tile colours, a seed, a
 // quality — so that furnitureService.ts only adapts a FurniturePiece to them (Phase B).
 //
-// Heights are real-world (D6): the footprint's `height` (FURNITURE_SPEC: counter 1.0, pcCounter 1.05, pc 1.2, healer
+// Heights are real-world (D6): the footprint's `height` (FURNITURE_SPEC: counter / pcCounter 0.88, pc 1.2, healer
 // 1.3, martShelf 1.6, stairsUp 1.6). Low pieces (≤ 1.2: counters, computers, the stairwell) write to `low` (screens to
 // `glowLow`), tall ones (healer, gondola, stairs up) to `tall` (`glow`): D7, nothing low fades. Every glowing part is in
 // a glow soup of its own (one glowMesh per soup: its material has a single user). Colours: the tile's part colours
@@ -184,21 +184,21 @@ export function counterRects(xy: readonly (readonly [number, number])[], feet: r
   return rects;
 }
 
-/** Counter proportions: height (a serving counter's, 0.88: under FURNITURE_SPEC's 1.0 / 1.05 — the nurse and the clerks
- *  behind it read from the chest up at the default camera, as on the GBA: controller ruling I2), an east–west bar's
+/** Counter proportions (the height is the footprint's: FURNITURE_SPEC's serving counter, 0.88 — the nurse and the clerks
+ *  behind it read from the chest up at the default camera, as on the GBA: controller ruling I2): an east–west bar's
  *  depth at most, top slab, toe kick, the nurse's front band, insets and corner radius. With the bar 0.72 deep its edge
  *  stands 0.28 south of the clerk's feet: at the Classic pitch (0.82 rad) a sprite shows from about 0.58 up. */
 export const COUNTER = {
-  height: 0.88, bar: 0.72, top: 0.07, kick: 0.08, kickInset: 0.1, bodyInset: 0.05, bandInset: 0.035, band: [0.5, 0.64], radius: 0.12,
+  bar: 0.72, top: 0.07, kick: 0.08, kickInset: 0.1, bodyInset: 0.05, bandInset: 0.035, band: [0.5, 0.64], radius: 0.12,
 };
 
-/** A counter over its rectangles, min(`top`, COUNTER.height) tall (a rectangle's own cap lower): a toe kick in dark, a
- *  body in main, a top in second (overhanging the body on its open sides); `band` (the nurse's counter) adds a front band
- *  in accent round its open sides. Low. */
+/** A counter over its rectangles, `top` tall (a rectangle's own cap lower): a toe kick in dark, a body in main, a top in
+ *  second (overhanging the body on its open sides); `band` (the nurse's counter) adds a front band in accent round its
+ *  open sides. Low. */
 export function buildCounter(s: Soup, rects: readonly CounterRect[], top: number, c: PartColors, q: Quality, band: boolean): void {
   const k = serviceColors(c), segs = CORNER_SEGS[q], C = COUNTER;
   for (const r of rects) {
-    const height = Math.min(top, C.height, r.height);
+    const height = Math.min(top, r.height);
     roundedBlock(s, r, 0, C.kick, C.kickInset, C.radius - C.kickInset, r.open, k.dark, k.dark, segs);
     roundedBlock(s, r, C.kick, height - C.top, C.bodyInset, C.radius - C.bodyInset, r.open, k.main, k.main, segs);
     if (band && C.band[1] < height - C.top) roundedBlock(s, r, C.band[0], C.band[1], C.bandInset, C.radius - C.bandInset, r.open, k.accent, k.accent, segs);
