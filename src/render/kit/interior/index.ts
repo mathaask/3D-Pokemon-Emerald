@@ -5,7 +5,7 @@
 
 import type { Family } from '../semantics';
 import type { KitMaterialOptions } from '../materials';
-import { furnitureFamilyWith } from './furniture';
+import { furnitureFamilyWith, FURNITURE_CATALOGUE } from './furniture';
 import { HOME_GENERATORS } from './furnitureHome';
 import { SERVICE_GENERATORS } from './furnitureService';
 import { shellFamily, SHELL_CATALOGUE } from './shell';
@@ -20,5 +20,5 @@ export const INTERIOR_FAMILIES: readonly Family<unknown>[] = [
 /** One program variant an interior family draws: worldCatalogue adds `kit(material, attrs, castShadow)` for it. */
 export interface InteriorCatalogueEntry { material: KitMaterialOptions; attrs: Record<string, number>; castShadow: boolean }
 
-/** The interior families' program variants (FURNITURE_CATALOGUE joins at the group-C join, once the generators draw it). */
-export const INTERIOR_CATALOGUE: readonly InteriorCatalogueEntry[] = [...SHELL_CATALOGUE, ...FLOOR_CATALOGUE];
+/** The interior families' program variants (furniture, shell, floor; joined at the group-C join, preflight F6). */
+export const INTERIOR_CATALOGUE: readonly InteriorCatalogueEntry[] = [...FURNITURE_CATALOGUE, ...SHELL_CATALOGUE, ...FLOOR_CATALOGUE];

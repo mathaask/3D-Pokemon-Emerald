@@ -109,13 +109,12 @@ export const FURNITURE_GLOW_LOW: KitMaterialOptions = { ...PROP_GLOW, fade: fals
 export const FURNITURE_EMISSIVE: RGB = [0.3, 0.33, 0.36];
 
 const PNC = { position: 3, normal: 3, color: 3 };
-/** TALL / LOW / GLASS / GLASS_LOW on PNC, cast; PROP_GLOW and FURNITURE_GLOW_LOW on PNC, no cast (glowMesh). Joins
+/** TALL / LOW on PNC, cast; PROP_GLOW and FURNITURE_GLOW_LOW on PNC, no cast (glowMesh). No generator fills the glass soups
+ *  yet, so GLASS / GLASS_LOW are left out (the drift guard flags them the day one does). Joins
  *  INTERIOR_CATALOGUE at the group-C join (once the generators draw it: before, its entries would be drawn on no map). */
 export const FURNITURE_CATALOGUE: readonly InteriorCatalogueEntry[] = [
   { material: FURNITURE_TALL, attrs: PNC, castShadow: true },
   { material: FURNITURE_LOW, attrs: PNC, castShadow: true },
-  { material: FURNITURE_GLASS, attrs: PNC, castShadow: true },
-  { material: FURNITURE_GLASS_LOW, attrs: PNC, castShadow: true },
   { material: PROP_GLOW, attrs: PNC, castShadow: false },
   { material: FURNITURE_GLOW_LOW, attrs: PNC, castShadow: false },
 ];
