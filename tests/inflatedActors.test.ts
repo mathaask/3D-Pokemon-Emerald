@@ -68,8 +68,11 @@ describe('InflatedActors in GTAO\'s depth/normal prepass (High)', () => {
     expect(ao.vertexShader).toContain('smoothstep(0.15, 0.55, local.y)');
     expect(ao.vertexShader).not.toContain('mvPosition.z -=');
     expect(ao.fragmentShader).toContain('if (actorSample(vAtlasUv, vRect).a < 0.5) discard;');
-    // the relief's own normal (its height's gradient, faded as the relief), view space, as MeshNormalMaterial packs it
+    // the relief's own normal (its height's gradient, faded as the relief) on the card's frame — right and up, raised along
+    // the ray to the eye (a flat sprite faces level, not the eye) —, view space, as MeshNormalMaterial packs it
     expect(ao.fragmentShader).toContain(`fieldGrad(vAtlasUv, vRect, ${SHADE_STEP}.0) * vRelief`);
+    expect(ao.fragmentShader).toContain('normalize(cross(uRight + f * g.x, vec3(0.0, 1.0, 0.0) + f * g.y))');
+    expect(ao.fragmentShader).not.toContain('actorNormal(normalize(vFacing)');
     expect(ao.fragmentShader).toContain('* 0.5 + 0.5, 1.0);');
     expect(ao.fragmentShader).not.toContain('shadeSlope(vAtlasUv');
   });

@@ -347,10 +347,12 @@ void main() {
 }
 `;
 
-// GTAO's depth/normal prepass (High; aoPrepass.ts): the main pass's position (no push) and, per fragment, the relief's own
-// normal — its height's gradient (px per px: the relief rises fieldH × pxWorld over a texel of pxWorld), faded as the
-// relief is — packed as MeshNormalMaterial packs it (view space, × 0.5 + 0.5): the AO sees the actor's true surface. (Not
-// the shading normal: its exaggerated slope would disagree with the depth.)
+// GTAO's depth/normal prepass (High; aoPrepass.ts): the main pass's position (no push) and, per fragment, the normal of
+// that surface — the card (x along uRight, y up) raised along the ray to the eye (vFacing) by the field: tangents
+// right + f·∂d/∂x and up + f·∂d/∂y, the relief's slope ∂d = the field's gradient (px per px: it rises fieldH × pxWorld
+// over a texel of pxWorld), faded as the relief is — packed as MeshNormalMaterial packs it (view space, × 0.5 + 0.5): the
+// AO sees the actor's true surface. (Not the shading normal: it faces the eye and its slope is exaggerated, so under the
+// overworld's steep camera the actor's own upper part would occlude it.)
 const aoVert = (uniforms: boolean, v: InflatedVariant) => /* glsl */ `
 #include <common>
 ${vertPrelude(uniforms, v)}
@@ -373,7 +375,9 @@ ${fieldGlsl(v)}
 ${sampleGlsl(v)}
 void main() {
   if (actorSample(vAtlasUv, vRect).a < 0.5) discard;
-  vec3 n = actorNormal(normalize(vFacing), fieldGrad(vAtlasUv, vRect, ${glslFloat(SHADE_STEP)}) * vRelief);
+  vec3 f = normalize(vFacing);
+  vec2 g = fieldGrad(vAtlasUv, vRect, ${glslFloat(SHADE_STEP)}) * vRelief;
+  vec3 n = normalize(cross(uRight + f * g.x, vec3(0.0, 1.0, 0.0) + f * g.y));
   gl_FragColor = vec4(normalize((viewMatrix * vec4(n, 0.0)).xyz) * 0.5 + 0.5, 1.0);
 }
 `;
