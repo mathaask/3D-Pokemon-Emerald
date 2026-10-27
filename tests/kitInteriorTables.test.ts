@@ -49,4 +49,10 @@ describe('interior id tables', () => {
     expect(interiorScope({ ...o, secondaryTileset: 0 })).toBe(false);
     expect(interiorScope({ ...o, primaryTileset: SYM.gTileset_General })).toBe(false);
   });
+  it('leaves the Department Store rooftop out (an open-air roof on the Shop tileset)', () => {
+    const o = { indoor: true, primaryTileset: SYM.gTileset_Building, secondaryTileset: SYM.gTileset_Shop };
+    expect(interiorScope(o, '13.21')).toBe(false);
+    expect(interiorScope(o, '13.20')).toBe(true);                  // the Dept Store's 5F
+    expect(interiorScope(o)).toBe(true);                           // (no map key: the tilesets decide)
+  });
 });

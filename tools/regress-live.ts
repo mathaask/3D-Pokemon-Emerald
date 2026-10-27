@@ -307,9 +307,10 @@ const STATIC: StaticEntry[] = [
  * kind (house, Pokémon Center, Mart, lab, flat, department store, league, institute, trick house, gate), orbit angles,
  * the Low preset, night (D8: Modern in-scope interiors follow the clock — each night entry has a day twin with the same
  * camera: i_pc_night ↔ i_pc_1f, i_house_night ↔ i_house_1f, i_lab_night ↔ i_lab, i_mart_night ↔ i_mart, i_gym_night ↔
- * i_gym), a stand-in player at the nurse's counter, the furniture family's failure hook and out-of-scope controls (i_gym,
- * i_gym_night, i_secret: Modern 0.00 % for ever). (Added in Phase 4 Task 1: their p4-base references are that task's
- * capture.)
+ * i_gym; dusk, Task 12: i_pc_dusk ↔ i_pc_1f, i_house_dusk ↔ i_house_1f), a stand-in player at the nurse's counter, the
+ * furniture family's failure hook and out-of-scope controls (i_gym, i_gym_night, i_secret: Modern 0.00 % for ever).
+ * (Added in Phase 4 Task 1: their p4-base references are that task's capture; the dusk entries' are copies of their day
+ * twins' — at p4-base the hour changed no room: every i_*_night shot equals its day twin's, 0 px, both styles.)
  */
 const STATIC_INTERIOR: StaticEntry[] = [
   { name: 'i_house_1f', q: 'map=1.0&actors=1' },            // Brendan's house 1F: kitchen, table + chairs on a rug, stairs
@@ -334,6 +335,10 @@ const STATIC_INTERIOR: StaticEntry[] = [
   { name: 'i_house_night', q: 'map=1.0&actors=1&hour=21' }, // D8: the house's lamp-lit night
   { name: 'i_lab_night', q: 'map=1.4&actors=1&hour=21' },
   { name: 'i_mart_night', q: 'map=2.4&actors=1&hour=21' },
+  // dusk (Task 12): nightFactor(19) ≈ 0.47, mid-blend — the inflated actors' light floor rises with the night, the room
+  // dims first: their likeliest dip
+  { name: 'i_pc_dusk', q: 'map=2.2&actors=1&hour=19' },
+  { name: 'i_house_dusk', q: 'map=1.0&actors=1&hour=19' },
   // a stand-in player (&focus=1) at the counter: the nurse's template (local id 1, gfx 58) stands at 7,2, the counter
   // between, the stand-in two rows south at 7,4 (cell centre)
   { name: 'i_pc_nurse', q: 'map=2.2&actors=1&x=7.5&y=4.5&focus=1' },
@@ -360,6 +365,7 @@ const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'truc
  */
 const NIGHT_TWINS: Record<string, string> = {
   i_pc_night: 'i_pc_1f', i_house_night: 'i_house_1f', i_lab_night: 'i_lab', i_mart_night: 'i_mart', i_gym_night: 'i_gym',
+  i_pc_dusk: 'i_pc_1f', i_house_dusk: 'i_house_1f',   // dusk, hour 19 (Task 12): the same gate
 };
 const NIGHT_ROOM_MIN = 0.45;
 const NIGHT_ACTOR_BAND: [number, number] = [0.9, 1.15];

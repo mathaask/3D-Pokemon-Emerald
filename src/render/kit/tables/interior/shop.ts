@@ -1,5 +1,5 @@
-// gTileset_Shop (23 in-scope maps: every Mart, the Dept Store 1F–5F and rooftop, Lavaridge's Herb Shop, the Safari Zone
-// entrance, the cycling-road gates): what its secondary ids (0x200–0x3FF) are, curated from its maps (Phase 4 Task 4b;
+// gTileset_Shop (23 maps, 22 in scope: every Mart, the Dept Store 1F–5F and rooftop — out of scope, OUT_OF_SCOPE_MAPS —,
+// Lavaridge's Herb Shop, the Safari Zone entrance, the cycling-road gates): what its secondary ids (0x200–0x3FF) are, curated from its maps (Phase 4 Task 4b;
 // worklist out/interior-ids.task3.txt, sheet: npx tsx tools/map-atlas.ts --no-maps --sheet-only Shop --sheet-scale 5
 // --sheet-chunk 32).
 //
@@ -88,7 +88,8 @@ export const SHOP: InteriorTable = {
     { map: [2, 4], x: 10, y: 2, id: 'plant' },        // its leaves over the walkable cell north of the pot
     { map: [2, 4], x: 4, y: 5, id: 'tiles' },
     { map: [2, 4], x: 3, y: 7, id: 'mat' },
-    // The Dept Store 1F (13.16), 2F (13.17), 5F (13.20), rooftop (13.21).
+    // The Dept Store 1F (13.16), 2F (13.17), 5F (13.20); the rooftop (13.21) is out of scope (OUT_OF_SCOPE_MAPS, Task 12):
+    // its labels above stay, unpinned, until the controller rules.
     { map: [13, 16], x: 8, y: 3, id: 'counter' },
     { map: [13, 16], x: 6, y: 1, id: 'counter' },     // the counter's end over the wall
     { map: [13, 16], x: 2, y: 1, id: 'decor' },       // the elevator door
@@ -108,11 +109,6 @@ export const SHOP: InteriorTable = {
     { map: [13, 20], x: 6, y: 1, id: 'window' },
     { map: [13, 20], x: 4, y: 0, id: 'wall' },
     { map: [13, 20], x: 1, y: 4, id: 'tiles' },
-    { map: [13, 21], x: 5, y: 3, id: 'tiles' },
-    { map: [13, 21], x: 5, y: 5, id: 'chair' },       // a bench
-    { map: [13, 21], x: 9, y: 1, id: 'martShelf' },   // a vending machine
-    { map: [13, 21], x: 13, y: 3, id: 'stairsDown' },
-    { map: [13, 21], x: 5, y: 10, id: 'legacy' },     // the facade below the roof
     // Safari Zone entrance (23.0), Herb Shop (4.0), cycling-road gate (29.11).
     { map: [23, 0], x: 12, y: 1, id: 'pc' },
     { map: [23, 0], x: 16, y: 8, id: 'counter' },

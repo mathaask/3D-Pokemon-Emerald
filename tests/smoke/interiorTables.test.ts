@@ -41,7 +41,7 @@ function inScope(): Room[] {
   rooms = [];
   for (const m of loadAllMaps(new RomReader(loadRom()))) {
     const s = loadStaticMap(m.group, m.num);
-    if (!interiorScope(s.opts)) continue;
+    if (!interiorScope(s.opts, `${m.group}.${m.num}`)) continue;
     rooms.push({ key: `${m.group}.${m.num}`, s, a: analyze(s.grid, { ...s.opts, margin: 0 }) });
   }
   return rooms;
@@ -50,9 +50,10 @@ function inScope(): Room[] {
 interface IdUse { cells: number; blocked: number; maps: string[]; beh: number; layer: number }
 
 describe('interior id tables on the real maps', () => {
-  it('scopes 138 interiors: the houses, Pokémon Centers, Marts and labs, not the gyms', () => {
+  it('scopes 137 interiors: the houses, Pokémon Centers, Marts and labs, not the gyms or the Dept Store rooftop', () => {
     const keys = inScope().map((r) => r.key);
-    expect(keys.length).toBe(138);
+    expect(keys.length).toBe(137);
+    expect(keys).not.toContain('13.21');                             // Dept Store rooftop (OUT_OF_SCOPE_MAPS)
     for (const k of ['1.0', '2.2', '2.4', '1.4']) expect(keys, k).toContain(k);
     expect(keys).not.toContain('8.1');                               // Petalburg Gym
   });

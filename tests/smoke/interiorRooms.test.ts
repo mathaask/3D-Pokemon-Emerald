@@ -1,4 +1,4 @@
-// Interior room layouts on the real maps (needs the ROM): checkRoomLayout finds nothing on any of the 138 in-scope
+// Interior room layouts on the real maps (needs the ROM): checkRoomLayout finds nothing on any of the 137 in-scope
 // interiors, a handful of representative maps keep their pinned layout (back line per column, wall runs, doors), and
 // every rule of the layout that the real maps exercise changes a pinned map when it is switched off (ROOM_RULES).
 //   npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/interiorRooms.test.ts
@@ -58,12 +58,12 @@ describe('interior room layouts on the real maps', () => {
     let n = 0;
     for (const m of loadAllMaps(new RomReader(loadRom()))) {
       const s = loadStaticMap(m.group, m.num);
-      if (!interiorScope(s.opts)) continue;
+      if (!interiorScope(s.opts, `${m.group}.${m.num}`)) continue;
       n++;
       const { a, L, warps } = layout(s);
       for (const f of checkRoomLayout(a, L, warps)) bad.push(`${m.group}.${m.num}: ${f}`);
     }
-    expect(n).toBe(138);
+    expect(n).toBe(137);                                       // (138 on the five secondaries, less the Dept Store rooftop)
     expect(bad).toEqual([]);
   });
 

@@ -28,7 +28,8 @@ export interface WorldBuildContext {
   style: WorldStyle;
   events: GridEvents;
   quality: Quality;
-  /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build). */
+  /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build); also names the maps
+   *  `interiorScope` leaves out (OUT_OF_SCOPE_MAPS). */
   mapKey?: string;
   /** The interior kit on in-scope interiors in Modern (default true; false: today's legacy room and light — the
    *  `--ab-feature interior` baseline). */
@@ -187,7 +188,7 @@ export class World {
     this.interiorKitRan = false;
     // the kit: Modern, not underground; outdoors the outdoor families, on an in-scope interior the interior ones
     const modern = ctx.style === 'modern' && !opts.underground;
-    const interior = modern && opts.indoor && interiorScope(opts) && (ctx.interiorKit ?? true);
+    const interior = modern && opts.indoor && interiorScope(opts, ctx.mapKey) && (ctx.interiorKit ?? true);
     const families = !modern ? null : !opts.indoor ? this.families : interior ? this.interiorFamilies : null;
     if (families && families.length) {
       try {
@@ -307,7 +308,7 @@ export class World {
 /** Lays every floor of an in-scope interior at height 0 (its walkable cells' heights, the ground under its blocks):
  *  rooms are flat, floor, furniture and actors at one height. The solver gives a few rooms steps (the Lilycove Department
  *  Store floors 13.17, 13.19, 13.20 and the Safari Zone entrance 23.0: counter rings voting height offsets). */
-function flattenFloors(a: MapAnalysis): void {
+export function flattenFloors(a: MapAnalysis): void {
   for (let i = 0; i < a.N; i++) {
     if (a.kind[i] !== K.Water && !Number.isNaN(a.height[i])) a.height[i] = 0;
     a.groundH[i] = 0;
