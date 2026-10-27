@@ -219,14 +219,11 @@ vec3 kitGround(int mat, vec3 tint, vec2 p) {
 }
 `;
 
-/** The terrain's border warp (GLSL: sets `vec2 warp` from `cell`, grid space): the overworld's. */
-export const TERRAIN_WARP = /* glsl */ `  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them. (A grid of one cell — the
-  // battle platform tops' — has no borders: every lookup clamps to its one texel, so the warp would change no pixel.)
-  vec2 warp = vec2(0.0);
-  if (uGridSize.x * uGridSize.y > 1.0) {
-    warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
-         + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
-  }
+/** The overworld terrain's border warp (GLSL: sets `vec2 warp` from `cell`, grid space), as it was before the battle
+ *  arenas (their ground has a cheaper warp of its own, with its own one-cell guard: battle/parts/ground.ts WARP_GLSL). */
+const TERRAIN_WARP = /* glsl */ `  // Organic borders: a broad warp bends the grid's straight edges, a finer one frays them.
+  vec2 warp = (vec2(kitFbm2(cell * 0.7), kitFbm2(cell * 0.7 + 17.3)) - 0.5) * 1.5
+            + (vec2(kitNoise2(cell * 3.3), kitNoise2(cell * 3.3 + 9.1)) - 0.5) * 0.24;
 `;
 
 /** The terrain's colour hook with a border warp of the caller's (the battle ground's is cheaper: arenaGroundMaterial). */
