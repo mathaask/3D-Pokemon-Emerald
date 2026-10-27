@@ -22,6 +22,7 @@ import { rockCluster } from './rocks';
 import { arenaClear } from './flora';
 import { SCENERY_SEED, behindBattler, frameProjector, frameTop, insideEllipse, scatter, sightCap, stageKeepOut } from './scatter';
 import { polarIndex, ringBands } from './mesh';
+import { battlerBoxes, type FrameRect } from './frame';
 
 // ------------------------------------------------------------------------------------------------- the cliff band
 
@@ -391,24 +392,11 @@ export function poolRadius(p: LavaPool, a: number): number {
 const LAVA_FRAMED = { side: 0.9, top: 0.85, bottom: -0.35, margin: 0.5 };
 /** The frames the pools are placed against: the idle camera's (every pool shows there), then the ones it swings to. */
 const LAVA_YAWS = [0, -0.9, 0.9];
-/** A battler as the pools keep off it in the idle frame: a box this wide and tall (world units: a 64-px sprite is 2) on its
- *  platform, projected — a pool's middle never lies in it (behind or before the battler: its glow round a silhouette;
- *  its rim may peek past one). */
-const BATTLER_BOX = { half: 1.0, depth: 0.3, height: 2.0 };
-/** A frame (frameProjector) and the battlers' boxes in it (NDC x0, y0, x1, y1). */
-interface LavaFrame { project: ReturnType<typeof frameProjector>; boxes: [number, number, number, number][] }
-function lavaFrame(stage: Stage, yaw: number): LavaFrame {
-  const project = frameProjector(stage, yaw), B = BATTLER_BOX;
-  const boxes = [stage.player, stage.enemy].map((p): [number, number, number, number] => {
-    const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const dx of [-B.half, B.half]) for (const dz of [-B.depth, B.depth]) for (const y of [0, B.height]) {
-      const v = project(p.x + dx, y, p.z + dz, _v);
-      box[0] = Math.min(box[0], v.x); box[1] = Math.min(box[1], v.y); box[2] = Math.max(box[2], v.x); box[3] = Math.max(box[3], v.y);
-    }
-    return box;
-  });
-  return { project, boxes };
-}
+/** A frame (frameProjector) and the battlers' boxes in it (frame.ts battlerBoxes: BATTLER_BOX on each platform, projected —
+ *  a pool's middle never lies in one, behind or before the battler: its glow round a silhouette; its rim may peek past
+ *  one). */
+interface LavaFrame { project: ReturnType<typeof frameProjector>; boxes: FrameRect[] }
+const lavaFrame = (stage: Stage, yaw: number): LavaFrame => ({ project: frameProjector(stage, yaw), boxes: battlerBoxes(stage, yaw) });
 /** A pool's middle: its centre and 8 points LAVA_FRAMED.margin of its radius out. */
 function poolMiddle(p: LavaPool, each: (x: number, z: number) => boolean): boolean {
   if (!each(p.x, p.z)) return false;

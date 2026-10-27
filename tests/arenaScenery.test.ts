@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { STAGE, GROUND_Y } from '../src/render/battle/stage';
 import { battleCamera, frameTop, sightCap, stageKeepOut, SCENERY_SEED } from '../src/render/battle/parts/scatter';
+import { battleFrameCamera } from '../src/render/battle/parts/frame';
 import { duneGeometry, duneMounds, onDune } from '../src/render/battle/parts/dunes';
 import { treeGeometry } from '../src/render/kit/trees';
 import { ridgeGeometry } from '../src/render/battle/parts/horizon';
@@ -207,14 +208,7 @@ describe('arena scenery', () => {
     // a frame shows a tree's foot it shows 0.3 of its crown too — or its crown's low edge is down at the ground)
     const views = [...[0, 0.25, 0.5, 0.75].flatMap((ease) => [-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease, zoom: 1 }))),
       ...[-0.9, -0.45, 0, 0.45, 0.9].map((yaw) => ({ yaw, ease: 1, zoom: 0.6 }))];
-    const cams = views.map(({ yaw, ease, zoom }) => {
-      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
-      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look, ease, zoom));
-      cam.lookAt(look);
-      cam.updateMatrixWorld();
-      cam.updateProjectionMatrix();
-      return cam;
-    });
+    const cams = views.map((view) => battleFrameCamera(STAGE, view, 16 / 9));
     const low = { round: 0.74, bushy: 0.66, pine: 0.4, palm: 2.0 } as const;
     const v = new THREE.Vector3();
     let fitted = 0;
@@ -286,14 +280,7 @@ describe('arena scenery', () => {
   it('keeps at Low quality every tree some settled frame shows (|yaw| ≤ 0.9), and drops some', () => {
     // (an oracle through real cameras, 16:9, at the user's yaws: a tree shows where its foot or its crown's top lies in the
     // frame)
-    const cams = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12).map((yaw) => {
-      const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(24, 16 / 9, 0.1, 400);
-      cam.position.copy(battleCamera(STAGE, yaw, new THREE.Vector3(), look));
-      cam.lookAt(look);
-      cam.updateMatrixWorld();
-      cam.updateProjectionMatrix();
-      return cam;
-    });
+    const cams = Array.from({ length: 13 }, (_, i) => -0.9 + (1.8 * i) / 12).map((yaw) => battleFrameCamera(STAGE, yaw, 16 / 9));
     const v = new THREE.Vector3();
     const inFrame = (x: number, y: number, z: number) => cams.some((c) => {
       v.set(x, y, z).project(c);

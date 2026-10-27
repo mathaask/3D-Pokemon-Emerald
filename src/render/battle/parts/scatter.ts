@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { rng } from '../../kit/geom';
 import { BATTLE_CAMERA, PLATFORM_FOOTPRINT, PX, REF_PITCH, type Stage } from '../stage';
+import { battleFrameCamera } from './frame';
 
 export interface Ellipse { x: number; z: number; rx: number; rz: number }
 export interface ScatterOptions {
@@ -221,14 +222,10 @@ export function frameTop(stage: Stage, views: readonly (number | CameraView)[] =
   };
 }
 
-/** The settled battle camera at user yaw `yaw` (battleCamera, its 24° field of view; `aspect` the window's, default
- *  FRAME_ASPECT.shown: the frame what must show is placed in) as a projection: world (x, y, z) → normalised device
+/** The settled battle camera at user yaw `yaw` (frame.ts battleFrameCamera: its 24° field of view; `aspect` the window's,
+ *  default FRAME_ASPECT.shown: the frame what must show is placed in) as a projection: world (x, y, z) → normalised device
  *  coordinates into `out` (x, y in −1..1 inside the frame, z < 1 in front of the camera). */
 export function frameProjector(stage: Stage, yaw: number, aspect: number = FRAME_ASPECT.shown): (x: number, y: number, z: number, out: THREE.Vector3) => THREE.Vector3 {
-  const look = new THREE.Vector3(), cam = new THREE.PerspectiveCamera(THREE.MathUtils.radToDeg(CAMERA_FOV), aspect, 0.1, 400);
-  cam.position.copy(battleCamera(stage, yaw, new THREE.Vector3(), look));
-  cam.lookAt(look);
-  cam.updateMatrixWorld();
-  cam.updateProjectionMatrix();
+  const cam = battleFrameCamera(stage, yaw, aspect);
   return (x, y, z, out) => out.set(x, y, z).project(cam);
 }
