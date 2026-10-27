@@ -2,8 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   battleRoute, battleCardSpec, battleDecalSpec, battleFadeOverlay, battlerAlphaKey, battlerPaletteKey, isBattler, BattleActors,
+  battlerSlide, lowestOpaqueRow, FEET_MARGIN,
 } from '../src/render/battle/battleActors';
-import { STAGE, REF_PITCH } from '../src/render/battle/stage';
+import { STAGE, REF_PITCH, PX, PLATFORM_FOOTPRINT } from '../src/render/battle/stage';
 import { blankSprite } from '../src/render/previewActors';
 import { SYM } from '../src/game/symbols';
 import type { SpriteSnap } from '../src/game/state';
@@ -29,6 +30,111 @@ describe('battleCardSpec (today\'s placement)', () => {
     const mid = (STAGE.playerDepth + STAGE.enemyDepth) / 2;
     expect(battleCardSpec(effect(1, 108), slot, STAGE).footZ).toBeCloseTo(STAGE.at(124, 56, mid).z, 6);
     expect(battleCardSpec(effect(1, 500), slot, STAGE).footX).toBeCloseTo(STAGE.at(-12 + 16, 56, STAGE.playerDepth).x, 6);
+  });
+});
+
+describe('battlerSlide (battlers stand on their platform top)', () => {
+  // the reference camera is orthographic: a point's GBA screen position (stage.ts's rayOrigin inverted)
+  const screenOf = (p: THREE.Vector3) => {
+    const d = p.clone().sub(STAGE.origin);
+    return { x: 120 + d.dot(STAGE.right) * PX, y: 80 - d.dot(STAGE.up) * PX };
+  };
+  // a card's screen rectangle under the reference camera: its bottom and top centres (an upright card spans footY ..
+  // footY + height at footX / footZ)
+  const rect = (c: ReturnType<typeof battleCardSpec>) => ({
+    bottom: screenOf(new THREE.Vector3(c.footX, c.footY, c.footZ)), top: screenOf(new THREE.Vector3(c.footX, c.footY + c.height, c.footZ)),
+  });
+  /** A 64×64 battler at tiles 0.. whose lowest opaque row (of its rectangle) is `lowest`. */
+  const withTiles = (lowest: number) => {
+    const vram = new Uint8Array(0x18000);
+    // 1D mapping, 4 bpp: row r of tile column 3 (8 tiles a row)
+    vram[0x10000 + ((lowest >> 3) * 8 + 3) * 32 + (lowest & 7) * 4 + 1] = 0x20;
+    return { vram, map2d: false };
+  };
+  /** The world height of screen row `row`'s centre on a card (rows of the sprite's rectangle from its top, `top`). */
+  const rowY = (c: ReturnType<typeof battleCardSpec>, top: number, h: number, row: number) => c.footY + c.height * (1 - (row + 0.5 - top) / h);
+  const sliding = (s: ReturnType<typeof battler>, tiles: ReturnType<typeof withTiles> | null = null) =>
+    battleCardSpec(s, slot, STAGE, undefined, battlerSlide(s, STAGE, tiles));
+
+  it('keeps the card on its reference ray: the same GBA screen rectangle, at its size', () => {
+    for (const s of [battler(1, 144, 8), battler(0, 40, 53), battler(3, 120, 0)]) {
+      const today = rect(battleCardSpec(s, slot, STAGE)), slid = sliding(s);
+      expect(battlerSlide(s, STAGE)).not.toBe(0);
+      const r = rect(slid);
+      for (const k of ['bottom', 'top'] as const) {
+        expect(r[k].x).toBeCloseTo(today[k].x, 6);
+        expect(r[k].y).toBeCloseTo(today[k].y, 6);
+      }
+      expect(r.bottom.y).toBeCloseTo(s.screenY + 64, 6);
+      expect(slid.width).toBe(2);
+    }
+  });
+  it('stands a big opponent\'s feet (its picture\'s lowest row, GBA row 71) on the platform top: 12 rows hid before', () => {
+    const groudon = battler(1, 144, 9);                                  // Groudon: rows 9 .. 72, lowest opaque 71
+    const today = battleCardSpec(groudon, slot, STAGE), slid = sliding(groudon, withTiles(62));
+    expect(rowY(today, 9, 64, 71)).toBeLessThan(-0.35);                 // 12 rows below the platform top
+    expect(rowY(slid, 9, 64, 71)).toBeCloseTo(0, 6);                     // the lowest row's centre on it: half a row sinks
+    expect(rowY(slid, 9, 64, 70)).toBeGreaterThan(0);
+    expect(battlerSlide(groudon, STAGE)).toBeGreaterThan(0.9);           // towards the camera
+    // its feet: where the GBA's picture puts them on the platform (the ray through their screen row)
+    const feet = STAGE.groundHit(176, 71.5);
+    expect(slid.footZ).toBeCloseTo(feet.z, 6);
+    expect(slid.footX).toBeCloseTo(feet.x, 6);
+    // a small opponent alike (Zigzagoon: rows 23 .. 86, lowest 71)
+    expect(rowY(sliding(battler(1, 144, 23)), 23, 64, 71)).toBeCloseTo(0, 6);
+  });
+  it('keeps a floating opponent its elevation (its picture ends above row 71) and moves no battler with its motion', () => {
+    const zubat = battler(1, 144, 6);                                    // elevation 8: rows 6 .. 69, lowest opaque 63
+    const slid = sliding(zubat, withTiles(57));
+    // (8 rows above the platform top, as the GBA draws it above its shadow)
+    expect(rowY(slid, 6, 64, 63)).toBeCloseTo(8 / (PX * Math.cos(REF_PITCH)), 6);
+    // a jump (y2), a lunge (x2) or a faint: the battler's rest pose sets the slide
+    const d = battlerSlide(zubat, STAGE);
+    expect(battlerSlide({ ...zubat, screenY: -2, y2: -8 }, STAGE)).toBeCloseTo(d, 9);
+    expect(battlerSlide({ ...zubat, screenX: 124, x2: -20 }, STAGE)).toBeCloseTo(d, 9);
+  });
+  it('stands the player\'s side on row 111, the last above the text box (a back picture\'s lowest row)', () => {
+    const back = battler(0, 40, 70);                                     // Wailord's back: rows 70 .. 133, lowest 111
+    expect(rowY(sliding(back), 70, 64, 111)).toBeCloseTo(0, 6);
+    expect(battlerSlide(back, STAGE)).toBeLessThan(0);                   // it hovered: away from the camera
+    // the doubles' lower player (y 88): what the text box hides on the GBA (rows 112 ..) stays under the platform top
+    const lower = battler(2, 58, 56 + 8);
+    expect(rowY(sliding(lower, withTiles(55)), 64, 64, 111)).toBeCloseTo(0, 6);
+    expect(rowY(sliding(lower, withTiles(55)), 64, 64, 112)).toBeLessThan(0);
+  });
+  it('stands the doubles\' rear opponent on row 63, a trainer picture there on its own lowest row', () => {
+    const rear = battler(3, 120, 0);                                     // position 3 (x 152): a standing Pokémon, lowest 63
+    expect(rowY(sliding(rear, withTiles(63)), 0, 64, 63)).toBeCloseTo(0, 6);
+    const trainer = battler(3, 120, 8);                                  // a trainer picture at x 152, y 40: lowest row 71
+    expect(rowY(sliding(trainer, withTiles(63)), 8, 64, 71)).toBeCloseTo(0, 6);
+    expect(rowY(sliding(trainer), 8, 64, 63)).toBeCloseTo(0, 6);         // (no tiles: its ground row)
+  });
+  it('keeps the feet within FEET_MARGIN of the platform\'s footprint, the remainder below the platform top', () => {
+    const inside = (c: ReturnType<typeof battleCardSpec>) =>
+      Math.hypot((c.footX - STAGE.enemy.x) / PLATFORM_FOOTPRINT.enemy.rx, (c.footZ - STAGE.enemy.z) / PLATFORM_FOOTPRINT.enemy.rz);
+    // every position at rest stands well inside (≤ 0.63)
+    for (const s of [battler(1, 144, 9), battler(1, 168, 9), battler(3, 120, 0)]) expect(inside(sliding(s))).toBeLessThan(0.65);
+    // a battler resting far down the screen (its ground row far in front of the platform): the slide stops at the margin
+    const low = { ...battler(1, 144, 9), screenY: 9 + 40, y2: 0 };
+    const capped = battleCardSpec(low, slot, STAGE, undefined, battlerSlide(low, STAGE, withTiles(62)));
+    expect(inside(capped)).toBeCloseTo(FEET_MARGIN, 6);
+    expect(rowY(capped, 49, 64, 111)).toBeLessThan(0);
+    // beyond the platform's width: no slide
+    expect(battlerSlide(battler(1, 230, 9), STAGE)).toBe(0);
+  });
+  it('finds a picture\'s lowest opaque row in OBJ VRAM (1D / 2D mapping, 8 bpp, vertical flip)', () => {
+    const b = { ...battler(0, 40, 53), tileNum: 64 };
+    const vram = new Uint8Array(0x18000);
+    expect(lowestOpaqueRow(b, vram, false)).toBe(-1);
+    vram[0x10000 + (64 + 5 * 8 + 2) * 32 + 3 * 4 + 2] = 0x01;            // tile row 5, pixel row 3: row 43
+    expect(lowestOpaqueRow(b, vram, false)).toBe(43);
+    expect(lowestOpaqueRow({ ...b, vflip: true }, vram, false)).toBe(63 - 43);
+    vram.fill(0);
+    vram[0x10000 + (64 + 5 * 32 + 2) * 32 + 3 * 4] = 0x10;               // 2D mapping: 32 tiles a row
+    expect(lowestOpaqueRow(b, vram, true)).toBe(43);
+    vram.fill(0);
+    vram[0x10000 + (64 + (5 * 8 + 2) * 2) * 32 + 3 * 8 + 7] = 0x05;      // 8 bpp: 2 tile numbers a tile, 8 bytes a row
+    expect(lowestOpaqueRow({ ...b, bpp8: true }, vram, false)).toBe(43);
   });
 });
 
