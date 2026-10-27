@@ -95,7 +95,7 @@
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
 // entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
 // lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle,
-// vigoroth_switch in an in-scope interior (with `samePx`, a documented tolerance of a few edge pixels) and vigoroth_v the
+// vigoroth_switch in an in-scope interior (its rebuild in the first build's tile-animation phase) and vigoroth_v the
 // classic 2D view (V) and back there.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
@@ -121,9 +121,6 @@ interface LiveEntry {
   /** With `sameAs`: the entry must also end with as many shader programs as that entry in this run (the same state and
    *  frames: a mid-steps switch that compiled a program shows as more). */
   samePrograms?: boolean;
-  /** With `sameAs`: at most this many pixels may differ (default 0). Only where a documented draw-order effect shifts a
-   *  few edge pixels (vigoroth_switch). */
-  samePx?: number;
   /** A map-crossing walk: its steps after the first (an idle settle of ≥ 30 frames) cross this many map connections.
    *  See CROSSING below: what it records and gates. */
   crossings?: number;
@@ -199,12 +196,15 @@ const LIVE: LiveEntry[] = [
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
   // (Phase 4 Task 13) vigoroth with the world style switched to the other one and back mid-steps, in an in-scope room
   // (the interior kit built, dropped and rebuilt): no page error, the same 30 frames end as vigoroth with as many programs
-  // (nothing compiled: the interior's programs are in the boot catalogue). samePx: after a round trip through a non-kit
-  // build, 86 edge pixels of the Vigoroth over the box differ by ≤ 17/255 (persistent, not a transient: 26 frames after
-  // the return read the same; a kit → kit rebuild reads 0 px) — likely the new materials' ids reorder the opaque draws and
-  // the inflated actor's soft edge blends over whatever was drawn first. Invisible; reported for a ruling (Task 13)
-  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, samePx: 200, steps: [['', 10],
-    ['', 10, TOGGLE_STYLE], ['', 10, TOGGLE_STYLE]] },
+  // (nothing compiled: the interior's programs are in the boot catalogue). The way back builds on a frame of the same
+  // animation phase as vigoroth's first build: the Building tileset's TV (on in this room) swaps its tiles every 8 frames
+  // (the metatile atlas redraws at frames 2, 10, 18, 26: one 2-triangle draw each), and the kit's furniture takes its
+  // colours from the live tiles at its build (interior/colors.ts partColors), so a rebuild in the other phase (frames
+  // 2-9, 18-25) tints the TV cabinet's furnitureLow up to 17/255 differently — 86 px at the Vigoroth's arm, 2,913 px with
+  // the actors hidden (FW-A bisect: a kit → kit rebuild at frame 9 or 18 reads the same; at 10, 17 or 26 none). Frames
+  // 1-4 Modern, 5-12 Retro, from 13 Modern again (the phase of frame 1): 0 px
+  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, steps: [['', 4],
+    ['', 8, TOGGLE_STYLE], ['', 18, TOGGLE_STYLE]] },
   // vigoroth through the classic 2D view (V) and back: the 3D room comes back exactly as it was (0 px)
   { name: 'vigoroth_v', state: 'out/littleroot.state', sameAs: 'vigoroth', steps: [['', 10],
     ['', 10, "emu.renderer.mode = 'classic'"], ['', 10, "emu.renderer.mode = 'auto'"]] },
@@ -1402,9 +1402,9 @@ async function main(): Promise<void> {
             if (!fs.existsSync(plain)) throw new Error(`no ${sameAs}_${style}.png in this run's folder to equal (run ${sameAs} first)`);
             const d = await diffPng(page, file, plain);
             const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
-            const tol = (e.kind === 'live' && e.samePx) || 0;
-            if (d.pixels > tol) throw new Error(`differs from ${sameAs}_${style}: ${d.pixels} px (${d.pct.toFixed(2)} %), bbox ${b}${tol ? ` (> samePx ${tol})` : ''}`);
-            line += ` | = ${sameAs} (${d.pixels} px${tol ? ` ≤ ${tol}` : ''})`;
+            // (pixels -1: the sizes differ — never the same)
+            if (d.pixels !== 0) throw new Error(`differs from ${sameAs}_${style}: ${d.pixels} px (${d.pct.toFixed(2)} %), bbox ${b}`);
+            line += ` | = ${sameAs} (0 px)`;
             if (e.kind === 'live' && e.samePrograms) {
               const want = stats[`${sameAs}_${style}`]?.programs;
               if (want === undefined) throw new Error(`no ${sameAs}_${style} stats in this run to compare programs with (run ${sameAs} first)`);
