@@ -56,11 +56,22 @@ const FOG_NEAR = 40, FOG_FAR = 120;
 /** How often the background is sampled (s): BG3 is loaded a little after the battle starts. */
 const SAMPLE_EVERY = 0.5;
 
-/** Luminance (Rec. 709, linear) of the light today's battle gives its cards (the Retro charLight) for its hemisphere and
- *  sun strengths: by day, at night, in a room (and a cave: today's lights them alike). */
-const todayLight = (hemiI: number, sunI: number) =>
-  (0.2126 * (hemiI + sunI * 0.75) + 0.7152 * (hemiI + sunI * 0.72) + 0.0722 * (hemiI + sunI * 0.68)) / Math.PI;
-const TODAY_LIGHT = { day: todayLight(1.15, 2.4), night: todayLight(0.7, 0.6), room: todayLight(1.6, 1.6) };
+/** Today's battle light (the Retro look, and today's arena under Modern): the sun's strength and colour and the
+ *  hemisphere's strength by day, at night and in a room (indoors: environments 7 and 8; a room has no night). The
+ *  constructor starts from the day's; the Modern battlers' exposure target (TODAY_LIGHT) is read off it. */
+interface TodayLight { readonly sunI: number; readonly sunColor: number; readonly hemiI: number }
+export const TODAY_LIGHTS: { readonly day: TodayLight; readonly night: TodayLight; readonly room: TodayLight } = {
+  day: { sunI: 2.4, sunColor: 0xfff3e0, hemiI: 1.15 },
+  night: { sunI: 0.6, sunColor: 0x9fb3ff, hemiI: 0.7 },
+  room: { sunI: 1.6, sunColor: 0xfff3e0, hemiI: 1.6 },
+};
+/** The share of the sun's strength today's cards take per channel (the Retro charLight: (hemi + sun × share) / π). */
+const TODAY_SUN_SHARE = [0.75, 0.72, 0.68] as const;
+/** Luminance (Rec. 709, linear) of the light today's battle gives its cards (the Retro charLight) under a TODAY_LIGHTS
+ *  entry: by day, at night, in a room (and a cave: today's lights them alike). */
+const todayLight = ({ hemiI, sunI }: TodayLight) => (0.2126 * (hemiI + sunI * TODAY_SUN_SHARE[0])
+  + 0.7152 * (hemiI + sunI * TODAY_SUN_SHARE[1]) + 0.0722 * (hemiI + sunI * TODAY_SUN_SHARE[2])) / Math.PI;
+export const TODAY_LIGHT = { day: todayLight(TODAY_LIGHTS.day), night: todayLight(TODAY_LIGHTS.night), room: todayLight(TODAY_LIGHTS.room) };
 /** The Modern battlers' exposure range (BattleView.applyLook). */
 const EXPOSURE = { min: 0.5, max: 3 };
 const _sunDir = new THREE.Vector3();
@@ -78,8 +89,10 @@ export class BattleView {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(30, 1.5, 0.1, 400);
   private actors: BattleActors;
-  private sun = new THREE.DirectionalLight(0xffffff, 2.4);
-  private hemi = new THREE.HemisphereLight(0xcfe8ff, 0x55603a, 1.1);
+  /** (every update sets the lights and the fog — Retro's branch or applyLook — before a frame is drawn: these starting
+   *  values reach only the precompile, which compiles by the lights' count, not their colour or strength) */
+  private sun = new THREE.DirectionalLight(TODAY_LIGHTS.day.sunColor, TODAY_LIGHTS.day.sunI);
+  private hemi = new THREE.HemisphereLight(HEMI_SKY, HEMI_GROUND, TODAY_LIGHTS.day.hemiI);
   /** Today's sky (the Retro battle's and today's arena's), and the Modern sky (BattleSky: the Modern arena's). */
   private sky = new Sky();
   private battleSky = new BattleSky();
@@ -162,7 +175,7 @@ export class BattleView {
       { field: this.field, xbr: this.xbr, rim: this.uniforms.uSky, instanceUniforms: opts.instanceUniforms });
     this.scene.add(this.actors.group, this.sun, this.sun.target, this.hemi, this.sky.mesh, this.battleSky.mesh, this.arena.group);
     this.battleSky.mesh.visible = false;
-    this.scene.fog = new THREE.Fog(0xcfe8ff, 40, 120);
+    this.scene.fog = new THREE.Fog(HEMI_SKY, FOG_NEAR, FOG_FAR);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
@@ -549,16 +562,17 @@ export class BattleView {
     const fog = this.scene.fog as THREE.Fog;
     if (this.modernShown) this.applyLook(hour);
     else {
-      this.sun.intensity = indoor ? 1.6 : night ? 0.6 : 2.4;
-      this.sun.color.set(night ? 0x9fb3ff : 0xfff3e0);
-      this.hemi.intensity = indoor ? 1.6 : night ? 0.7 : 1.15;
+      const today = indoor ? TODAY_LIGHTS.room : night ? TODAY_LIGHTS.night : TODAY_LIGHTS.day;
+      this.sun.intensity = today.sunI;
+      this.sun.color.set(today.sunColor);
+      this.hemi.intensity = today.hemiI;
       this.hemi.color.copy(HEMI_SKY);
       this.hemi.groundColor.copy(HEMI_GROUND);
-      const k = 1 / Math.PI;
+      const k = 1 / Math.PI, share = TODAY_SUN_SHARE;
       this.charLight.setRGB(
-        (this.hemi.intensity + this.sun.intensity * 0.75) * k,
-        (this.hemi.intensity + this.sun.intensity * 0.72) * k,
-        (this.hemi.intensity + this.sun.intensity * 0.68) * k,
+        (this.hemi.intensity + this.sun.intensity * share[0]) * k,
+        (this.hemi.intensity + this.sun.intensity * share[1]) * k,
+        (this.hemi.intensity + this.sun.intensity * share[2]) * k,
       );
       fog.near = FOG_NEAR;
       fog.far = FOG_FAR;
