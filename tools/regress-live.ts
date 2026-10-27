@@ -95,7 +95,7 @@
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
 // entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
 // lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle,
-// vigoroth_switch in an in-scope interior (its rebuild in the first build's tile-animation phase) and vigoroth_v the
+// vigoroth_switch in an in-scope interior (its rebuild in the other tile-animation phase) and vigoroth_v the
 // classic 2D view (V) and back there.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
@@ -196,15 +196,13 @@ const LIVE: LiveEntry[] = [
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
   // (Phase 4 Task 13) vigoroth with the world style switched to the other one and back mid-steps, in an in-scope room
   // (the interior kit built, dropped and rebuilt): no page error, the same 30 frames end as vigoroth with as many programs
-  // (nothing compiled: the interior's programs are in the boot catalogue). The way back builds on a frame of the same
-  // animation phase as vigoroth's first build: the Building tileset's TV (on in this room) swaps its tiles every 8 frames
-  // (the metatile atlas redraws at frames 2, 10, 18, 26: one 2-triangle draw each), and the kit's furniture takes its
-  // colours from the live tiles at its build (interior/colors.ts partColors), so a rebuild in the other phase (frames
-  // 2-9, 18-25) tints the TV cabinet's furnitureLow up to 17/255 differently — 86 px at the Vigoroth's arm, 2,913 px with
-  // the actors hidden (FW-A bisect: a kit → kit rebuild at frame 9 or 18 reads the same; at 10, 17 or 26 none). Frames
-  // 1-4 Modern, 5-12 Retro, from 13 Modern again (the phase of frame 1): 0 px
-  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, steps: [['', 4],
-    ['', 8, TOGGLE_STYLE], ['', 18, TOGGLE_STYLE]] },
+  // (nothing compiled: the interior's programs are in the boot catalogue). The way back builds in the other tile-animation
+  // phase than vigoroth's first build (frame 21; the Building tileset's TV, on in this room, swaps its tiles every 8
+  // frames: the metatile atlas redraws at frames 2, 10, 18, 26): the kit samples its colours from the tilesets' static
+  // tiles (ClassifyOptions.colorInfo; FW-A found the furniture re-tinted up to 17/255 by a rebuild in the other phase
+  // while it read live VRAM, FW-B fixed it), so it must end exactly as vigoroth, 0 px
+  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, steps: [['', 10],
+    ['', 10, TOGGLE_STYLE], ['', 10, TOGGLE_STYLE]] },
   // vigoroth through the classic 2D view (V) and back: the 3D room comes back exactly as it was (0 px)
   { name: 'vigoroth_v', state: 'out/littleroot.state', sameAs: 'vigoroth', steps: [['', 10],
     ['', 10, "emu.renderer.mode = 'classic'"], ['', 10, "emu.renderer.mode = 'auto'"]] },

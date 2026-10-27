@@ -13,7 +13,8 @@ import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldMaterials, type WorldStyle } from './world';
 import { worldCatalogue, type WorldCatalogue } from '../kit/catalogue';
-import { analyzeMetatiles } from './tileInfo';
+import { analyzeMetatiles, romTileVram, type TileInfo } from './tileInfo';
+import { interiorScope } from '../kit/interior/scope';
 import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
@@ -97,6 +98,8 @@ export class OverworldView {
   quality: Quality = 'medium';
   private shadowQuality: Quality = 'medium';
   private romReader: RomReader | null = null;
+  /** The interior kit's colour source (ClassifyOptions.colorInfo), per tileset pair (their ROM tiles) and palette. */
+  private colorCache: { primary: number; secondary: number; vram: Uint8Array; palette: Uint16Array; info: TileInfo | null } | null = null;
   private eventsCache: { key: string; events: GridEvents } = { key: '', events: NO_EVENTS };
   private eventsWarned = false;
 
@@ -453,16 +456,39 @@ export class OverworldView {
   buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number, events: GridEvents = NO_EVENTS,
     secondaryTileset = 0, mapKey?: string): void {
     const info = analyzeMetatiles(bus, this.atlas.entries, this.atlas.attributes, this.charBase, bgPalette);
+    const indoor = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE;
+    // the interior kit samples its colours from the tilesets' static tiles: live VRAM holds whichever frame a tile
+    // animation shows (the Building TV swaps every 8 frames), and a room rebuilt on another frame must not re-tint
+    const kit = this.worldStyle === 'modern' && this.interiorKit && this.mapType !== MAP_TYPE_UNDERGROUND
+      && interiorScope({ indoor, primaryTileset, secondaryTileset }, mapKey ?? null);
     this.world.build(grid, {
       info,
+      colorInfo: kit ? this.staticColorInfo(bus, primaryTileset, secondaryTileset, bgPalette) : undefined,
       generalPrimary: primaryTileset === SYM.gTileset_General,
-      indoor: this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE,
+      indoor,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
       secondaryTileset,
       primaryTileset,
     }, { style: this.worldStyle, events, quality: this.quality, mapKey, interiorKit: this.interiorKit });
     this.haveWorld = true;
+  }
+
+  /** The metatiles analysed on the tilesets' ROM tiles (no tile animation's frame) under `palette`: the interior kit's
+   *  colours (ClassifyOptions.colorInfo). Cached per tileset pair and palette (a rebuild of the room costs nothing). */
+  private staticColorInfo(bus: Bus, primary: number, secondary: number, palette: Uint16Array): TileInfo {
+    let c = this.colorCache;
+    if (!c || c.primary !== primary || c.secondary !== secondary) {
+      this.romReader ??= new RomReader(bus.rom);
+      c = this.colorCache = { primary, secondary, vram: romTileVram(this.romReader, primary, secondary), palette: new Uint16Array(256), info: null };
+    }
+    let same = c.info !== null;
+    for (let k = 0; k < 256 && same; k++) same = c.palette[k] === palette[k];
+    if (!same || !c.info) {
+      c.palette.set(palette.subarray(0, 256));
+      c.info = analyzeMetatiles({ vram: c.vram }, this.atlas.entries, this.atlas.attributes, 0, c.palette);
+    }
+    return c.info;
   }
 
   /** Static map preview: set tilesets/map type directly (no emulator state). */

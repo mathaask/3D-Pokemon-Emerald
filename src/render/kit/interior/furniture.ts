@@ -25,7 +25,7 @@ import { hashCell } from '../geom';
 import type { RGB } from '../palette';
 import { FURNITURE_KINDS, interiorIds, type FurnitureKind, type InteriorId } from '../tables/building';
 import { DIR_STEP, RECESS, roomLayout, walkable, type RoomLayout, type WallDir } from './room';
-import { partColors, type PartColors } from './colors';
+import { colorInfo, partColors, type PartColors } from './colors';
 import { SHELL } from './wallParts';
 import type { InteriorCatalogueEntry } from './index';
 
@@ -291,7 +291,7 @@ function makePiece(a: MapAnalysis, ids: readonly (InteriorId | null)[], L: RoomL
     : kind === 'stairsUp' || kind === 'stairsDown' ? stairsFacing(a, ids, L, xy) : null;
   return {
     kind, cells, xy, floorY, foot, cellFeet, facing,
-    colors: partColors(a.info, cells.map((c) => a.mt[c])),
+    colors: partColors(colorInfo(a), cells.map((c) => a.mt[c])),
     seed: hashCell(x0, y0, KIND_INDEX.get(kind)!),
   };
 }

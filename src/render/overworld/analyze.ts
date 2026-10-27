@@ -25,6 +25,10 @@ export interface ClassifyOptions {
   /** ROM address of the primary tileset (0 / absent: unknown). Read only by the kit: the interior scope
    *  (`kit/interior/scope.ts`) needs `gTileset_Building`. */
   primaryTileset?: number;
+  /** The interior kit's colour source (`kit/interior/colors.ts` colorInfo; absent: `info`): the metatiles on the
+   *  tilesets' ROM tiles (`romTileVram`) under the live palette. Live VRAM swaps an animated tile's frame (the Building
+   *  TV every 8 frames), and a room's colours must not depend on the frame it was built on. */
+  colorInfo?: TileInfo;
   margin: number;
 }
 

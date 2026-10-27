@@ -1,8 +1,10 @@
 // CPU-side metatile analysis: decodes every metatile of the current tileset pair from
 // live VRAM so the classifier can reason about pixels (coverage, greenness, ground
-// differences) — the same data the GPU atlas shows.
+// differences) — the same data the GPU atlas shows. romTileVram: the tilesets' ROM tiles
+// instead (no tile animation's frame), the interior kit's colour source.
 
-import type { Bus } from '../../gba/bus';
+import type { RomReader } from '../../game/rom/reader';
+import { loadTileset } from '../../game/rom/tileset';
 
 export interface TileInfo {
   /** Composite colour (BGR555, 0x8000 = transparent) for 1024 metatiles x 256 px, both layers. */
@@ -23,7 +25,7 @@ export interface TileInfo {
 }
 
 export function analyzeMetatiles(
-  bus: Bus, entries: Uint16Array, attributes: Uint16Array, charBase: number, palette: Uint16Array,
+  bus: { readonly vram: ArrayLike<number> }, entries: Uint16Array, attributes: Uint16Array, charBase: number, palette: Uint16Array,
 ): TileInfo {
   const both = new Uint16Array(1024 * 256);
   const bottom = new Uint16Array(1024 * 256);
@@ -88,6 +90,15 @@ export function analyzeMetatiles(
     isVoid[m] = opaque === 0 || dark > 240 ? 1 : 0;
   }
   return { both, bottom, topCover, bottomCover, green, blue, isVoid, attributes };
+}
+
+/** The tilesets' own tiles from the ROM (`primary` at tile 0, `secondary` at tile 512, character base 0), as a VRAM
+ *  image: what a static map preview loads. */
+export function romTileVram(rom: RomReader, primary: number, secondary: number): Uint8Array {
+  const vram = new Uint8Array(0x10000);
+  if (primary) vram.set(loadTileset(rom, primary).tiles.subarray(0, 0x4000), 0);
+  if (secondary) vram.set(loadTileset(rom, secondary).tiles.subarray(0, 0x4000), 0x4000);
+  return vram;
 }
 
 /** Fraction (0..1) of pixels in metatile `m` that differ from the ground metatile `g`. */

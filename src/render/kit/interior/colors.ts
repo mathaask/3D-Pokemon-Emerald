@@ -8,6 +8,10 @@ import type { InteriorId } from '../tables/building';
 import type { ShellColors } from './wallParts';
 import type { RoomLayout } from './room';
 
+/** Where the interior kit samples colours (furniture, walls, clocks, floor tints, decals): `opts.colorInfo`, the
+ *  tilesets' static tiles (no tile animation's frame), else the analysed tiles (a static preview's are the ROM's). */
+export const colorInfo = (a: MapAnalysis): TileInfo => a.opts.colorInfo ?? a.info;
+
 export interface PartColors { main: RGB; second: RGB; accent: RGB; dark: RGB }   // sRGB
 
 /** Lit: luma at least this. */
@@ -67,7 +71,7 @@ export function wallColors(a: MapAnalysis, L: RoomLayout, ids: readonly (Interio
     const below = j >= 0 && L.band[j] === 1 && !L.partition[j];
     (below ? upper : lowest).push(a.mt[i]);
   }
-  const mainOf = (mts: number[]) => (mts.length ? partColors(a.info, mts).main : null);
+  const mainOf = (mts: number[]) => (mts.length ? partColors(colorInfo(a), mts).main : null);
   const fallback = mainOf(any) ?? PLAIN_WALL;
   const wall = mainOf(upper) ?? mainOf(lowest) ?? fallback;
   const wainscot = mainOf(lowest) ?? mainOf(upper) ?? fallback;

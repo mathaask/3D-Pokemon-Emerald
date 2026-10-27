@@ -22,6 +22,8 @@ import { INTERIOR_FAMILIES } from '../../src/render/kit/interior/index';
 import { interiorScope } from '../../src/render/kit/interior/scope';
 import { roomLayout, checkRoomLayout, type RoomLayout } from '../../src/render/kit/interior/room';
 import { BEHAVIOR_IDS, interiorIds } from '../../src/render/kit/tables/building';
+import { analyzeMetatiles, romTileVram } from '../../src/render/overworld/tileInfo';
+import type { ClassifyOptions } from '../../src/render/overworld/analyze';
 import type { FurniturePiece } from '../../src/render/kit/interior/furniture';
 
 const OUT = path.resolve(import.meta.dirname, '../../out');
@@ -139,6 +141,40 @@ describe('interiors on the real maps', () => {
   it('furnishes the houses', () => {
     expect(kinds(at(1, 0))).toMatchObject({ table: 1, tv: 1, stairsUp: 1 });     // Brendan's 1F
     expect(kinds(at(1, 1))).toMatchObject({ bed: 1, pc: 1, stairsDown: 1 });     // Brendan's 2F
+  });
+
+  // FW-A's root cause (vigoroth_switch): the furniture took its colours from live VRAM, where the Building TV's tiles swap
+  // every 8 frames, so a rebuild on the other frame re-tinted the TV cabinet. The live renderer hands the kit
+  // ClassifyOptions.colorInfo, the metatiles on the tilesets' ROM tiles (romTileVram): any frame, the same colours.
+  it('colours the furniture from the static tiles, whatever frame a tile animation shows', () => {
+    const s = loadStaticMap(1, 0);                                 // Brendan's house 1F: its TV
+    const { entries, attributes, palette } = s.tiles;
+    const vram = romTileVram(s.rom, s.opts.primaryTileset!, s.opts.secondaryTileset!);
+    expect(vram.subarray(0, 0x8000)).toEqual(s.tiles.vram.subarray(0, 0x8000));   // the static preview's own VRAM
+    const statics = analyzeMetatiles({ vram }, entries, attributes, 0, palette);
+    const colours = (opts: Omit<ClassifyOptions, 'margin'>) => {
+      const a = analyze(s.grid, { ...opts, margin: MARGIN });
+      flattenFloors(a);
+      const ex = extractAll({ a, events: gridEvents(s.map.events, 0), quality: 'medium' }, INTERIOR_FAMILIES);
+      return (ex.payloads.get('furniture') as FurniturePiece[]).map((p) => ({ kind: p.kind, colors: p.colors }));
+    };
+    const base = colours(s.opts);
+    const tv = base.findIndex((p) => p.kind === 'tv');
+    expect(tv).toBeGreaterThanOrEqual(0);
+    // another animation frame: every tile the TV's metatiles draw, changed
+    const ids = interiorIds(analyze(s.grid, { ...s.opts, margin: MARGIN }));
+    const a0 = analyze(s.grid, { ...s.opts, margin: MARGIN });
+    const live = s.tiles.vram.slice();
+    for (let i = 0; i < a0.N; i++) {
+      if (ids[i] !== 'tv') continue;
+      for (let k = 0; k < 8; k++) {
+        const t = entries[a0.mt[i] * 8 + k] & 0x3ff;
+        for (let b = t * 32; b < t * 32 + 32; b++) live[b] = (live[b] + 0x35) & 0xff;
+      }
+    }
+    const liveInfo = analyzeMetatiles({ vram: live }, entries, attributes, 0, palette);
+    expect(colours({ ...s.opts, info: liveInfo })[tv]).not.toEqual(base[tv]);          // live VRAM alone: re-tinted
+    expect(colours({ ...s.opts, info: liveInfo, colorInfo: statics })).toEqual(base);   // with the static tiles: as built
   });
 
   it('writes the coverage report and holds it', () => {

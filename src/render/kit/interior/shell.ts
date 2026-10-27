@@ -20,7 +20,7 @@ import { BUILDING_BODY, facadeMaterial } from '../buildings';
 import { luma, saturation, scale, type RGB } from '../palette';
 import { interiorIds } from '../tables/building';
 import { roomLayout, type RoomLayout, type WallDir, type WallFeature } from './room';
-import { partColors, wallColors } from './colors';
+import { colorInfo, partColors, wallColors } from './colors';
 import type { ShellColors } from './wallParts';
 import type { InteriorCatalogueEntry } from './index';
 import {
@@ -41,7 +41,7 @@ export interface ShellPlacement { layout: RoomLayout; colors: ShellColors; decal
 /** A clock's colours from its cells' pixels: a light face (its main or second colour, else off-white) in a rim of its
  *  accent (a saturated frame), else its dark. */
 function clockColors(a: MapAnalysis, f: WallFeature): { face: RGB; rim: RGB } {
-  const c = partColors(a.info, f.cells.map((i) => a.mt[i]));
+  const c = partColors(colorInfo(a), f.cells.map((i) => a.mt[i]));
   const face = luma(c.main) >= 0.55 ? c.main : luma(c.second) >= 0.55 ? c.second : [0.96, 0.95, 0.9] as RGB;
   const rim = saturation(c.accent) >= 0.3 ? c.accent : luma(c.dark) < 0.35 ? c.dark : scale(c.main, 0.45);
   return { face, rim };
@@ -90,7 +90,7 @@ export const shellFamily: Family<ShellPlacement | null> = {
     if (!S.glass.empty) add(S.glass.geometry(), ROOM_GLASS, 'roomWindows', 'N', true);
     if (!S.partitions.empty) add(S.partitions.geometry(), BUILDING_BODY, 'partitions', null, true);
     if (S.decals.length) {
-      const P = packDecals(a.info.both, a.mt, S.decals, p.colors.wall);
+      const P = packDecals(colorInfo(a).both, a.mt, S.decals, p.colors.wall);
       const tex = new THREE.DataTexture(P.data, P.width, P.height, THREE.RGBAFormat, THREE.UnsignedByteType);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.magFilter = THREE.LinearFilter;

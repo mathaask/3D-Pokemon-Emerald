@@ -23,7 +23,7 @@ import { mix, type RGB } from '../../palette';
 import type { TileInfo } from '../../../overworld/tileInfo';
 import { TERRAIN_CELL_GLSL, TERRAIN_GRID_GLSL } from '../../terrain';
 import { FLOOR_KINDS, type FloorKind, type InteriorId } from '../../tables/building';
-import { floorLook } from '../colors';
+import { colorInfo, floorLook } from '../colors';
 import {
   BOARDS_CELL_GLSL, BOARDS_FW_GLSL, BOARDS_SHADE_GLSL, FLOOR_SEAM_GLSL, TILES_CELL_GLSL, TILES_FW_GLSL, TILES_SHADE_GLSL,
 } from '../floorGlsl';
@@ -116,7 +116,7 @@ export function floorCells(a: MapAnalysis, ids: readonly (InteriorId | null)[], 
   const looks = new Map<number, RGB>();
   const lookOf = (m: number) => {
     let t = looks.get(m);
-    if (!t) looks.set(m, t = floorTint(a.info, m));
+    if (!t) looks.set(m, t = floorTint(colorInfo(a), m));
     return t;
   };
   const candidate = (i: number) => (L.inside[i] === 1 || L.band[i] === 1 || claims.has(i, CLAIM_OBJECT))

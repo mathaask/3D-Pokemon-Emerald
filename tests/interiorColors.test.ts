@@ -1,8 +1,13 @@
 // Interior part colours (Phase 4 Task 5): main / second / accent / dark of a part's metatiles, a back wall's shell
 // colours, a floor's tint.
 import { describe, it, expect } from 'vitest';
-import { partColors, wallColors, floorLook } from '../src/render/kit/interior/colors';
+import { colorInfo, partColors, wallColors, floorLook } from '../src/render/kit/interior/colors';
 import { roomLayout } from '../src/render/kit/interior/room';
+import { furnitureFamilyWith, type FurnitureOut, type FurniturePiece } from '../src/render/kit/interior/furniture';
+import { floorCells, floorTint } from '../src/render/kit/interior/geom/floorPatterns';
+import { Claims } from '../src/render/overworld/claims';
+import { NO_EVENTS } from '../src/render/kit/events';
+import type { TileInfo } from '../src/render/overworld/tileInfo';
 import { bgr555ToSrgb, mix, scale, soften } from '../src/render/kit/palette';
 import { fakeInfo } from './helpers/fakeMap';
 import { fakeInterior } from './helpers/fakeInterior';
@@ -24,6 +29,45 @@ paint(info.both, 0x230); paint(info.bottom, 0x230);
 const plainInfo = fakeInfo();
 plainInfo.both.fill(BROWN, 0x231 * 256, 0x232 * 256);
 plainInfo.bottom.fill(BROWN, 0x231 * 256, 0x232 * 256);
+
+// FW-A's root cause: live VRAM holds a tile animation's current frame (the Building TV every 8 frames), so a room built on
+// another frame took other colours. The kit samples colorInfo(a): the tilesets' static tiles (opts.colorInfo, the live
+// renderer's romTileVram analysis), else the analysed tiles.
+describe('the colour source', () => {
+  const ROOM = ['        ', ' WWWFWW ', ' WWWFWW ', ' ...... ', ' ...... ', '        '];
+  /** A fridge (0x20a) red, the walls (0x201) tan, the boards (0x205) brown; the rest as `base`. */
+  const painted = (base: TileInfo): TileInfo => {
+    const t: TileInfo = { ...base, both: base.both.slice(), bottom: base.bottom.slice() };
+    for (const [m, c] of [[0x20a, RED], [0x201, TAN], [0x205, BROWN]]) { t.both.fill(c, m * 256, m * 256 + 256); t.bottom.fill(c, m * 256, m * 256 + 256); }
+    return t;
+  };
+  const sample = (useStatic: boolean) => {
+    const { a, ids } = fakeInterior(ROOM);
+    const live = painted(a.info);
+    live.both.fill(OUTLINE, 0x20a * 256, 0x20a * 256 + 128);       // the live frame: half the fridge another colour
+    const statics = painted(a.info);
+    (a as { info: TileInfo }).info = live;
+    if (useStatic) a.opts.colorInfo = statics;
+    const L = roomLayout(a, ids, []);
+    const stub = (p: FurniturePiece, o: FurnitureOut) => o.low.quad([0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1], [0, 1, 0], p.colors.main);
+    const pieces = furnitureFamilyWith({ fridge: stub }).extract({ a, events: NO_EVENTS, quality: 'medium' }, new Claims(a.N));
+    const floor = floorCells(a, ids, L, new Claims(a.N));
+    return { a, statics, live, fridge: pieces[0].colors, wall: wallColors(a, L, ids).wall, floor: floor[0].tint };
+  };
+  it('samples the static tiles when the analysis carries them', () => {
+    const s = sample(true);
+    expect(colorInfo(s.a)).toBe(s.statics);
+    expect(s.fridge).toEqual(partColors(s.statics, [0x20a, 0x20a]));
+    expect(s.fridge).not.toEqual(partColors(s.live, [0x20a, 0x20a]));
+    expect(s.wall).toEqual(soften(bgr555ToSrgb(TAN)));
+    expect(s.floor).toEqual(floorTint(s.statics, 0x205));
+  });
+  it('samples the analysed tiles otherwise (a static preview: they are the ROM\'s)', () => {
+    const s = sample(false);
+    expect(colorInfo(s.a)).toBe(s.live);
+    expect(s.fridge).toEqual(partColors(s.live, [0x20a, 0x20a]));
+  });
+});
 
 describe('part colours', () => {
   it('takes main, second, accent and dark colours', () => {
