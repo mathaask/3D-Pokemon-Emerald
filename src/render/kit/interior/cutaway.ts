@@ -24,24 +24,24 @@ export interface CutawayRun { dir: WallDir; line: number; from: number; to: numb
 
 const isNS = (d: WallDir) => d === 'N' || d === 'S';
 
-/** A pocket side is at most this long: in the back wall (N) the band's depth (BAND_MAX: the stairs alcove, a back-wall
- *  step), in a side or front wall one cell (a jog). */
-export const POCKET_MAX: Readonly<Record<WallDir, number>> = { N: BAND_MAX, E: 1, S: 1, W: 1 };
+/** A pocket side is at most this long: the back-wall band's depth (BAND_MAX: the stairs alcove, a back-wall step). */
+export const POCKET_MAX = BAND_MAX;
 
 /**
- * The wall direction whose cutaway takes run `r` along, else null: `r` is the short side of a pocket in a wall of that
- * direction — both its ends meet runs of one (perpendicular) direction p and it is at most POCKET_MAX[p] long: the side
- * walls of the stairs alcove in the back wall, of a back-wall step, a one-cell piece of back wall between a corner and an
- * alcove. When p is cut away such a run stands alone between the camera and the room (at yaw π the stairs alcove's E / W
- * walls in the foreground), so it goes with p. A room's own side walls meet two directions (N at the back, S at the
- * front) and a long wall stays: the default view (yaw 0, S cut away) keeps every wall it showed — no in-scope room has
- * a short S pocket (survey: the S pockets are 7–12 long, on 23.0 and 29.2).
+ * 'N' when the back wall's cutaway takes run `r` along, else null: `r` is a short side of a pocket in the back wall —
+ * both its ends meet N runs and it is at most POCKET_MAX long: the side walls of the stairs alcove, of a back-wall step.
+ * When the back wall is cut away (yaw near π) such a run stands alone between the camera and the room, so it goes with
+ * it. Only the back wall takes runs along: a piece of back wall between two E (or W) runs — the one cell between a
+ * corner and an alcove — stays governed by its own direction (taken along with a side wall it left a wall-high hole
+ * beside the alcove from about 15° of orbit, the wall decals floating in it). A room's own side walls meet N at one end
+ * and S at the other: never taken along. At yaw 0 nothing changes (N is shown).
  */
 export function pocketDir(runs: readonly CutawayRun[], r: CutawayRun): WallDir | null {
+  if (isNS(r.dir) || r.to - r.from > POCKET_MAX + 1e-6) return null;
   const at = (e: number) =>
-    runs.find((o) => isNS(o.dir) !== isNS(r.dir) && o.floorY === r.floorY && o.line === e && (o.from === r.line || o.to === r.line));
+    runs.find((o) => isNS(o.dir) && o.floorY === r.floorY && o.line === e && (o.from === r.line || o.to === r.line));
   const a = at(r.from), b = at(r.to);
-  return a && b && a.dir === b.dir && r.to - r.from <= POCKET_MAX[a.dir] + 1e-6 ? a.dir : null;
+  return a?.dir === 'N' && b?.dir === 'N' ? 'N' : null;
 }
 
 /** A run of direction `dir` that `pocket`'s cutaway takes along (pocketDir; null: none) stays visible when its own

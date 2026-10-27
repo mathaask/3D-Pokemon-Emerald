@@ -50,6 +50,23 @@ describe('interior cutaway: pocket sides', () => {
     const S = buildShellSoups({ a, L, colors: { base: [0.5, 0.4, 0.3], wainscot: [0.8, 0.7, 0.6], panel: [0.8, 0.7, 0.6], trim: [0.9, 0.9, 0.9], wall: [0.9, 0.85, 0.8] } });
     expect(S.pockets.map((q) => [q.dir, q.pocket, q.walls.empty])).toEqual([['E', 'N', false], ['W', 'N', false]]);
   });
+  it('keeps the one-cell back-wall piece beside an alcove at 15° of orbit (only the back wall takes runs along)', () => {
+    // the stairs alcove one cell from the east corner: N 8–9 between the alcove's E side and the room's E wall
+    const { a, ids } = fakeInterior(['          ', ' WWWWWWSW ', ' WWWWWWSW ', ' ........ ', ' ........ ', '          ']);
+    const runs = shellRuns(a, roomLayout(a, ids, []));
+    const piece = runs.find((r) => r.dir === 'N' && r.from === 8 && r.to === 9)!;
+    const side = runs.find((r) => r.dir === 'E' && r.line === 8)!;
+    expect(piece).toBeDefined();
+    expect(pocketDir(runs, piece)).toBeNull();
+    const yaw15 = (15 * Math.PI) / 180;
+    expect(wallVisible('E', back(yaw15))).toBe(false);                 // (the side walls turn away from 15°)
+    expect(runVisible(piece.dir, pocketDir(runs, piece), back(yaw15))).toBe(true);
+    expect(runVisible(piece.dir, pocketDir(runs, piece), back(0))).toBe(true);
+    // the alcove's sides: shown at yaw 0, gone with the back wall at yaw π
+    expect(pocketDir(runs, side)).toBe('N');
+    expect(runVisible(side.dir, 'N', back(0))).toBe(true);
+    expect(runVisible(side.dir, 'N', back(Math.PI))).toBe(false);
+  });
   it('never takes a long wall along (a back-wall segment beside an alcove stays at yaw ±π/2)', () => {
     const r = (dir: 'N' | 'E' | 'S' | 'W', line: number, from: number, to: number) => ({ dir, line, from, to, floorY: 0 });
     const runs = [r('N', 1.5, 0, 7), r('N', 0.5, 7, 8), r('N', 1.5, 8, 11), r('W', 7, 0.5, 1.5), r('E', 8, 0.5, 1.5),
