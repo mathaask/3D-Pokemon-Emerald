@@ -129,8 +129,9 @@ export class Renderer {
     // arenas of both styles) compiles from boot on, in parallel: a map's first visit and a battle's entry compile nothing.
     // The frames that compile the rest block: main.ts draws them while the loader waits for the start gesture if the
     // programs are ready by then (finishPrecompile), else each view's first sync draws its own. (The battle's starts one
-    // macrotask later: its catalogue's build and the overworld's are separate tasks on the main thread; precompiled()
-    // and the first battle sync start it at once if it has not started yet.)
+    // macrotask later: its catalogue's build and the overworld's are separate tasks on the main thread — precompiled(),
+    // called right after construction in normal boot, starts it a macrotask later too; the first battle sync starts it
+    // at once if it has not started yet.)
     void this.overworld.precompile(this.webgl);
     setTimeout(() => void this.battle.precompile(this.webgl), 0);
     this.screens = this.compileScreensAsync();
@@ -291,9 +292,12 @@ export class Renderer {
   }
 
   /** Resolves when the overworld's and the battle's precompiles' and the screen programs' parallel compiles are done (or
-   *  failed: logged). */
+   *  failed: logged). The battle's is started (if it has not started yet) a macrotask later, as the constructor starts
+   *  it: main.ts calls this right after the constructor, which must not pull the battle catalogue's build into the
+   *  overworld's task. */
   precompiled(): Promise<void> {
-    return Promise.all([this.overworld.precompile(this.webgl), this.battle.precompile(this.webgl), this.screens]).then(() => undefined);
+    const battle = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() => this.battle.precompile(this.webgl));
+    return Promise.all([this.overworld.precompile(this.webgl), battle, this.screens]).then(() => undefined);
   }
 
   /**
