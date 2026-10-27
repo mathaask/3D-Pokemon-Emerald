@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
-import { PostFX, tiltShiftFor } from '../src/render/post';
+import { PostFX, tiltShiftFor, gtaoDenoiseNoise } from '../src/render/post';
 import { setAoPrepassMaterial, aoPrepassMaterial } from '../src/render/aoPrepass';
 import { shadowSettings } from '../src/render/overworld/overworldView';
 
@@ -87,6 +87,25 @@ describe('sun shadow quality', () => {
 describe('GTAO at High', () => {
   /** PostFX's GTAO pass (High). */
   const gtaoOf = (post: PostFX) => post.composer.passes.find((p) => p instanceof GTAOPass) as GTAOPass;
+
+  it('draws the same denoise noise on every page load (three seeds it from Math.random)', () => {
+    const noise = (seed: number) => {
+      // (a different Math.random per construction: two page loads)
+      const random = vi.spyOn(Math, 'random').mockImplementation(() => (seed = (seed * 16807) % 2147483647) / 2147483647);
+      try {
+        const ao = gtaoOf(new PostFX(fakeRenderer(800, 600, 1), new THREE.Scene(), new THREE.PerspectiveCamera(), 'high'));
+        expect(ao.pdMaterial.uniforms.tNoise.value).toBe(ao.pdNoiseTexture);
+        return ao.pdNoiseTexture.image.data as Uint8Array;
+      } finally {
+        random.mockRestore();
+      }
+    };
+    const a = noise(1), b = noise(424242);
+    expect(a.length).toBe(64 * 64 * 4);
+    expect(Array.from(a)).toEqual(Array.from(b));
+    expect(new Set(a).size).toBeGreaterThan(100); // (noise, not a constant)
+    expect(Array.from(gtaoDenoiseNoise(7).image.data as Uint8Array)).not.toEqual(Array.from(a));
+  });
 
   it('draws a mesh with a prepass material of its own in the depth/normal prepass, and its own material again after', () => {
     const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera();
