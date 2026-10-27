@@ -10,7 +10,8 @@ export const PX = 32;
 export const REF_PITCH = THREE.MathUtils.degToRad(24);
 
 /** Where the GBA draws the two platform centres (singles layout). */
-export const PLATFORM_PLAYER_SCREEN = { x: 64, y: 117 }, PLATFORM_ENEMY_SCREEN = { x: 176, y: 64 };
+const PLATFORM_PLAYER_SCREEN = { x: 64, y: 117 };
+export const PLATFORM_ENEMY_SCREEN = { x: 176, y: 64 };
 
 /** Today's arena ground (BattleArena.group.position.y): the platform tops are y = 0. */
 export const GROUND_Y = -0.28;

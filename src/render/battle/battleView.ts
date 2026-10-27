@@ -34,8 +34,6 @@ import { arenaLook, type ArenaLook } from './look';
 import { arenaPalette } from './palette';
 import { BattleSky } from './sky';
 
-export { isBattleHudSprite } from './battleActors';
-
 /** Battler slots the battlers' field covers at most (a double battle has four battlers; trainer pictures join them). */
 const FIELD_SLOTS = 16;
 

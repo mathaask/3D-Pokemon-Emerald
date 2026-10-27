@@ -23,7 +23,7 @@ const HUD_TEMPLATE_RANGES: [number, number][] = [
 ];
 
 /** A HUD sprite (healthbox, HP bar, party status balls): the screen-space HUD draws it. */
-export function isBattleHudSprite(s: SpriteSnap): boolean {
+function isBattleHudSprite(s: SpriteSnap): boolean {
   for (const [a, b] of HUD_TEMPLATE_RANGES) if (s.template >= a && s.template < b) return true;
   return false;
 }
@@ -34,7 +34,7 @@ export function isBattler(s: SpriteSnap): boolean {
 }
 
 /** The shadow sprite under a floating enemy (gSpriteTemplate_EnemyShadow). */
-export function isEnemyShadow(s: SpriteSnap): boolean {
+function isEnemyShadow(s: SpriteSnap): boolean {
   return s.template === SYM.gSpriteTemplate_EnemyShadow;
 }
 
