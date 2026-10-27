@@ -24,7 +24,7 @@ import { CLIFF_MATERIAL } from '../../kit/cliffs';
 import type { ArenaColors } from '../bgSample';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
-import { GROUND_Y, type Stage } from '../stage';
+import { BATTLE_CAMERA, GROUND_Y, type Stage } from '../stage';
 import {
   LAVA_GLOW, SMALL_FRONT, TIP_SHOWN, WALL_SEED, clusterSpires, lavaBankGeometry, lavaGeometry, lavaMaterial, lavaPools, rockWallGeometry, stalagmiteGeometry,
   type ArenaSpire, type LavaPool, type WallBand,
@@ -251,16 +251,20 @@ export function stadiumItems(kind: StadiumKind, stage: Stage): StadiumItem[] {
   });
 }
 
-/** The battlers as the idle frame shows them (frame.ts battlerBoxes: the lava's and the halls' rule, a 2 × 2 box on each
- *  platform, projected by the settled camera at yaw 0): whether a thing `half` wide either side and `height` tall standing
- *  at (x, z) — its part under the frame's top — stands over one of them there. */
+/** The idle camera's yaws: the middle of its sway and its ends (± BATTLE_CAMERA.sway). */
+const IDLE_YAWS = [0, -BATTLE_CAMERA.sway, BATTLE_CAMERA.sway];
+
+/** The battlers as the idle frame shows them through its sway (frame.ts battlerBoxes: the lava's and the halls' rule, a
+ *  2 × 2 box on each platform, projected by the settled camera at yaw 0 and ± BATTLE_CAMERA.sway): whether a thing `half`
+ *  wide either side and `height` tall standing at (x, z) — its part under the frame's top — stands over one of them at
+ *  any of those yaws. (At yaw 0 only, three of Sidney's spikes stood over a box at +0.04, by up to 15 px.) */
 function battlerOverlap(stage: Stage): (x: number, z: number, half: number, height: number) => boolean {
-  const cam = battleFrameCamera(stage, 0), boxes = battlerBoxes(stage, 0), top = frameTop(stage, [0]);
-  return (x, z, half, height) => {
+  const frames = IDLE_YAWS.map((yaw) => ({ cam: battleFrameCamera(stage, yaw), boxes: battlerBoxes(stage, yaw), top: frameTop(stage, [yaw]) }));
+  return (x, z, half, height) => frames.some(({ cam, boxes, top }) => {
     const h = Math.min(height, top(x, z) - GROUND_Y);
     const r = frameRect(cam, [[x - half, GROUND_Y, z], [x + half, GROUND_Y, z], [x - half, GROUND_Y + h, z], [x + half, GROUND_Y + h, z]]);
     return boxes.some((b) => rectsOverlap(r, b));
-  };
+  });
 }
 
 /** A fountain at `at`: a round basin (a plinth, its wall with a rolled lip), a pedestal rising from its floor to a
@@ -403,8 +407,12 @@ const SPIKES: Readonly<Partial<Record<StadiumKind, { tall: number; small: number
   drake: { tall: 11, small: 5, r: [10, 15.5], height: 3 },
 };
 
+/** A spike's foot (its flared base, leaning and wobbling — rock.ts SPIRE): its radius round where it stands, `h` tall.
+ *  The tall rule holds round all of it; the battlers' boxes keep off it (battlerOverlap). */
+export const spikeFoot = (h: number): number => (0.2 + 0.16 * h) * 1.4 + 0.07 * h;
+
 /** A kind's spikes: tall ones on the tall rule, each fitted under the frame's top edge (its tip shows: TIP_SHOWN; one that
- *  would stay under 1.1 units is left out), never over a battler in the idle frame (battlerOverlap), some in clusters
+ *  would stay under 1.1 units is left out), never over a battler in the idle frame through its sway (battlerOverlap), some in clusters
  *  (clusterSpires: a smaller spire at its foot keeps to the rules too); small ones (≤ 1) off the platforms and the strip in
  *  front of the player's, under the camera's sight lines, outside the rim, beside or behind the stage (rock.ts SMALL_FRONT). */
 export function spikePlacements(kind: StadiumKind, stage: Stage, seed: number): ArenaSpire[] {
@@ -412,8 +420,7 @@ export function spikePlacements(kind: StadiumKind, stage: Stage, seed: number): 
   if (!rule) return [];
   const r = rng(seed * 7307 + 0x5b1e);
   const ko = stageKeepOut(stage), clear = arenaClear(stage), cap = sightCap(stage), top = frameTop(stage), over = battlerOverlap(stage);
-  // (a spire's foot: its flared base, leaning and wobbling — rock.ts SPIRE; the tall rule holds round all of it)
-  const base = (h: number) => (0.2 + 0.16 * h) * 1.4 + 0.07 * h;
+  const base = spikeFoot;
   const tallAround = (x: number, z: number, rad: number) => ko.tallOk(x, z)
     && Array.from({ length: 8 }, (_, q) => (q / 8) * Math.PI * 2).every((a) => ko.tallOk(x + Math.cos(a) * rad, z + Math.sin(a) * rad));
   const out: ArenaSpire[] = [];

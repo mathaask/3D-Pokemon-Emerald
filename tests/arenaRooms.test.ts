@@ -18,7 +18,7 @@ import { createKitUniforms, kitMaterial, kitMaterialKind, type KitMaterialOption
 import { luma } from '../src/render/kit/palette';
 import { STADIUM_THEME, crystalGeometry, arenaRimGeometry } from '../src/render/battle/parts/stadium';
 import { brokenEdgeGeometry, cloudSeaGeometry } from '../src/render/battle/parts/skyPillar';
-import { MAGMA_LAVA, RIM, STADIUM_KINDS, STADIUM_PART, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
+import { MAGMA_LAVA, RIM, STADIUM_KINDS, STADIUM_PART, spikeFoot, spikePlacements, stadiumItems, stadiumLava, type StadiumKind } from '../src/render/battle/parts/stadium';
 import { EDGE, SKY_PILLAR_PART, stumpPlacements } from '../src/render/battle/parts/skyPillar';
 import { LAVA_GLOW, LAVA_MATERIAL, ROCK_PART, TIP_SHOWN, clusterSpires, lavaGeometry, lavaMaterial, lavaPools, poolRadius, type LavaPool } from '../src/render/battle/parts/rock';
 import { SCENERY_SEED, frameTop, sightCap } from '../src/render/battle/parts/scatter';
@@ -558,6 +558,22 @@ describe('stadium rooms: the part, walls, props, colours', () => {
           expect(gap, `pillar at (${it.x.toFixed(2)}, ${it.z.toFixed(2)}), sway ${sway}`).toBeGreaterThanOrEqual(24);
         }
       });
+    }
+  });
+
+  it("keeps Sidney's and Drake's spikes off both battlers' boxes through the idle sway", () => {
+    // (each spike's foot — spikeFoot either side — to its height under the frame's top, at the sway's ends and middle: at
+    // yaw 0 only, three of Sidney's entered a box by up to 15 px at +0.04)
+    for (const kind of ['sidney', 'drake'] as StadiumKind[]) {
+      const spikes = spikePlacements(kind, STAGE, SCENERY_SEED);
+      for (const sway of SWAYS) {
+        const cam = battleFrameCamera(STAGE, sway), boxes = battlerBoxes(STAGE, sway), top = frameTop(STAGE, [sway]);
+        for (const s of spikes) {
+          const half = spikeFoot(s.height), h = Math.min(s.height, top(s.x, s.z) - GROUND_Y);
+          const r = frameRect(cam, [[s.x - half, GROUND_Y, s.z], [s.x + half, GROUND_Y, s.z], [s.x - half, GROUND_Y + h, s.z], [s.x + half, GROUND_Y + h, s.z]]);
+          expect(boxes.some((b) => rectsOverlap(r, b)), `${kind} spike at (${s.x.toFixed(2)}, ${s.z.toFixed(2)}) ${s.height.toFixed(2)} tall, sway ${sway}`).toBe(false);
+        }
+      }
     }
   });
 
