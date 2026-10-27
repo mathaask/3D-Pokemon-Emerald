@@ -100,7 +100,7 @@ export function brokenEdgeGeometry(seed: number, stage: Stage, color: RGB): THRE
 // ------------------------------------------------------------------------------------------------- stumps and drums
 
 /** A broken pillar on the floor: where, its radius and the height of its break. */
-export interface Stump { x: number; z: number; radius: number; height: number; seed: number }
+interface Stump { x: number; z: number; radius: number; height: number; seed: number }
 
 /** The stumps as (angle off straight behind the stage, radius from its centre, the break's height): placed against the
  *  idle frame (.scratch/t11/grid.ts: over the player's head, between the battlers, right of the enemy) and round the
@@ -204,7 +204,7 @@ const DRUMS: readonly [number, number, number, number][] = [[0.02, 11.7, 0.5, 0.
  *  .scratch/t11/sky.ts), and past r 76 the look's fog (25..90) has all but swallowed them (the sky dome's horizon is the
  *  fog's colour): the sea reaches from under the edge into the haze, and only the puffs some battle frame shows are built
  *  (cloudShown). */
-export const CLOUD_SEA = { r: [30, 76] as const, arc: 2.15, depth: [4, 7] as const, spacing: 3.1, blob: [0.85, 1.45] as const,
+const CLOUD_SEA = { r: [30, 76] as const, arc: 2.15, depth: [4, 7] as const, spacing: 3.1, blob: [0.85, 1.45] as const,
   spread: 1.5, squash: 0.62, lod: [[40, 5, 1], [58, 4, 0], [Infinity, 3, 0]] as const };
 
 /** A cloud puff's template (blobCrown at the origin, its colours turned white with a cool underside, RGB): cached per

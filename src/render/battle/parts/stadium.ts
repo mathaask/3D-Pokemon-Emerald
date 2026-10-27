@@ -50,15 +50,15 @@ export const STADIUM_KINDS: readonly StadiumKind[] = ['magma', 'aqua', 'sidney',
 // ------------------------------------------------------------------------------------------------- the walls
 
 /** The rock rooms' band (rock.ts: the caves' cliff band), the ice room's band behind its crystals. */
-export const ROCK_BAND: WallBand = { r: 18, arc: 1.75, height: [10, 16] };
+const ROCK_BAND: WallBand = { r: 18, arc: 1.75, height: [10, 16] };
 /** The metal ring: `sides` flat panels round the stage, their inner faces `r` from its centre, `height` tall, the
  *  panels whose ends stand past centre.z + `front` left out (the camera's side, as the halls' rule: rooms.ts). */
-export const METAL_RING = { sides: 16, r: 17, height: 10, front: 3.9 };
+const METAL_RING = { sides: 16, r: 17, height: 10, front: 3.9 };
 /** The marble rooms: the gyms' room (rooms.ts HALLS.gym) with pillars along their walls as the gyms' (hallLayout('gym')). */
-export const MARBLE_ROOM: RoomSpec = HALLS.gym;
+const MARBLE_ROOM: RoomSpec = HALLS.gym;
 /** The ice room: crystal clusters every `step` units along r `r` (± `wander`), ± `arc` rad from straight behind,
  *  `height` tall, before an ice band (`band`). */
-export const ICE_RING = { r: 16.3, wander: 0.7, step: 1.55, arc: 1.55, height: [3.2, 7.5] as const,
+const ICE_RING = { r: 16.3, wander: 0.7, step: 1.55, arc: 1.55, height: [3.2, 7.5] as const,
   band: { r: 19.5, arc: 1.75, height: [9, 14] } as WallBand };
 
 /** The arena's rim: a ring step round the stage, its inner face `r` from the centre (both platforms reach ≈ 4.4 from it,
@@ -85,7 +85,7 @@ function collar(s: Soup, p0: V3, p1: V3, rad: number, inner: number, col: RGB, s
  *  band of tall framed panels and a cornice, a dark rib at every joint; the ring's ends at its open front capped by a rib.
  *  position, normal, color(3) (sRGB colours: `panel` the face, `frame` the panels' frames, `seam` the plinth and ribs,
  *  `rail`). */
-export function metalRingGeometry(stage: Stage, c: { panel: RGB; frame: RGB; seam: RGB; rail: RGB }): THREE.BufferGeometry {
+function metalRingGeometry(stage: Stage, c: { panel: RGB; frame: RGB; seam: RGB; rail: RGB }): THREE.BufferGeometry {
   const s = new Soup(), M = METAL_RING, n = M.sides, H = M.height;
   const cx = stage.centre.x, cz = stage.centre.z;
   const half = M.r * Math.tan(Math.PI / n), corner = M.r / Math.cos(Math.PI / n);
@@ -208,7 +208,7 @@ export function crystalGeometry(seed: number, height: number, color: RGB): THREE
 // ------------------------------------------------------------------------------------------------- props
 
 /** A prop standing in the arena: what, where, how tall and its footprint's half width. */
-export interface StadiumItem { kind: 'pillar' | 'fountain' | 'candelabrum' | 'candles' | 'crystal'; x: number; z: number; height: number; half: number }
+interface StadiumItem { kind: 'pillar' | 'fountain' | 'candelabrum' | 'candles' | 'crystal'; x: number; z: number; height: number; half: number }
 
 /** The props' sizes: the pillars' radius and height (Drake's, standing free), the fountains' basin radius and height,
  *  the candelabra's height, the floor candles' cluster. */

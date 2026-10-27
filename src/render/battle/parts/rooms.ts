@@ -31,7 +31,7 @@ import { Soup, lathe, lin, type LatheColor } from './soup';
  *  to z = centre.z + front, `height` tall from the floor (GROUND_Y). */
 export interface RoomSpec { back: number; halfWidth: number; height: number; front: number }
 export type HallKind = 'building' | 'gym' | 'leader' | 'frontier';
-export type Hall = RoomSpec & { pillars: number; windows: number; banners: number; seats: boolean; lights: number };
+type Hall = RoomSpec & { pillars: number; windows: number; banners: number; seats: boolean; lights: number };
 
 /** The four halls (front 3.9 everywhere: 0.1 inside the tall rule's z ≤ centre.z + 4, so Float32 vertex positions never
  *  round past it). */
@@ -49,7 +49,7 @@ export type Wall = 'back' | 'left' | 'right';
 /** A wall seen from inside the room: its inner face's origin on the floor (the back wall's at x = centre.x, the side
  *  walls' at z = centre.z), `u` along it to the right, `w` into the room; a point on it at (s along u, h over the floor,
  *  d into the room); and its run of s (the side walls' from their front ends to the back wall). */
-export interface WallFrame { o: V3; u: V3; w: V3; s: [number, number]; at(s: number, h: number, d: number): V3 }
+interface WallFrame { o: V3; u: V3; w: V3; s: [number, number]; at(s: number, h: number, d: number): V3 }
 
 export function wallFrame(wall: Wall, spec: RoomSpec, stage: Stage): WallFrame {
   const cx = stage.centre.x, cz = stage.centre.z, hw = spec.halfWidth;
@@ -80,7 +80,7 @@ export const SHELL = { thick: 0.4, base: 0.35, wainscot: 1.15, crown: 0.42, reli
 /** The default shell colours of a palette: a darker baseboard (the accent darkened), a lighter wainscot (the wall a
  *  little towards the accent), white trims, the upper wall the GBA's top-band stripe (the wall 0.45 towards the
  *  accent). */
-export function shellColors(p: ArenaPalette): ShellColors {
+function shellColors(p: ArenaPalette): ShellColors {
   const wainscot = mix(p.wall, p.accent, 0.12);
   return { base: scale(p.accent, 0.55), wainscot, panel: scale(wainscot, 1.04), trim: mix(p.wall, [1, 1, 1], 0.5), wall: mix(p.wall, p.accent, 0.45) };
 }
