@@ -119,7 +119,9 @@ import { editRaw, metatileId, scriptEdits, type DecompEdit } from './lib/decompE
 type RefusalCounts = Partial<Record<string, number>>;
 /**
  * A puzzle walk's or edit entry's gate (Phase 4b). 'record': report only (today's rebuild ms and first frame per change).
- * 'gate' (preflight F3): after the settle, programs constant, gridChanges ≥ 1; the refusals (stats().refusals, by reason:
+ * 'gate' (preflight F3): after the settle, programs constant; the grid changes exactly `changes` (a walk's pinned
+ * [cells, collision] per change, recorded at p4b-base: a drifting walk — one crack of three, an unrelated change — fails;
+ * none pinned: ≥ 1, the edit entries, whose every step must take exactly one); the refusals (stats().refusals, by reason:
  * Task 3) exactly as `expect` lists them for the style (none listed: none) — a change the incremental path refuses
  * rebuilds the world, so the world builds equal the refusals and patches + refusals == gridChanges; every refused change's
  * frame ≤ its build + crossingMargin(build) (a crossing's budget); every patched one within its budget (path 'live' ≤
@@ -133,12 +135,20 @@ type RefusalCounts = Partial<Record<string, number>>;
 interface PuzzleGate {
   retro: 'record' | 'gate'; modern: 'record' | 'gate'; path: 'live' | 'legacy';
   expect?: { retro?: RefusalCounts; modern?: RefusalCounts };
+  /** A live walk's grid changes, each [cells, collision] (`collision`: cells made blocked or passable), as p4b-base
+   *  recorded them; [] = none (Mossdeep's arrows never change, D5 ruling). */
+  changes?: readonly (readonly [cells: number, collision: number])[];
 }
-/** Every puzzle entry records until Task 3 (legacy patches) and the group-C join (live cells) switch their gates on. */
+/** Record only: the o_* outdoor entries (Retro patched, Modern refused 'outdoorKit': record-only until Task 15 rules). */
 const RECORD: PuzzleGate = { retro: 'record', modern: 'record', path: 'legacy' };
-/** RECORD with `n` 'structure' refusals expected in both styles (the changes with collision changes, p4b-base: the
- *  Modern rooms are legacy until Task 7 switches the 4b scope on; the C join revises Modern's). */
-const recordStructure = (n: number): PuzzleGate => ({ ...RECORD, expect: { retro: { structure: n }, modern: { structure: n } } });
+/** Gated in both styles on the legacy path (Task 3: the gyms and Trick House rooms are out of scope until Task 7, legacy
+ *  in both styles), with `n` 'structure' refusals expected in both (the changes with collision changes, p4b-base: F3; the
+ *  C join revises Modern's) and, for a live walk, its pinned `changes`. */
+const gateStructure = (n: number, changes?: PuzzleGate['changes']): PuzzleGate => ({ retro: 'gate', modern: 'gate', path: 'legacy',
+  ...(n ? { expect: { retro: { structure: n }, modern: { structure: n } } } : {}), ...(changes ? { changes } : {}) });
+/** gateStructure(0): visual-only changes — every one patched, 0 builds (thin ice, Petalburg's doors, the Sootopolis stairs,
+ *  the Lilycove painting). */
+const GATE = gateStructure(0);
 const PATCH_BUDGET_MS = { live: 1.0, legacy: 12 } as const;
 const PATCH_FRAME_MARGIN_MS = { live: 4, legacy: 16 } as const;
 
@@ -321,20 +331,20 @@ const LIVE: LiveEntry[] = [
   // settle and the shot ≥ 30 frames after the last one. (Their p4b-base references are that task's capture.)
   // pz_ice: Sootopolis Gym 1F (15.0) from the stairs (8,20) three steps north over thin ice: each ice cell cracks
   // (0x20D → 0x20E) as the player steps off it, at 45 (8,19), 61 (8,18), 77 (8,17); the shot at 138
-  { name: 'pz_ice', state: 'out/pz_sootopolis.state', steps: [['', 30], ['UP', 48], ['', 60]], puzzle: RECORD },
+  { name: 'pz_ice', state: 'out/pz_sootopolis.state', steps: [['', 30], ['UP', 48], ['', 60]], puzzle: gateStructure(0, [[1, 0], [1, 0], [1, 0]]) },
   // pz_switch: Mauville Gym (10.0) from 0,16 onto switch 1 (0,15): at 57 the switch is pressed and every barrier toggles
   // (27 cells in one frame: MauvilleGymPressSwitch + MauvilleGymSetDefaultBarriers); the shot at 136
-  { name: 'pz_switch', state: 'out/pz_mauville.state', steps: [['', 30], ['UP', 16], ['', 90]], puzzle: recordStructure(1) },
+  { name: 'pz_switch', state: 'out/pz_mauville.state', steps: [['', 30], ['UP', 16], ['', 90]], puzzle: gateStructure(1, [[27, 14]]) },
   // pz_arrows: Mossdeep Gym (14.0) from 16,34 onto the green floor switch (15,34): the rotating tile puzzle moves and turns
   // the statues on the green arrows — objects, not cells: no grid change (Emerald's arrows never change; the arrow edits in
   // its scripts.inc are Ruby/Sapphire leftovers that never run); the shot at 136
-  { name: 'pz_arrows', state: 'out/pz_mossdeep.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: RECORD },
+  { name: 'pz_arrows', state: 'out/pz_mossdeep.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: gateStructure(0, []) },
   // pz_e4_door: Sidney's room (16.0) from the entrance (6,13) at the fade-in: the on-frame script walks the player in (to
   // 6,7) and at 99 closes the door behind (5-7,12 → EntryDoor_ClosedTop, 5-7,13 → ClosedBottom, blocked); the shot at 180
-  { name: 'pz_e4_door', state: 'out/pz_e4.state', steps: [['', 30], ['', 150]], puzzle: recordStructure(1) },
+  { name: 'pz_e4_door', state: 'out/pz_e4.state', steps: [['', 30], ['', 150]], puzzle: gateStructure(1, [[6, 6]]) },
   // pz_th3: Trick House puzzle 3 (29.5) from 5,14 onto button 1 (4,14): at 57 the button presses and the blue doors close
   // (26 cells), at 58 the red ones open (49 cells); the shot at 136
-  { name: 'pz_th3', state: 'out/pz_th3.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: recordStructure(2) },
+  { name: 'pz_th3', state: 'out/pz_th3.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: gateStructure(2, [[26, 12], [49, 25]]) },
   // gym_hole: Lavaridge Gym 1F (4.1) from 11,18 west into the hole at 10,18 → B1F (4.2) at 126 (crossing-gated: one build,
   // no compile); the shot at 196, 70 frames after the load
   { name: 'gym_hole', state: 'out/pz_lavaridge.state', steps: [['', 30], ['LEFT', 16], ['', 150]], crossings: 1 },
@@ -516,33 +526,33 @@ const STATIC_INTERIOR: StaticEntry[] = [
   { name: 'i_mtpyre', q: 'map=24.15&actors=1' }, { name: 'i_link', q: 'map=25.25&actors=1' },
   // Puzzle edit entries (Phase 4b Task 1: the decomp's edits through preview.setCells, recorded). i_pz_th3: Trick House 3's
   // button 1 pressed and the doors swapped (blue closed, red open: 75 cells, as pz_th3's two frames)
-  { name: 'i_pz_th3', q: 'map=29.5&actors=1', puzzle: recordStructure(1), edits: {
+  { name: 'i_pz_th3', q: 'map=29.5&actors=1', puzzle: gateStructure(1), edits: {
     script: ['Route110_TrickHousePuzzle3', 'Route110_TrickHousePuzzle3_EventScript_SetDoorsState1'],
     cells: [[4, 14, 'METATILE_TrickHousePuzzle_Button_Pressed', false]] } },
   // i_pz_petalburg: room 5's two doors (1,52 and 7,52; two rows each, blocked) through the slide frames 1-4 two frames
   // apart (field_specials.c PetalburgGymSetDoorMetatiles; frame 0, 0x218, is the closed door the map holds), the last
   // frame shot
-  { name: 'i_pz_petalburg', q: 'map=8.1&actors=1&x=4.5&y=54', puzzle: RECORD, edits: [1, 2, 3, 4].map((f) => ({
+  { name: 'i_pz_petalburg', q: 'map=8.1&actors=1&x=4.5&y=54', puzzle: GATE, edits: [1, 2, 3, 4].map((f) => ({
     cells: [1, 7].flatMap((x): [number, number, string, boolean][] => [[x, 52, `METATILE_PetalburgGym_SlidingDoor_Frame${f}`, true],
       [x, 53, `METATILE_PetalburgGym_SlidingDoor_Frame${f}+8`, true]]),
     after: f < 4 ? 2 : 30 })) },
   // i_pz_sootopolis: the first ice field cracked under three steps (7,19 8,19 8,18 → Ice_Cracked) and one cell broken
   // (9,18 → Ice_Broken), then the first hidden stairs (8,15-16: OpenFirstStairs)
-  { name: 'i_pz_sootopolis', q: 'map=15.0&actors=1&x=8.5&y=17.5', puzzle: RECORD, edits: [
+  { name: 'i_pz_sootopolis', q: 'map=15.0&actors=1&x=8.5&y=17.5', puzzle: GATE, edits: [
     { cells: [[7, 19, 'METATILE_SootopolisGym_Ice_Cracked', false], [8, 19, 'METATILE_SootopolisGym_Ice_Cracked', false],
       [8, 18, 'METATILE_SootopolisGym_Ice_Cracked', false], [9, 18, 'METATILE_SootopolisGym_Ice_Broken', false]] },
     { script: ['SootopolisCity_Gym_1F', 'SootopolisCity_Gym_1F_EventScript_OpenFirstStairs'] }] },
   // i_pz_mauville: the barriers' alternate state (SetAltBarriers) with switch 1 (0,15) pressed — as pz_switch's 27 cells
-  { name: 'i_pz_mauville', q: 'map=10.0&actors=1', puzzle: recordStructure(1), edits: {
+  { name: 'i_pz_mauville', q: 'map=10.0&actors=1', puzzle: gateStructure(1), edits: {
     script: ['MauvilleCity_Gym', 'MauvilleCity_Gym_EventScript_SetAltBarriers'],
     cells: [[0, 15, 'METATILE_MauvilleGym_PressedSwitch', false]] } },
   // i_pz_e4: Sidney's entrance closed behind the player (the cells pz_e4_door's probe saw: the shared door script is not in
   // the decomp copy, data/scripts/ is missing)
-  { name: 'i_pz_e4', q: 'map=16.0&actors=1', puzzle: recordStructure(1), edits: {
+  { name: 'i_pz_e4', q: 'map=16.0&actors=1', puzzle: gateStructure(1), edits: {
     cells: [5, 6, 7].flatMap((x): [number, number, string, boolean][] => [[x, 12, 'METATILE_EliteFour_EntryDoor_ClosedTop', true],
       [x, 13, 'METATILE_EliteFour_EntryDoor_ClosedBottom', true]]) } },
   // i_pz_lily: Lilycove Museum 2F's cool painting hung (10-11,6; the legacy / decor path)
-  { name: 'i_pz_lily', q: 'map=13.3&actors=1', puzzle: RECORD, edits: {
+  { name: 'i_pz_lily', q: 'map=13.3&actors=1', puzzle: GATE, edits: {
     script: ['LilycoveCity_LilycoveMuseum_2F', 'LilycoveCity_LilycoveMuseum_2F_EventScript_SetCoolPainting'] } },
 ];
 
@@ -881,7 +891,16 @@ function puzzleStats(gate: PuzzleGate, style: string, settle: number, frames: nu
     const refused = Object.values(got).reduce((a: number, b) => a + (b ?? 0), 0);
     if (builds !== refused) broken.push(`${builds ?? '?'} world build(s) after the settle for ${refused} refusal(s)`);
     if (p.programs[1] !== p.programs[0]) broken.push(`programs ${p.programs[0]} → ${p.programs[1]}`);
-    if (grid === null || grid < 1) broken.push(`${grid ?? '?'} grid changes (≥ 1 needed)`);
+    if (gate.changes) {
+      // (a walk's pinned changes: their count, and each one's cells and collision as p4b-base recorded them)
+      if (grid !== gate.changes.length) broken.push(`${grid ?? '?'} grid changes (${gate.changes.length} pinned)`);
+      gate.changes.forEach(([cells, collision], k) => {
+        const c = changes[k];
+        if (c && (c.cells !== cells || c.collision !== collision)) {
+          broken.push(`change ${k + 1} @${c.at}: ${c.cells ?? '?'} cells / ${c.collision ?? '?'} collision, pinned ${cells} / ${collision}`);
+        }
+      });
+    } else if (grid === null || grid < 1) broken.push(`${grid ?? '?'} grid changes (≥ 1 needed)`);
     if (patches === null || grid === null || patches + refused !== grid) {
       broken.push(`patches ${patches ?? '? (no patch counter)'} + refusals ${refused} ≠ grid changes ${grid ?? '?'}`);
     }
@@ -985,11 +1004,12 @@ const drainedStep = (keys: string, frames: number, diff = false) => `(() => {
 const EDIT_SETTLE = 30;
 
 /** A static puzzle entry's frames in the preview (one call): EDIT_SETTLE frames, then per step its setCells (timed) and its
- *  `after` frames, every frame drained (a 1-pixel readPixels) and timed; the preview's stats after the settle, around each
+ *  `after` frames, every frame timed (renderer CPU ms) and then drained (a 1-pixel readPixels, untimed); the preview's stats after the settle, around each
  *  setCells and at the end; `quiet`: the frames that took no change. */
 const staticPuzzleScript = (steps: { edits: [number, number, number][]; after: number }[]) => `(() => {
   const gl = preview.webgl.getContext(), px = new Uint8Array(4);
-  const one = () => { const t = performance.now(); preview.frames(1); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return performance.now() - t; };
+  // (renderer CPU ms, as a live walk times emu.step: the drain after the frame is untimed — Task 1 review, Important 1)
+  const one = () => { const t = performance.now(); preview.frames(1); const ms = performance.now() - t; gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return ms; };
   const quiet = [], out = [];
   for (let i = 0; i < ${EDIT_SETTLE}; i++) one();
   const settled = preview.stats();
@@ -1607,7 +1627,9 @@ async function main(): Promise<void> {
   const statsFile = path.join(outDir, 'stats.json');
   const stats: Record<string, EntryStats> = fs.existsSync(statsFile) ? JSON.parse(fs.readFileSync(statsFile, 'utf8')) : {};
 
-  const server = await createServer({ root, server: { port: 5197, strictPort: false }, logLevel: 'error' });
+  // (no file watching, no HMR: the pages of one run all get the code as first served — agents working in the same checkout
+  // save files mid-run, and a reload would destroy an entry's page under it)
+  const server = await createServer({ root, server: { port: 5197, strictPort: false, watch: null, hmr: false }, logLevel: 'error' });
   await server.listen();
   const port = (server.httpServer!.address() as { port: number }).port;
   const browser = await puppeteer.launch({

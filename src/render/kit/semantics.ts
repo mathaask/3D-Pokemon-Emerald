@@ -28,12 +28,30 @@ export interface KitContext {
   warned?: Set<string>;
 }
 
+/** Cells a family drew whose metatile the game may change at run time, and how it follows such a change in place
+ *  (Phase 4b, D3: the incremental world update, World.patch). */
+export interface LiveCells {
+  /** The family's. */
+  readonly name: string;
+  /** Analysis cells (MapAnalysis.idx). */
+  readonly cells: ReadonlySet<number>;
+  /** Cell i may become grid value `raw` (metatile bits 0–9, collision 10–11, elevation 12–15) without a rebuild. */
+  accepts(i: number, raw: number): boolean;
+  /** Applies it: state data only (a texel, an attribute value); never a new geometry, material or texture object. */
+  apply(i: number, raw: number): void;
+}
+
 export interface Family<P> {
   readonly name: string;
   /** Pure: inspects the analysis, claims cells, returns placements. */
   extract(ctx: SemanticContext, claims: Claims): P;
   /** Builds the meshes for the placements (null = nothing to draw). */
   build(p: P, ctx: SemanticContext, kit: KitContext): THREE.Object3D | null;
+  /** The cells it drew that follow a runtime metatile change in place (null / absent: none — a change of one of its
+   *  cells rebuilds the world). Asked once per build, after its extract and build succeeded; `built` is what build
+   *  returned. Its cells must be cells it claimed CLAIM_SURFACE | CLAIM_OBJECT | CLAIM_TOP (the legacy art draws nothing
+   *  of them that could go stale). */
+  live?(p: P, built: THREE.Object3D | null, ctx: SemanticContext): LiveCells | null;
 }
 
 export interface FamilyReport { name: string; ok: boolean; error?: string }
@@ -87,12 +105,20 @@ export function extractAll(ctx: SemanticContext, families: readonly Family<unkno
 }
 
 export function buildAll(ex: Extracted, ctx: SemanticContext, families: readonly Family<unknown>[], kit: KitContext): THREE.Group {
+  return buildLive(ex, ctx, families, kit).group;
+}
+
+/** buildAll, and the live cells of every family whose extract and build succeeded. A family whose `live` throws keeps
+ *  its meshes and claims but has no live cells (a change there rebuilds the world), warned as its other failures are. */
+function buildLive(ex: Extracted, ctx: SemanticContext, families: readonly Family<unknown>[], kit: KitContext): { group: THREE.Group; live: LiveCells[] } {
   const group = new THREE.Group();
   group.name = 'kit';
+  const live: LiveCells[] = [];
   for (const f of families) {
     if (!ex.payloads.has(f.name)) continue;
+    let obj: THREE.Object3D | null;
     try {
-      const obj = f.build(ex.payloads.get(f.name), ctx, kit);
+      obj = f.build(ex.payloads.get(f.name), ctx, kit);
       if (obj) {
         obj.name = f.name;
         group.add(obj);
@@ -104,15 +130,32 @@ export function buildAll(ex: Extracted, ctx: SemanticContext, families: readonly
       r.ok = false;
       r.error = String(e);
       warnFailure(ctx, kit.warned, f.name, `build: ${String(e)}`);
+      continue;
+    }
+    if (!f.live) continue;
+    try {
+      const l = f.live(ex.payloads.get(f.name), obj, ctx);
+      if (l && l.cells.size) live.push(l);
+    } catch (e) {
+      warnFailure(ctx, kit.warned, f.name, `live: ${String(e)}`);
     }
   }
-  return group;
+  return { group, live };
 }
 
-export function runKit(ctx: SemanticContext, families: readonly Family<unknown>[], kit: KitContext) {
+/** What runKit made: the kit's meshes, the claims after every build (a failed family's rolled back), the per-family
+ *  outcome and the live cells (Family.live) of every family whose extract and build succeeded. */
+export interface KitRun {
+  group: THREE.Group;
+  claims: Claims;
+  report: FamilyReport[];
+  live: LiveCells[];
+}
+
+export function runKit(ctx: SemanticContext, families: readonly Family<unknown>[], kit: KitContext): KitRun {
   const ex = extractAll(ctx, families, kit.warned);
-  const group = buildAll(ex, ctx, families, kit);
-  return { group, claims: ex.claims, report: ex.report };
+  const { group, live } = buildLive(ex, ctx, families, kit);
+  return { group, claims: ex.claims, report: ex.report, live };
 }
 
 /**

@@ -623,6 +623,14 @@ export function kitMaterialKind(m: THREE.Material): string | null {
   return p ? (m === p.km.depth ? p.kind + ':depth' : p.kind) : null;
 }
 
+/** Read-only view of a pooled kit material's (or its depth twin's) per-build uniform slots: its own (`uWindAmp`,
+ *  `uWindHeight`, `uGlow`) and the caller's `uniforms`, by name (null: not a kit material). The tests' world digest
+ *  reads them (Phase 4b F8: the values a build sets live in the pool's private slots, not on the material). */
+export function kitMaterialSlots(m: THREE.Material): Readonly<Record<string, { readonly value: unknown }>> | null {
+  const p = POOLED.get(m);
+  return p ? Object.freeze({ ...p.local, ...p.slots }) : null;
+}
+
 /** Assigns a kit material (and its shadow-depth twin) to a mesh. */
 export function applyKitMaterial(mesh: THREE.Mesh, k: KitMaterial): void {
   mesh.material = k.material;

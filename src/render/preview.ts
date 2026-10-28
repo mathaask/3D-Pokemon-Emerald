@@ -22,7 +22,7 @@ import { GbaTextures } from './gbaTextures';
 import { SpriteAtlas } from './spriteAtlas';
 import { OverworldView } from './overworld/overworldView';
 import { PostFX, tiltShiftFor, type Quality } from './post';
-import type { GridData } from './overworld/world';
+import type { GridData, PatchRefusal } from './overworld/world';
 import { gridEvents } from './kit/events';
 import { buildPreviewActors, templateDrawn } from './previewActors';
 import { timeGpuFrames, type GpuTiming } from './gpuTiming';
@@ -53,8 +53,6 @@ export class PreviewApp {
   /** The map's grid (a copy of the ROM layout's; setCells replaces it with an edited copy, so a grid once built is never
    *  written in place: the previous one stays intact for a diff). */
   private grid: GridData;
-  /** setCells calls that changed a cell (live play's OverworldView.gridChanges). */
-  private gridChangeCount = 0;
   /** The interior kit on (setInteriorKit). */
   private interiorKit = true;
   /** Rebuilds the world (as crossing a map connection does, with warm code); returns the time in ms. */
@@ -286,11 +284,12 @@ export class PreviewApp {
   /**
    * Runtime cell edits, as the game makes them (MapGridSetMetatileIdAt: the harness's edit entries apply a gym switch's or a
    * door's metatiles from the decomp, tools/lib/decompEdits.ts): each [x, y, raw] writes the map-local cell's grid u16
-   * (out-of-map cells are ignored). When a cell changed, the world takes the change as live play's sync would — today a
-   * rebuild ('build'; Phase 4b's incremental update returns 'patch' where it patches in place) — and gridChanges counts it;
-   * an edit list that changes no cell does nothing (gridChanges stays: the harness flags it).
+   * (out-of-map cells are ignored). When a cell changed, the world takes the change as live play's sync does
+   * (OverworldView.updateGrid: patched in place, 'patch', or rebuilt where the incremental update refuses it, 'build')
+   * and gridChanges counts it; an edit list that changes no cell does nothing ('none': gridChanges stays, the harness
+   * flags it).
    */
-  setCells(edits: readonly (readonly [x: number, y: number, raw: number])[]): 'patch' | 'build' {
+  setCells(edits: readonly (readonly [x: number, y: number, raw: number])[]): 'patch' | 'build' | 'none' {
     const g = this.grid;
     const cells = g.cells.slice();
     let changed = 0;
@@ -302,21 +301,21 @@ export class PreviewApp {
         changed++;
       }
     }
-    if (changed) {
-      // (a new grid object: the one built before stays as it was)
-      this.grid = { ...g, cells };
-      this.gridChangeCount++;
-      this.rebuild();
-    }
-    return 'build';
+    if (!changed) return 'none';
+    // (a new grid object: the one built before stays as it was)
+    this.grid = { ...g, cells };
+    return this.view.updateGrid(this.grid, () => { this.rebuild(); });
   }
 
   /** Render statistics of the last frame (all passes), the shader programs, the first world build's time (cold), the
-   *  world builds so far and the last one's ms, and the cell edits taken (setCells). */
-  stats(): { calls: number; triangles: number; programs: number; buildMs: number; builds: number; lastBuildMs: number; gridChanges: number } {
+   *  world builds so far and the last one's ms, the cell edits taken (setCells), those patched in place and the last
+   *  patch's ms, and those refused by reason (each refused one rebuilt). */
+  stats(): { calls: number; triangles: number; programs: number; buildMs: number; builds: number; lastBuildMs: number; gridChanges: number;
+    patches: number; lastPatchMs: number; refusals: Record<PatchRefusal, number> } {
     const info = this.webgl.info;
     return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0, buildMs: Math.round(this.buildMs),
-      builds: this.view.builds, lastBuildMs: this.view.lastBuildMs, gridChanges: this.gridChangeCount };
+      builds: this.view.builds, lastBuildMs: this.view.lastBuildMs, gridChanges: this.view.gridChanges,
+      patches: this.view.patches, lastPatchMs: this.view.lastPatchMs, refusals: { ...this.view.patchRefusals } };
   }
 
   /** One frame; `fixedDt` (seconds) replaces the wall-clock time step. */

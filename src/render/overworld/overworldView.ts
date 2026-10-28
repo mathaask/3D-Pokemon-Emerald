@@ -11,7 +11,8 @@ import type { SpriteField } from '../actors/spriteField';
 import type { Quality } from '../post';
 import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
-import { World, type GridData, type WorldMaterials, type WorldStyle } from './world';
+import { World, PATCH_REFUSALS, type GridData, type PatchRefusal, type WorldBuildContext, type WorldMaterials, type WorldStyle } from './world';
+import { changedCells } from './gridDiff';
 import { worldCatalogue, type WorldCatalogue } from '../kit/catalogue';
 import { analyzeMetatiles, romMetatiles, romTileVram, type TileInfo } from './tileInfo';
 import { interiorScope } from '../kit/interior/scope';
@@ -88,9 +89,17 @@ export class OverworldView {
   private cutoutMat: THREE.MeshStandardMaterial;
 
   private gridKey = '';
+  /** A copy of the last grid the world took (built or patched; F42: never the caller's array, which may be written in
+   *  place), and the context it was built with (the patch's). */
   private lastGrid: Uint16Array | null = null;
+  private lastCtx: WorldBuildContext | null = null;
   /** See gridChanges. */
   private gridChangeCount = 0;
+  /** Grid changes the world took in place (World.patch), the last one's ms, and the ones it refused by reason (each
+   *  refused one rebuilt the world). Live play and the preview's setCells alike. */
+  patches = 0;
+  lastPatchMs = 0;
+  readonly patchRefusals: Record<PatchRefusal, number> = Object.fromEntries(PATCH_REFUSALS.map((r) => [r, 0])) as Record<PatchRefusal, number>;
   private haveWorld = false;
   private style: WorldStyle = 'modern';
   /** The interior kit on in-scope interiors (Modern; false: today's legacy rooms and light, the A/B baseline). */
@@ -415,12 +424,13 @@ export class OverworldView {
     const grid = this.readGrid(state);
     if (this.rebuildPending(state, tsChanged, grid)) {
       const mapChanged = key !== this.gridKey;
-      // (same map key and tilesets: a runtime cell change — a gym switch, thin ice, a door's frame)
-      if (!mapChanged && !tsChanged) this.gridChangeCount++;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
-      this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state),
-        state.layout.secondaryTileset, `${state.mapGroup}.${state.mapNum}`);
-      this.lastGrid = grid.cells;
+      const build = () => this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout!.primaryTileset,
+        this.liveEvents(state), state.layout!.secondaryTileset, `${state.mapGroup}.${state.mapNum}`);
+      // (same map key and tilesets: a runtime cell change — a gym switch, thin ice, a door's frame — patched in place
+      // where the world can; a map or tileset change builds)
+      if (!mapChanged && !tsChanged) this.updateGrid(grid, build);
+      else build();
       this.gridKey = key;
       this.haveWorld = true;
       if (mapChanged) this.onMapChanged(state);
@@ -446,9 +456,30 @@ export class OverworldView {
     return this.rebuildPending(state, tsChanged, this.readGrid(state));
   }
 
-  /** Syncs whose grid differed from the last one built with the same map key and tilesets (a runtime cell change: today
-   *  each one rebuilds the world; Phase 4b's incremental update patches them). Live play only: the preview counts its
-   *  own (PreviewApp.setCells). */
+  /**
+   * A runtime grid change of the world's map (same map key and tilesets): live play's sync and the preview's setCells.
+   * The cells that differ from a copy of the last grid the world took (F42) are patched in place (World.patch, D3); a
+   * refused change runs `build` (a rebuild, as before Phase 4b). Counts gridChanges, patches / lastPatchMs or
+   * patchRefusals. Returns which it did.
+   */
+  updateGrid(grid: GridData, build: () => void): 'patch' | 'build' {
+    this.gridChangeCount++;
+    const last = this.lastGrid, ctx = this.lastCtx;
+    const r = last && ctx && last.length === grid.cells.length
+      ? this.world.patch(grid, changedCells(last, grid.cells), ctx) : { ok: false as const, reason: 'noWorld' as const };
+    if (r.ok) {
+      this.patches++;
+      this.lastPatchMs = r.ms;
+      this.lastGrid = grid.cells.slice();
+      return 'patch';
+    }
+    this.patchRefusals[r.reason]++;
+    build();
+    return 'build';
+  }
+
+  /** Grid changes (updateGrid: same map key and tilesets — a runtime cell change, patched in place or rebuilt), live play's
+   *  and the preview's setCells'. */
   get gridChanges(): number {
     return this.gridChangeCount;
   }
@@ -472,6 +503,7 @@ export class OverworldView {
     // animation shows (the Building TV swaps every 8 frames), and a room rebuilt on another frame must not re-tint
     const kit = this.worldStyle === 'modern' && this.interiorKit && this.mapType !== MAP_TYPE_UNDERGROUND
       && interiorScope({ indoor, primaryTileset, secondaryTileset }, mapKey ?? null);
+    const ctx: WorldBuildContext = { style: this.worldStyle, events, quality: this.quality, mapKey, interiorKit: this.interiorKit };
     this.world.build(grid, {
       info,
       colorInfo: kit ? this.staticColorInfo(bus, info, primaryTileset, secondaryTileset, bgPalette) : undefined,
@@ -481,7 +513,9 @@ export class OverworldView {
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
       secondaryTileset,
       primaryTileset,
-    }, { style: this.worldStyle, events, quality: this.quality, mapKey, interiorKit: this.interiorKit });
+    }, ctx);
+    this.lastGrid = grid.cells.slice();
+    this.lastCtx = ctx;
     this.haveWorld = true;
   }
 

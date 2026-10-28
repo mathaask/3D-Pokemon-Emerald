@@ -84,6 +84,9 @@ export interface MapAnalysis {
   height: Float32Array;
   waterLevel: Float32Array;
   groundOf: Int16Array;
+  /** Per cell: the analysis cell whose metatile `groundOf` took (-1: none). The incremental world update (World.patch)
+   *  follows an art-only change of that cell to the blocks that took it. */
+  groundSrc: Int32Array;
   groundH: Float32Array;
   groundRefs: Int16Array;
   /** Per cell: 1 (walkable) / 2 (blocked) where the map's block is metatile 0x3FF with collision or elevation bits of its
@@ -444,12 +447,13 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
   // ---------------------------------------------------------------- ground references
   // For every blocked cell, which ground metatile is "behind" it (cutout reference + fill floor).
   const groundOf = new Int16Array(N).fill(-1);
+  const groundSrc = new Int32Array(N).fill(-1);
   const groundH = new Float32Array(N);
   for (let y = minY; y < maxY; y++) {
     for (let x = minX; x < maxX; x++) {
       const i = idx(x, y);
       if (kind[i] === K.Floor || kind[i] === K.Water || kind[i] === K.Stairs || kind[i] === K.Void) continue;
-      let found = -1, fh = 0;
+      let found = -1, fh = 0, src = -1;
       for (let r = 1; r <= 8 && found < 0; r++) {
         for (const [dx, dy] of [[0, r], [-r, 0], [r, 0], [0, -r]]) {
           const nx = x + dx, ny = y + dy;
@@ -457,29 +461,16 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
           const j = idx(nx, ny);
           const plainFloor = kind[j] === K.Floor && (layer[j] !== 0 || info.topCover[mt[j]] === 0);
           if (plainFloor || kind[j] === K.Water) {
-            found = mt[j]; fh = height[j]; break;
+            found = mt[j]; fh = height[j]; src = j; break;
           }
         }
       }
       groundOf[i] = found;
+      groundSrc[i] = src;
       groundH[i] = Number.isNaN(fh) ? 0 : fh;
     }
   }
-  const groundRefs = new Int16Array(1024).fill(-1);
-  {
-    const votesRef = new Map<number, Map<number, number>>();
-    for (let i = 0; i < N; i++) {
-      if (groundOf[i] < 0) continue;
-      let m = votesRef.get(mt[i]);
-      if (!m) { m = new Map(); votesRef.set(mt[i], m); }
-      m.set(groundOf[i], (m.get(groundOf[i]) ?? 0) + 1);
-    }
-    for (const [m, v] of votesRef) {
-      let best = -1, bn = 0;
-      for (const [g, n] of v) if (n > bn) { bn = n; best = g; }
-      groundRefs[m] = best;
-    }
-  }
+  const groundRefs = groundRefsOf(mt, groundOf);
 
   const hasTop = (i: number) => layer[i] !== 1 && info.topCover[mt[i]] > 0;
   return {
@@ -487,8 +478,57 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
     cellX: (i) => (i % GW) + minX,
     cellY: (i) => ((i / GW) | 0) + minY,
     mt, col, elev, beh, layer, kind, roundTree, building, buildings,
-    height, waterLevel, groundOf, groundH, groundRefs, real3ff, hasTop, isGeneralId,
+    height, waterLevel, groundOf, groundSrc, groundH, groundRefs, real3ff, hasTop, isGeneralId,
   };
+}
+
+/** Per metatile: the ground metatile its cutout variant is compared against — the most common `groundOf` of its cells
+ *  (-1: none). */
+export function groundRefsOf(mt: Int16Array, groundOf: Int16Array): Int16Array {
+  const groundRefs = new Int16Array(1024).fill(-1);
+  const votesRef = new Map<number, Map<number, number>>();
+  for (let i = 0; i < mt.length; i++) {
+    if (groundOf[i] < 0) continue;
+    let m = votesRef.get(mt[i]);
+    if (!m) { m = new Map(); votesRef.set(mt[i], m); }
+    m.set(groundOf[i], (m.get(groundOf[i]) ?? 0) + 1);
+  }
+  for (const [m, v] of votesRef) {
+    let best = -1, bn = 0;
+    for (const [g, n] of v) if (n > bn) { bn = n; best = g; }
+    groundRefs[m] = best;
+  }
+  return groundRefs;
+}
+
+/**
+ * What `analyze` reads of one in-map cell's grid value `raw` besides its metatile id, as one number: collision, elevation,
+ * the attribute's layer, whether its behaviour is water, a ledge, a door or NORMAL, and whether its metatile is void,
+ * mostly blue, mostly green, has top-layer pixels, or is a General tree / stairs / rim id. Two values of a cell with the
+ * same features analyse alike but for the metatile itself (`mt`, `beh`, and the ground art: `groundOf`, `groundRefs`,
+ * the dominant floor): the incremental world update's art-only path (World.patch). -1: a 0x3FF block (the border's art
+ * is read there). Keep in step with every read of mt / beh / layer / col / elev / info in `analyze`.
+ */
+export function cellFeatures(raw: number, opts: Pick<ClassifyOptions, 'info' | 'generalPrimary' | 'indoor' | 'underground' | 'indoorStairs'>): number {
+  const m = raw & 0x3ff;
+  if (m === 0x3ff) return -1;
+  const { info } = opts;
+  const attr = info.attributes[m];
+  const b = attr & 0xff;
+  const general = opts.generalPrimary && m < 512;
+  // (as analyze reads them: void where void is allowed; trees and green outdoors; the flanked stairs' NORMAL outdoors,
+  // indoors too with indoorStairs; doors and rims for the buildings, outdoors above ground)
+  const outdoor = !opts.indoor, buildings = outdoor && !opts.underground;
+  let f = ((raw >> 10) & 3 ? 1 : 0) | ((raw >> 12) << 1) | ((attr >> 12) << 5);
+  let bit = 9;
+  for (const v of [WATER_BEHAVIORS.has(b), b >= MB.JUMP_EAST && b <= MB.JUMP_SOUTHWEST, buildings && DOOR_BEHAVIORS.has(b),
+    (outdoor || !!opts.indoorStairs) && b === MB.NORMAL, (opts.indoor || opts.underground) && !!info.isVoid[m], info.blue[m] >= 0.6,
+    outdoor && info.green[m] > 0.55, info.topCover[m] > 0, outdoor && general && NARROW_TREE.has(m),
+    outdoor && general && ROUND_TREE.has(m), general && STAIRS.has(m), buildings && general && RIM.has(m)]) {
+    if (v) f |= 1 << bit;
+    bit++;
+  }
+  return f;
 }
 
 /** Point queries the renderer asks of a built world (heights, water, debug map). */

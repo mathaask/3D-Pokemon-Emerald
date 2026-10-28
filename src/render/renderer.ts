@@ -10,7 +10,7 @@ import { SpriteAtlas } from './spriteAtlas';
 import { OverworldView } from './overworld/overworldView';
 import { Hud } from './hud';
 import { PostFX, tiltShiftFor, type Quality } from './post';
-import type { WorldStyle } from './overworld/world';
+import type { PatchRefusal, WorldStyle } from './overworld/world';
 import { BattleView } from './battle/battleView';
 import { battleFadeOverlay } from './battle/battleActors';
 import { BattleTransitionFx } from './transition';
@@ -282,14 +282,16 @@ export class Renderer {
   }
 
   /** Render statistics of the last render() call, all passes together; the session's world builds, the last one's ms,
-   *  the syncs deferred during map loads and the runtime grid changes the overworld saw (OverworldView.gridChanges). */
+   *  the syncs deferred during map loads, the runtime grid changes the overworld saw (OverworldView.gridChanges), those
+   *  it patched in place and the last patch's ms, and those it refused by reason (each refused one rebuilt: Phase 4b). */
   stats(): { calls: number; triangles: number; programs: number; builds: number; lastBuildMs: number; deferredSyncs: number;
-    gridChanges: number } {
+    gridChanges: number; patches: number; lastPatchMs: number; refusals: Record<PatchRefusal, number> } {
     const info = this.webgl.info;
     return {
       calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0,
       builds: this.overworld.builds, lastBuildMs: this.overworld.lastBuildMs, deferredSyncs: this.syncGate.deferred,
-      gridChanges: this.overworld.gridChanges,
+      gridChanges: this.overworld.gridChanges, patches: this.overworld.patches, lastPatchMs: this.overworld.lastPatchMs,
+      refusals: { ...this.overworld.patchRefusals },
     };
   }
 
