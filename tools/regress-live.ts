@@ -73,7 +73,7 @@
 // Modern battle's inflated battlers (with their field passes, the flat enemy shadow, the skipped OBJ-window masks) against
 // today's cards (Phase 3 Task 5, flagged over Phase 2's actor budget +1.0 ms GPU / +0.5 ms CPU), likewise on the battle
 // entries. --ab-feature interior switches Phase 4's interior kit on in-scope rooms (shell, floor, furniture, the HD legacy
-// cells and the clock-following light) against today's interior (flagged over +1.5 ms GPU / +0.5 ms CPU): every switch
+// cells and the clock-following light) against today's interior (flagged over +2.0 ms GPU — the Phase 4 ruling; the plan proposed +1.5 / +0.5 ms CPU): every switch
 // rebuilds the world (the half's settle frames absorb it); run it with --only <indoor live entries, in-scope i_* entries>
 // (the previews of out-of-scope maps and the rooftop draw the same frames in both arms and are skipped).
 // Actor luminance (every run with both styles): after each screenshot the actors (both views' on the live page:
@@ -543,7 +543,7 @@ const AB_FEATURES: Record<string, AbFeature> = {
   // half's settle frames absorb it. The in-scope interior previews only, by entry (a new i_* entry is in unless it joins
   // OUT_OF_SCOPE_INTERIOR): the rooftop and the out-of-scope controls draw the same frames in both arms)
   interior: {
-    what: 'Phase 4 interior kit (shell, floor, furniture, HD legacy, light) vs today\'s interior', gpuMs: 1.5, cpuMs: 0.5,
+    what: 'Phase 4 interior kit (shell, floor, furniture, HD legacy, light) vs today\'s interior', gpuMs: 2.0, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setInteriorKit(${on})`,
     preview: (on) => `preview.setInteriorKit(${on})`,
     previewWhen: (e) => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name),

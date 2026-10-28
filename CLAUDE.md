@@ -5,16 +5,12 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 
 ## Active work (read this first after a context reset)
 - **Project:** Modern stylized 3D models (replace pixel-textured boxes/cards with real models).
-- **Phases 1 (outdoor environment), 2 (characters, Pokémon, field objects) and 3 (battles) are done** (merged to
-  `main`; results, numbers and known gaps in the progress log; full rulings in `phase1-sdd-ledger.md` /
-  `phase2-sdd-ledger.md` / `phase3-sdd-ledger.md`).
-- **Hitch fix done** (boot-time program catalogue, one build per map load).
-- battle-feet fix merged (battlers stand on their platform tops, both styles).
-- **Phase 4 — interiors — in progress** on branch `phase4-interiors`, plan
-  `docs/superpowers/plans/2026-10-27-phase4-interiors.md` (user-approved 2026-10-27: five secondaries; ALL indoor light
-  follows the clock (D8); real-world heights). SDD ledger `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md`
-  (gitignored; `Task N: complete` lines are done); parallel groups A/B/C per the plan. Baseline label `p4-base`.
-- Later: terrain height solver v2 (mountain ridges), a battle look-polish pass (Phase 3 known gaps). Write the plan first (`docs/superpowers/plans/`), then execute
+- **All four phases are done** — 1 (outdoor environment), 2 (characters, Pokémon, field objects), 3 (battles),
+  4 (interiors: 137 in-scope rooms, light follows the clock) — merged to `main`; results, numbers and known gaps in
+  the progress log; full rulings in `phase{1,2,3,4}-sdd-ledger.md`. Hitch fix and the battle-feet fix are merged too.
+- **Next (not started; ask the user):** Phase 4b (gyms, Frontier and the other interiors), terrain height solver v2
+  (mountain ridges), a look-polish pass over the Phase 3/4 known gaps, or interior perf (pre-baked xBR, simpler
+  bookcases). Write the plan first (`docs/superpowers/plans/`), then execute
   subagent-driven (only `opus` subagents work here; the user wants parallel agents where files don't overlap). Show
   the user a phase progress bar in every update (they write Norwegian; reply in Norwegian). Merge + push to `origin`
   (private account) without asking.
@@ -62,7 +58,7 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   in-scope day rooms' actorLum vs Retro (0.9–1.15, median ≥ 0.95). Phase 4 gate: `--static --compare p4-base` → Retro
   0.00 % everywhere, Modern 0.00 % except the in-scope interior entries and the in-scope live entries (`item_indoor`,
   `vigoroth`, `vigoroth_v`, `door_enter`). Fitting: `tests/smoke/interiorFitting.test.ts` (furniture over walkable cells
-  ≤ 0.45, none over free floor, 137 maps). Interior A/B: `--ab --only <entries> --ab-feature interior` (kit on vs today's interior, light included; ≤ +1.5 ms GPU / +0.5 ms CPU). Scope: 137 maps
+  ≤ 0.45, none over free floor, 137 maps). Interior A/B: `--ab --only <entries> --ab-feature interior` (kit on vs today's interior, light included; ≤ +2.0 ms GPU / +0.5 ms CPU, the Phase 4 ruling). Scope: 137 maps
   (`interiorScope(opts, mapKey)`, fails closed without a map key; `OUT_OF_SCOPE_MAPS` = the rooftop 13.21). Preview
   `&kitFail=<family>` (shell / floor / furniture) makes one family fail (its cells legacy, one warning); page API
   `preview.setInteriorKit(on)`, `preview.measureRebuild()` (warm rebuild ≤ 40 ms, + first frame ≤ 100 ms)

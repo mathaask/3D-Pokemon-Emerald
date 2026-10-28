@@ -14,6 +14,7 @@ Spec: `docs/superpowers/specs/2026-10-19-modern-3d-models-design.md`
 - 2026-10-20 → 2026-10-22: Phase 2 plan `docs/superpowers/plans/2026-10-20-phase2-characters.md` (12 tasks), executed
   subagent-driven on branch `phase2-characters`. **Phase 2 is complete** (see "Phase 2 result"); its ledger is in
   `docs/superpowers/progress/phase2-sdd-ledger.md`.
+- 2026-10-27 → 2026-10-28: Phase 4 plan `docs/superpowers/plans/2026-10-27-phase4-interiors.md` (13 tasks), executed subagent-driven with parallel agents on branch `phase4-interiors`. **Phase 4 is complete** (see "Phase 4 result"); ledger `docs/superpowers/progress/phase4-sdd-ledger.md`.
 - 2026-10-23 → 2026-10-27: Phase 3 plan `docs/superpowers/plans/2026-10-23-phase3-battles.md` (12 tasks + inserted 7b,
   12a), executed subagent-driven on branch `phase3-battles`. **Phase 3 is complete** (see "Phase 3 result"); ledger
   `docs/superpowers/progress/phase3-sdd-ledger.md`, final review `phase3-final-review.md`.
@@ -387,14 +388,52 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
   luminance 0.967–1.124, A/B +2.57 ms (within the Phase 3 reference), battle_enter first frame 61.7 ms (quiet run).
   Report: `.superpowers/sdd/battle-feet-report.md` (gitignored).
 
+## Phase 4 result (2026-10-28)
+Modern style models the **137 in-scope interiors** (houses, Pokémon Centers, Marts, labs, Brendan's/May's house: the
+spec's five secondaries; the Lilycove Dept Store rooftop ruled out) as real rooms: walls with thickness, baseboard,
+rail and crown, framed glass windows, clocks, Scale4x wall decals, half-height partitions, doorways; floors (boards,
+tiles, carpet, rugs, mats) through one shader; window light shafts; furniture at real-world heights (beds, tables,
+chairs, TVs, bookcases, kitchens, plants, crates, healing machine, nurse and Mart counters, PCs, Mart shelves, stairs)
+coloured from the ROM's static tiles; unknown cells as HD-smoothed legacy boxes; a per-wall cutaway; and **room light
+that follows the clock** (user ruling D8). Curated id tables for all five tilesets (100 % labelled, 193 pins); a pure
+room-layout analysis (back line, wall runs, windows, doors, partitions; 0 findings on 137 maps, 15 pinned layouts).
+Retro, outdoor, battles and every out-of-scope interior are unchanged. Executed subagent-driven with up to five
+parallel agents (13 tasks, groups A/B/C, group C in two phases), a 42-finding preflight, three parallel final area
+reviews (0 critical), one fix wave in four parallel fixers + re-review, and a perf follow-up.
+- **Numbers (Medium, 1280×800):** interior entries ≤ 55 draw calls, ≤ 46 K triangles; warm rebuild ≤ 21 ms (+ first
+  frame ≤ 44 ms); new GPU memory ≤ 1.8 MB per interior; door walks: 1 build, 0 compiles, build-frame overhead 24 ms
+  (pre-Phase-4 38). Same-session interleaved A/B (kit on vs today's interior): i_lab +1.36/+1.52, i_lab_night
+  +1.51/+1.81, houses +1.08..+1.48 ms GPU, Δcpu ≤ +0.41 — **budget ruled +2.0 ms** (the plan proposed +1.5; Phase 3
+  arenas got +3.0). Night costs the same as day. Night room luma 0.61–0.63× day, dusk 0.83–0.84×; actors 0.94–0.97× day
+  (two-sided gates). Coverage: legacy share 4.5 % average, worst 16.7 %.
+- **Gates:** Retro 0.00 % vs `out/regress-live/p4-base` everywhere; outdoor, battles, out-of-scope interiors
+  (`i_gym*`, `i_secret`, `i_dept_roof`, `truck_inside`) 0.00 %; programs constant after boot; drift guard over 518
+  maps × qualities. `npm test` 1054; smoke (interiors, interiorTables, interiorRooms, interiorFitting, catalogue).
+- **Known gaps:**
+  - Scope: gyms (10 maps, 8 puzzle tilesets), Battle Frontier, contest halls, museums, Trick House puzzle rooms, E4
+    rooms, secret bases, ship, caves keep today's look (a later "Phase 4b"); the Dept Store rooftop is out of scope;
+    battles started in a room keep the hall's fixed light (F38).
+  - Legacy art (HD boxes): the PC floor emblem and escalators, lift plates, Birch's domed machine and grey unit, the
+    lab's book piles, the Weather Institute's tank machine and pillars (decal caps over HD boxes, desks lose their
+    papers), the striped bed-overhang art beside Brendan's 2F bed.
+  - Shell/light: shafts are light only (no dust); doors don't open; one wall height (2.6) — the Trick House corridor
+    (29.2) hides part of its floor at the preview camera; deep partitions' flat lids read as counters; boards read
+    strong yellow (the tile's hue); decals are all tagged N (a partition decal would vanish at yaw π; no case today);
+    a one-build lag of the indoor light when entering an out-of-scope room from an in-scope one at night.
+  - Furniture: no stair rail (closed alcoves); the stairwell rail stands in its warp cell; Mart gondolas duller than
+    the coolers; plants read as thin topiaries; the PC's magazine shelf and small shelves are full 2.1 m bookcases.
+  - Perf: labs sit near +1.5 ms (walls 0.85–1.1, bookcases 0.65–0.87, HD xBR 0.3–0.5 ms) — follow-up: pre-baked xBR,
+    simpler bookcases.
+  - Code level: `interiorIds` has no scope guard of its own (World gates it); `ShellPlacement.decals` computed but
+    unused by build; loose floor-softening tests; HD cutout shadow pixel-stepped; no unit test for claim rollback /
+    cutaway flipping (the harness covers both); coverage tie-break sorts keys as strings; `prepareInterior` and
+    `roundBox`/`roundedBlock` duplication left; `shellRuns`/`planOpenings` run 3× per build (negligible).
+
 ## Next step
-- **Phase 4 (interiors) in progress (2026-10-27)** on branch `phase4-interiors`: plan
-  `docs/superpowers/plans/2026-10-27-phase4-interiors.md` (13 tasks, Task 4 split 4a–4c; parallel groups A = 2‖3,
-  B = 4a‖4b‖4c‖5, C = 7‖8‖9‖10‖11). User answers: scope = the spec's five secondaries (138 of 307 indoor maps; gyms etc.
-  later "Phase 4b"); **all indoor light follows the clock** (D8 rewritten); real-world furniture heights. SDD ledger
-  `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md`.
-- **Phase 3 is complete (2026-10-27)** and merged to `main`. Later candidates: terrain height solver v2 (mountain
-  ridges), a battle look-polish pass (the Phase 3 known gaps above).
+- **Phase 4 is complete (2026-10-28)** and merged to `main`. All four phases of the spec are done. Candidates next
+  (ask the user): Phase 4b (gyms, Frontier and the other interiors), the terrain height solver v2 (mountain ridges),
+  a look-polish pass over the Phase 3/4 known gaps, or interior perf (pre-baked xBR, simpler bookcases).
+- **Phase 3 is complete (2026-10-27)** and merged to `main`.
 
 ## Phase 4 status
 - [x] Plan (user-approved; preflight scan: 42 findings, all rulings applied @ 4f3ed00)
@@ -402,16 +441,16 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
 - [x] 2 battle room geometry → kit (e02f396 pins, a56a8c4 move; battle pixels identical)
 - [x] 3 scope/symbols/tables scaffold (bfb5761: 138 in-scope maps, Building tileset symbols, id worklist)
 - [x] 4a GenericBuilding (64a29bd, fix 1cc1990) · [x] 4b PokemonCenter + Shop (097220d) · [x] 4c BrendansMaysHouse + Lab
-  (7a4ab85) — all five tables 100 % labelled, 186 pins, legacy ≤ 0.8 % (GenericBuilding)
+  (7a4ab85) — all five tables 100 % labelled, 193 pins, legacy ≤ 0.8 % (GenericBuilding)
 - [x] 5 room layout + colours (cb9a42e, fix 8dcb26e: dividing walls → partition runs on 8 maps, 5 invariants, 15 pinned layouts; 0 findings on 138 maps)
 - [x] 6 integration (f197318: families on in-scope maps, cutaway, clock-driven room light — night room 0.61× day, actors 0.94–0.97×; review approved)
 - [x] 7 shell (ac2c011, eaa7684) · [x] 8 floors + shafts (466ec2b, 11fda55) · [x] 9 furniture I (0e2940c, 0d23314) · [x] 10 furniture II (4c77c57, 36b107c, 0e1142a, fix 78ef9f5: nurse/clerks visible from the chest up, no navy outlines) — alcove cutaway follow-up 31e9d86 + e39299b; join f5558cb (furniture catalogue)
 - [x] 11 legacy HD (d1d6159) · [x] 12 smoke/coverage/live (871b654: coverage avg 4.5 %, worst 16.7 %; Dept Store rooftop ruled out of scope → 137 maps; dusk gate added, actor light fixed in ddf2577: dusk actors 0.96–0.97× day) · [x] 13 perf/docs (be94f11, 7f5e0b9: worst A/B i_lab_night +1.58/+1.44 ms vs +1.5 → floor shader optimisation; rebuild ≤ 21 ms; ≤ 55 calls)
-- [x] Final review (3 parallel area reviews: 0 critical, 6 important total) · [x] fix wave (floor shader −0.3–0.6 ms + no floor behind walls; TV-animation colour bug fixed at the root (ROM tiles); two-sided night/dusk gate; shared room helpers; furniture fitting smoke pin) · [x] re-review (all addressed) · [ ] final gate (Retro 0.00 %, night/dusk pass; door_exit crossing gate + interior GPU budget being investigated) · [ ] merge
+- [x] Final review (3 parallel area reviews: 0 critical, 6 important total) · [x] fix wave (floor shader −0.3–0.6 ms + no floor behind walls; TV-animation colour bug fixed at the root (ROM tiles); two-sided night/dusk gate; shared room helpers; furniture fitting smoke pin) · [x] re-review (all addressed) · [x] crate fix b6c059c · [x] perf follow-up (0fa3fbd, 4aa6509: door-walk build frames) · [x] final gate (perf2) · [x] merged to `main`
 - Join gate after group B (`p4b-join`): every entry 0.00 % vs `p4-base`, both styles. Group C gate (`tC-gate`): Retro and everything out of scope 0.00 %; only in-scope Modern interiors change; night rooms 0.61–0.63× day, actors 0.93–0.97×; door walks 1 build, 0 compiles.
 - Rulings so far: walkable furniture = low seats (≤ 0.45); chairs/plants one per cell; flat indoor floors; dividing
   walls = half-height partitions (Task 7); battles in rooms don't follow the clock (F38); Dept Store rooftop → Task 12.
-  Full ledger: `.superpowers/sdd/2026-10-27-phase4-interiors/progress.md` (copied to the repo at merge).
+  Full ledger: `docs/superpowers/progress/phase4-sdd-ledger.md`; final review `phase4-final-review.md`. Interior GPU budget ruled +2.0 ms.
 - **Phase 2 is complete (2026-10-22)** and merged to `main`.
 - **2026-10-23: hitch fix done** (user chose "hitch fix, then Phase 3"; in-chat design approved; branch `hitch-fix`,
   reviewed + 1 fix round + re-review, merged):
@@ -457,8 +496,8 @@ final review as three parallel area reviews (0 critical) + one fix wave in four 
 ## Phases
 - [x] Phase 1 — Foundation + Outdoor environment (done 2026-10-20, branch `phase1-outdoor`)
 - [x] Phase 2 — Characters, Pokémon, field objects (done 2026-10-22, branch `phase2-characters`)
-- [ ] Phase 3 — Battles
-- [ ] Phase 4 — Interiors
+- [x] Phase 3 — Battles (done 2026-10-27, branch `phase3-battles`)
+- [x] Phase 4 — Interiors (done 2026-10-28, branch `phase4-interiors`)
 
 ## Key facts (so they don't need re-deriving)
 - `classify.ts` is now a wrapper over `analyze.ts` (pure analysis) + `legacyQuads.ts` (quads, honours `Claims`).
