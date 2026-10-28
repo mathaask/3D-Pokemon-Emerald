@@ -122,7 +122,7 @@ describe('shell parts: partitions, bridges, clocks, decals, side doors', () => {
   it('the layout has the partitions this fixture means', () => {
     expect(L.partition[a.idx(5, 3)]).toBe(1);
     expect(L.partition[a.idx(1, 7)]).toBe(1);
-    expect(L.doors).toEqual([{ dir: 'E', line: 11, from: 6, to: 7 }]);
+    expect(L.doors).toEqual([{ dir: 'E', line: 11, from: 6, to: 7, kind: 'exit' }]);
   });
   it('bridges the outer walls over partition ends: one back wall, one west wall', () => {
     const runs = shellRuns(a, L);

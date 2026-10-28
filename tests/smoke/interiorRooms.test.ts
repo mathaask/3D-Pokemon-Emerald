@@ -4,15 +4,19 @@
 //   npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/interiorRooms.test.ts
 // A deliberate layout change re-pins: print the new digests (roomDigest) and review the diff map by map.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { loadRom, loadStaticMap, type StaticMap } from './helpers/staticMap';
-import { analyze, type MapAnalysis } from '../../src/render/overworld/analyze';
+import { analyze, K, type MapAnalysis } from '../../src/render/overworld/analyze';
 import { RomReader } from '../../src/game/rom/reader';
 import { loadAllMaps } from '../../src/game/rom/maps';
-import { interiorIds } from '../../src/render/kit/tables/building';
-import { interiorScope } from '../../src/render/kit/interior/scope';
+import { PUZZLE_KINDS, interiorIds, type InteriorId } from '../../src/render/kit/tables/building';
+import { PHASE4B_MAPS, interiorScope, mapProfile, setPhase4bScope } from '../../src/render/kit/interior/scope';
 import { gridEvents } from '../../src/render/kit/events';
-import { roomLayout, checkRoomLayout, ROOM_RULES, type RoomLayout } from '../../src/render/kit/interior/room';
+import {
+  roomLayout, checkRoomLayout, tierPlan, walkable, roomMaterial, DAIS_H, ROOM_RULES, type RoomLayout, type TierPlan,
+} from '../../src/render/kit/interior/room';
 import { flattenFloors } from '../../src/render/overworld/world';
 import { extractAll } from '../../src/render/kit/semantics';
 import { INTERIOR_FAMILIES } from '../../src/render/kit/interior/index';
@@ -127,5 +131,137 @@ describe('interior room layouts on the real maps', () => {
       });
       expect(changed.length).toBeGreaterThan(0);
     } finally { ROOM_RULES[rule] = true; }
+  });
+});
+
+// ------------------------------------------------------------------------------------------------- Phase 4b (Task 5)
+// The 45 maps of PHASE4B_MAPS with the 4b scope on, each with its profile (D8): the layout's findings per map go to
+// out/rooms-4b.txt (pinned to zero by Task 14, not here: the tables may still be filling), the tier measurement (D13, F1)
+// to out/tiers-4b.txt. The 137 Phase 4 maps above keep their layouts (DEFAULT_PROFILE).
+
+const OUT = path.resolve(import.meta.dirname, '../../out');
+const MECHANIC = new Set<InteriorId>(PUZZLE_KINDS);
+const fmtSet = (s: Iterable<number>) => [...new Set(s)].sort((p, q) => p - q).map((h) => +h.toFixed(2)).join(',');
+
+/** A 4b map as its build reads it: the analysis, its ids for its key (F4), its profile, its layout. */
+function load4b(key: string, opts: { indoorStairs?: boolean } = {}) {
+  const [g, n] = key.split('.').map(Number);
+  const s = loadStaticMap(g, n);
+  const a = analyze(s.grid, { ...s.opts, margin: MARGIN, ...opts });
+  const ids = interiorIds(a, key), profile = mapProfile(key), warps = gridEvents(s.map.events, 0).warps;
+  return { s, a, ids, profile, warps };
+}
+
+/** D8's band fit: the share of a map's columns whose first walkable row (mechanics too) lies within bandMax rows of the
+ *  column's top (the band a back wall could hang). */
+function bandFit(a: MapAnalysis, ids: readonly (InteriorId | null)[], bandMax: number): number {
+  let cols = 0, fit = 0;
+  for (let x = a.minX; x < a.maxX; x++) {
+    let t = -1;
+    for (let y = a.minY; y < a.maxY && t < 0; y++) if (roomMaterial(a, a.idx(x, y))) t = y;
+    if (t < 0) continue;
+    cols++;
+    for (let y = t; y <= t + bandMax && y < a.maxY; y++) {
+      const i = a.idx(x, y), id = ids[i];
+      if (roomMaterial(a, i) && (walkable(a, i) || (id !== null && MECHANIC.has(id)))) { fit++; break; }
+    }
+  }
+  return cols ? fit / cols : 0;
+}
+
+/** What prepareInterior (Task 7) does with a tier plan: every cell's floor at its plan height. */
+function applyPlan(a: MapAnalysis, P: TierPlan): void {
+  for (let i = 0; i < a.N; i++) {
+    if (Number.isNaN(P.h[i])) continue;
+    if (!Number.isNaN(a.height[i])) a.height[i] = P.h[i];
+    a.groundH[i] = P.h[i];
+  }
+}
+
+describe('Phase 4b rooms (layout v2)', () => {
+  it('lays out every 4b map with its profile and writes the findings (out/rooms-4b.txt)', () => {
+    setPhase4bScope(true);
+    try {
+      const lines: string[] = ['# Phase 4b room layouts (Task 5): per map its profile, band fit, rooms, masses, risers, doors, findings',
+        '# (the 4b scope on; ids for the map key; tier maps laid with tierPlan as prepareInterior would)', ''];
+      let maps = 0, findings = 0;
+      const notInScope: string[] = [];
+      for (const key of PHASE4B_MAPS.keys()) {
+        const { a, ids, profile, warps, s } = load4b(key);
+        if (!interiorScope(s.opts, key)) { notInScope.push(key); continue; }
+        maps++;
+        if (profile.tiers) applyPlan(a, tierPlan(a, ids));
+        const L = roomLayout(a, ids, warps, profile);
+        const f = checkRoomLayout(a, L, warps);
+        findings += f.length;
+        let cells = 0, labelled = 0;
+        for (let i = 0; i < a.N; i++) if (roomMaterial(a, i)) { cells++; if (ids[i] !== null) labelled++; }
+        const kinds = (xs: string[]) => [...new Set(xs)].map((k) => `${k} ${xs.filter((x) => x === k).length}`).join(', ') || '-';
+        lines.push(`${key} ${profile.shell}${profile.tiers ? '+tiers' : ''} bandMax ${profile.bandMax} | labelled ${(100 * labelled / cells).toFixed(0)} %`
+          + ` | band fit ${(100 * bandFit(a, ids, profile.bandMax)).toFixed(0)} % | rooms ${L.rooms} | masses ${kinds(L.masses.map((m) => m.kind))}`
+          + ` | risers ${L.risers.length} | doors ${kinds(L.doors.map((d) => d.kind))} | features ${L.features.length} | findings ${f.length}`);
+        const byKind = new Map<string, string[]>();
+        for (const x of f) { const k = x.replace(/\(.*$/, '').replace(/[-\d.[\],…]+/g, '').trim(); byKind.set(k, [...(byKind.get(k) ?? []), x]); }
+        for (const [k, xs] of byKind) lines.push(`    ${xs.length} × ${k}: ${xs.slice(0, 4).join('; ')}${xs.length > 4 ? '; …' : ''}`);
+      }
+      lines.push('', `${maps} maps, ${findings} findings${notInScope.length ? `; not in scope: ${notInScope.join(' ')}` : ''}`);
+      fs.mkdirSync(OUT, { recursive: true });
+      fs.writeFileSync(path.join(OUT, 'rooms-4b.txt'), lines.join('\n') + '\n');
+      expect(notInScope).toEqual([]);
+      expect(maps).toBe(45);
+    } finally { setPhase4bScope(false); }
+  });
+
+  it('measures the tiers (out/tiers-4b.txt): elevations, the solver with indoor stairs, the label plan', () => {
+    const lines: string[] = ['# Phase 4b tiers (Task 5, D13/F1): per map the distinct elevations of its walkable cells, the solver\'s walkable',
+      '# heights (plain; with the indoor `flanked` stairs rule, ClassifyOptions.indoorStairs) and the label plan\'s (tierPlan) floor',
+      '# heights; `propose tiers` where the labels make tiers (tier faces, ramps, a dais): heights come from labels (F1), the',
+      '# solver is shown for the record (its indoor stairs climb maze corridors).', ''];
+    const proposals: string[] = [];
+    for (const key of PHASE4B_MAPS.keys()) {
+      const plain = load4b(key), stairs = load4b(key, { indoorStairs: true });
+      const walk = (a: MapAnalysis) => {
+        const out: number[] = [];
+        for (let i = 0; i < a.N; i++) if (roomMaterial(a, i) && a.kind[i] === K.Floor && walkable(a, i)) out.push(i);
+        return out;
+      };
+      const elev = walk(plain.a).map((i) => plain.a.elev[i]);
+      const h0 = walk(plain.a).map((i) => plain.a.height[i]), h1 = walk(stairs.a).map((i) => stairs.a.height[i]);
+      let nStairs = 0;
+      for (let i = 0; i < stairs.a.N; i++) if (roomMaterial(stairs.a, i) && stairs.a.kind[i] === K.Stairs) nStairs++;
+      const P = tierPlan(plain.a, plain.ids);
+      const tierH: number[] = [];
+      for (let i = 0; i < plain.a.N; i++) if (P.tier[i] >= 0) tierH.push(P.h[i]);
+      let faces = 0, ramps = 0;
+      for (let i = 0; i < plain.a.N; i++) { if (plain.ids[i] === 'tierFace') faces++; if (plain.ids[i] === 'hiddenStairs') ramps++; }
+      const daises = P.dais.filter(Boolean).length;
+      const levels = new Set(tierH.map((h) => +h.toFixed(3))).size;
+      const propose = faces + ramps + daises > 0 || levels > 1;
+      if (propose && !plain.profile.tiers) proposals.push(key);
+      lines.push(`${key}${plain.profile.tiers ? ' (tiers)' : ''} | elevations ${fmtSet(elev)} | solver ${fmtSet(h0)} | +indoorStairs ${fmtSet(h1)}`
+        + ` (${nStairs} stairs cells) | labels: ${faces} tierFace, ${ramps} hiddenStairs, ${daises} dais → plan ${fmtSet(tierH)}`
+        + `${propose ? (plain.profile.tiers ? ' | tiers ✓' : ' | propose tiers') : ''}`);
+    }
+    lines.push('', `proposed for tiers: ${proposals.join(' ') || '-'}`);
+    fs.mkdirSync(OUT, { recursive: true });
+    fs.writeFileSync(path.join(OUT, 'tiers-4b.txt'), lines.join('\n') + '\n');
+  });
+
+  // Sootopolis 1F (15.0): a pyramid of four two-row face bands joined at x = 8 by ramps; Juan's platform on top, his dais
+  // on it; the slate terraces outside the walls step down the same way, walkable cells among them unreachable.
+  it('lays Sootopolis 1F\'s tiers from its labels, no cap on Juan\'s platform', () => {
+    const { a, ids } = load4b('15.0');
+    const P = tierPlan(a, ids);
+    const h = (x: number, y: number) => +P.h[a.idx(x, y)].toFixed(3);
+    expect([h(8, 24), h(8, 18), h(8, 13), h(8, 7), h(4, 3)]).toEqual([0, 2, 4, 6, 8]);   // entrance, ice fields 1–3, Juan
+    expect(h(8, 3)).toBe(+(8 + DAIS_H).toFixed(3));                       // Juan's dais
+    expect([4, 5, 6, 7, 8].map((y) => h(16, y))).toEqual([6, 6, 6, 6, 6]); // the unreachable east terrace beside field 3
+    expect([1, 2, 3, 4].map((x) => h(x, 16))).toEqual([2, 2, 2, 2]);      // the west terrace beside field 1
+    expect([4, 5].map((y) => h(8, y))).toEqual([7.5, 6.5]);               // the ramp from field 3 up to Juan
+    // laid as prepareInterior would, every face band stands on a riser
+    applyPlan(a, P);
+    const L = roomLayout(a, ids, gridEvents(loadStaticMap(15, 0).map.events, 0).warps, mapProfile('15.0'));
+    expect(L.risers.length).toBeGreaterThan(0);
+    expect(checkRoomLayout(a, L).filter((f) => f.startsWith('tier face'))).toEqual([]);
   });
 });

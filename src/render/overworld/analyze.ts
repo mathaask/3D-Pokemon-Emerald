@@ -29,6 +29,10 @@ export interface ClassifyOptions {
    *  tilesets' ROM tiles (`romTileVram`) under the live palette. Live VRAM swaps an animated tile's frame (the Building
    *  TV every 8 frames), and a room's colours must not depend on the frame it was built on. */
   colorInfo?: TileInfo;
+  /** The `flanked` stairs rule indoors too (default off: indoors no cell becomes K.Stairs but the General stair ids).
+   *  The tier measurement (tests/smoke/interiorRooms.test.ts, D13) and `prepareInterior` (Task 7) switch it on; Retro
+   *  and the app's analysis never do. */
+  indoorStairs?: boolean;
   margin: number;
 }
 
@@ -191,7 +195,7 @@ export function analyze(grid: GridData, opts: ClassifyOptions): MapAnalysis {
       if (kind[i] !== K.Floor) continue;
       const m = mt[i];
       const flanked = kind[idx(x - 1, y)] === K.Block && kind[idx(x + 1, y)] === K.Block;
-      if ((isGeneralId(m) && STAIRS.has(m)) || (flanked && !opts.indoor && layer[i] !== 1 && beh[i] === MB.NORMAL &&
+      if ((isGeneralId(m) && STAIRS.has(m)) || (flanked && (!opts.indoor || opts.indoorStairs) && layer[i] !== 1 && beh[i] === MB.NORMAL &&
         (kind[idx(x, y - 1)] !== K.Block || kind[idx(x, y + 1)] !== K.Block))) {
         if (isGeneralId(m) ? STAIRS.has(m) : flanked) kind[i] = K.Stairs;
       }

@@ -30,14 +30,29 @@ export const INTERIOR_LEGEND: Record<string, FakeCell> = {
   '?': { mt: 0x20f, blocked: true, id: null },
   // metatile 0x3FF with its own bits (walkable, elevation 3): the classifier reads the border (void) there (`real3ff`)
   _: { mt: 0x3ff, blocked: false, id: null },
+  // Phase 4b (Task 5 owns every new letter, F14): masses, mechanics, wall art, tiers
+  Z: { mt: 0x220, blocked: true, id: 'mazeWall' },
+  R: { mt: 0x221, blocked: true, id: 'ridge' },
+  i: { mt: 0x222, blocked: false, id: 'thinIce' },       // (broken thin ice is walkable too: field_tasks.c)
+  b: { mt: 0x223, blocked: true, id: 'barrier' },
+  G: { mt: 0x224, blocked: false, beh: MB.PETALBURG_GYM_DOOR, id: 'gymDoor' },
+  N: { mt: 0x225, blocked: false, id: 'boards' },         // a floor cell for a NORMAL warp (its behaviour: MB.NORMAL)
+  P: { mt: 0x226, blocked: true, id: 'painting' },
+  K: { mt: 0x227, blocked: true, id: 'blackboard' },
+  X: { mt: 0x228, blocked: true, id: 'tierFace' },
+  U: { mt: 0x229, blocked: false, id: 'tier' },
+  H: { mt: 0x22a, blocked: false, id: 'hiddenStairs' },
+  d: { mt: 0x22b, blocked: false, id: 'dais' },           // a leader's stage: a raised walkable tier (DAIS_H)
 };
 
 /**
  * An indoor analysis of `rows` (margin 1, the border the void metatile 1 with `isVoid`), its ids from the legend (the
  * default one, overridden / extended by `legend`), seeded with `seedInteriorIds(a, ids)` so that `interiorIds(a)` (what
- * the families' `extract` reads) returns them.
+ * the families' `extract` reads) returns them. `heights` (per legend letter): the cells' `a.height` (and `groundH`),
+ * as `prepareInterior` lays a tier map, for tier cases without it.
  */
-export function fakeInterior(rows: string[], legend?: Record<string, FakeCell>): { a: MapAnalysis; ids: (InteriorId | null)[] } {
+export function fakeInterior(rows: string[], legend?: Record<string, FakeCell>, heights?: Record<string, number>):
+  { a: MapAnalysis; ids: (InteriorId | null)[] } {
   const L = { ...INTERIOR_LEGEND, ...legend };
   const info = fakeInfo();
   info.isVoid[VOID_MT] = 1;
@@ -59,6 +74,14 @@ export function fakeInterior(rows: string[], legend?: Record<string, FakeCell>):
   for (const c of Object.values(L)) byMt.set(c.mt, c.id);
   const ids = new Array<InteriorId | null>(a.N);
   for (let i = 0; i < a.N; i++) ids[i] = byMt.get(a.mt[i]) ?? null;
+  if (heights) {
+    rows.forEach((r, y) => [...r].forEach((ch, x) => {
+      const h = heights[ch];
+      if (h === undefined || !a.inside(x, y)) return;
+      const i = a.idx(x, y);
+      a.height[i] = h; a.groundH[i] = h;
+    }));
+  }
   seedInteriorIds(a, ids);
   return { a, ids };
 }

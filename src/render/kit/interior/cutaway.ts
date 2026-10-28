@@ -24,20 +24,22 @@ export interface CutawayRun { dir: WallDir; line: number; from: number; to: numb
 
 const isNS = (d: WallDir) => d === 'N' || d === 'S';
 
-/** A pocket side is at most this long: the back-wall band's depth (BAND_MAX: the stairs alcove, a back-wall step). */
+/** A pocket side is at most this long by default: Phase 4's back-wall band depth (BAND_MAX: the stairs alcove, a
+ *  back-wall step). A map's own is its profile's `bandMax` (`RoomLayout.profile`, F32), passed to `pocketDir`. */
 export const POCKET_MAX = BAND_MAX;
 
 /**
  * 'N' when the back wall's cutaway takes run `r` along, else null: `r` is a short side of a pocket in the back wall —
- * both its ends meet N runs and it is at most POCKET_MAX long: the side walls of the stairs alcove, of a back-wall step.
+ * both its ends meet N runs and it is at most `bandMax` long (the layout's `L.profile.bandMax`, F32; default POCKET_MAX):
+ * the side walls of the stairs alcove, of a back-wall step.
  * When the back wall is cut away (yaw near π) such a run stands alone between the camera and the room, so it goes with
  * it. Only the back wall takes runs along: a piece of back wall between two E (or W) runs — the one cell between a
  * corner and an alcove — stays governed by its own direction (taken along with a side wall it left a wall-high hole
  * beside the alcove from about 15° of orbit, the wall decals floating in it). A room's own side walls meet N at one end
  * and S at the other: never taken along. At yaw 0 nothing changes (N is shown).
  */
-export function pocketDir(runs: readonly CutawayRun[], r: CutawayRun): WallDir | null {
-  if (isNS(r.dir) || r.to - r.from > POCKET_MAX + 1e-6) return null;
+export function pocketDir(runs: readonly CutawayRun[], r: CutawayRun, bandMax: number = POCKET_MAX): WallDir | null {
+  if (isNS(r.dir) || r.to - r.from > bandMax + 1e-6) return null;
   const at = (e: number) =>
     runs.find((o) => isNS(o.dir) && o.floorY === r.floorY && o.line === e && (o.from === r.line || o.to === r.line));
   const a = at(r.from), b = at(r.to);
