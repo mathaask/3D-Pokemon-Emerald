@@ -430,7 +430,8 @@ reviews (0 critical), one fix wave in four parallel fixers + re-review, and a pe
     `roundBox`/`roundedBlock` duplication left; `shellRuns`/`planOpenings` run 3× per build (negligible).
 
 ## Next step
-- **Phase 4 is complete (2026-10-28)** and merged to `main`. All four phases of the spec are done. Candidates next
+- **Phase 4b (remaining interiors) started 2026-10-28** — user: "Videre"; scope chosen = ALL four groups (gyms, League/E4 rooms, special buildings, Battle Frontier + secret bases); gym puzzles modernised but reading exactly like the GBA (same cell logic and visibility). Survey `.superpowers/sdd/phase4b-survey.md` → plan(s) in `docs/superpowers/plans/` (likely 4b = gyms + League + special buildings, 4c = Frontier + secret bases), user approval before execution.
+- **Phase 4 is complete (2026-10-28)** and merged to `main`. All four phases of the spec are done. Other candidates
   (ask the user): Phase 4b (gyms, Frontier and the other interiors), the terrain height solver v2 (mountain ridges),
   a look-polish pass over the Phase 3/4 known gaps, or interior perf (pre-baked xBR, simpler bookcases).
 - **Phase 3 is complete (2026-10-27)** and merged to `main`.
