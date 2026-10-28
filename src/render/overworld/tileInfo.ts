@@ -1,8 +1,10 @@
 // CPU-side metatile analysis: decodes every metatile of the current tileset pair from
 // live VRAM so the classifier can reason about pixels (coverage, greenness, ground
-// differences) — the same data the GPU atlas shows.
+// differences) — the same data the GPU atlas shows. romTileVram: the tilesets' ROM tiles
+// instead (no tile animation's frame), the interior kit's colour source.
 
-import type { Bus } from '../../gba/bus';
+import type { RomReader } from '../../game/rom/reader';
+import { loadTileset } from '../../game/rom/tileset';
 
 export interface TileInfo {
   /** Composite colour (BGR555, 0x8000 = transparent) for 1024 metatiles x 256 px, both layers. */
@@ -22,72 +24,125 @@ export interface TileInfo {
   attributes: Uint16Array;
 }
 
+/** Decodes all 1024 metatiles of a tileset pair (`bus.vram` from `charBase`, under `palette`). */
 export function analyzeMetatiles(
-  bus: Bus, entries: Uint16Array, attributes: Uint16Array, charBase: number, palette: Uint16Array,
+  bus: { readonly vram: ArrayLike<number> }, entries: Uint16Array, attributes: Uint16Array, charBase: number, palette: Uint16Array,
 ): TileInfo {
-  const both = new Uint16Array(1024 * 256);
-  const bottom = new Uint16Array(1024 * 256);
-  const topCover = new Uint16Array(1024);
-  const bottomCover = new Uint16Array(1024);
-  const green = new Float32Array(1024);
-  const blue = new Float32Array(1024);
-  const isVoid = new Uint8Array(1024);
-  const vram = bus.vram;
+  const info: TileInfo = {
+    both: new Uint16Array(1024 * 256),
+    bottom: new Uint16Array(1024 * 256),
+    topCover: new Uint16Array(1024),
+    bottomCover: new Uint16Array(1024),
+    green: new Float32Array(1024),
+    blue: new Float32Array(1024),
+    isVoid: new Uint8Array(1024),
+    attributes,
+  };
+  // (one call per metatile: V8 optimises decodeMetatile by its call count within the first analysis. As one loop over
+  // all 1024 metatiles the work ran on on-stack replacement, and the function's third call in a session (the interior
+  // kit's ROM-tile colours make one more per room) at times ran unoptimised, 50–170 ms instead of 15, in the build frame)
+  for (let m = 0; m < 1024; m++) decodeMetatile(m, bus.vram, entries, charBase, palette, info);
+  return info;
+}
 
+/**
+ * The metatiles on the tilesets' ROM tiles (`romVram`: romTileVram's layout, tile 0 at 0) from their live analysis
+ * (`live`: analyzeMetatiles of `liveVram` from `charBase`, under the same `palette`): bit for bit
+ * analyzeMetatiles({ vram: romVram }, entries, live.attributes, 0, palette), but only the metatiles drawing a tile whose
+ * bytes differ (a tile animation's current frame) are decoded again; the rest are copied. `live` stays as it was.
+ */
+export function romMetatiles(
+  live: TileInfo, liveVram: ArrayLike<number>, charBase: number, romVram: ArrayLike<number>, entries: Uint16Array,
+  palette: Uint16Array,
+): TileInfo {
+  const differs = new Uint8Array(1024);
+  for (let t = 0; t < 1024; t++) {
+    const a = charBase + t * 32, b = t * 32;
+    for (let k = 0; k < 32; k++) {
+      if (liveVram[(a + k) & 0xffff] !== romVram[(b + k) & 0xffff]) { differs[t] = 1; break; }
+    }
+  }
+  const out: TileInfo = {
+    both: live.both.slice(), bottom: live.bottom.slice(), topCover: live.topCover.slice(),
+    bottomCover: live.bottomCover.slice(), green: live.green.slice(), blue: live.blue.slice(), isVoid: live.isVoid.slice(),
+    attributes: live.attributes,
+  };
   for (let m = 0; m < 1024; m++) {
-    let greenCount = 0;
-    let blueCount = 0;
-    let dark = 0;
-    for (let layer = 0; layer < 2; layer++) {
-      for (let sub = 0; sub < 4; sub++) {
-        const e = entries[m * 8 + layer * 4 + sub];
-        const tile = e & 0x3ff;
-        const hflip = (e & 0x400) !== 0;
-        const vflip = (e & 0x800) !== 0;
-        const pal = e >>> 12;
-        const base = charBase + tile * 32;
-        const ox = (sub & 1) * 8;
-        const oy = (sub >> 1) * 8;
-        for (let py = 0; py < 8; py++) {
-          const ty = vflip ? 7 - py : py;
-          for (let px = 0; px < 8; px++) {
-            const tx = hflip ? 7 - px : px;
-            const byte = vram[(base + ty * 4 + (tx >> 1)) & 0xffff];
-            const ci = tx & 1 ? byte >> 4 : byte & 15;
-            const p = (oy + py) * 16 + ox + px;
-            const idx = m * 256 + p;
-            if (layer === 0) {
-              if (ci === 0) {
-                bottom[idx] = 0x8000;
-                both[idx] = 0x8000;
-              } else {
-                const c = palette[pal * 16 + ci] & 0x7fff;
-                bottom[idx] = c;
-                both[idx] = c;
-                bottomCover[m]++;
-              }
-            } else if (ci !== 0) {
-              both[idx] = palette[pal * 16 + ci] & 0x7fff;
-              topCover[m]++;
+    let redo = false;
+    for (let s = 0; s < 8 && !redo; s++) redo = differs[entries[m * 8 + s] & 0x3ff] === 1;
+    if (!redo) continue;
+    out.topCover[m] = 0;
+    out.bottomCover[m] = 0;
+    decodeMetatile(m, romVram, entries, 0, palette, out);
+  }
+  return out;
+}
+
+/** Metatile `m`'s pixels (both layers, the bottom layer), covers, green / blue shares and void flag, into `out`. */
+function decodeMetatile(
+  m: number, vram: ArrayLike<number>, entries: Uint16Array, charBase: number, palette: Uint16Array, out: TileInfo,
+): void {
+  const { both, bottom, topCover, bottomCover } = out;
+  let greenCount = 0;
+  let blueCount = 0;
+  let dark = 0;
+  for (let layer = 0; layer < 2; layer++) {
+    for (let sub = 0; sub < 4; sub++) {
+      const e = entries[m * 8 + layer * 4 + sub];
+      const tile = e & 0x3ff;
+      const hflip = (e & 0x400) !== 0;
+      const vflip = (e & 0x800) !== 0;
+      const pal = e >>> 12;
+      const base = charBase + tile * 32;
+      const ox = (sub & 1) * 8;
+      const oy = (sub >> 1) * 8;
+      for (let py = 0; py < 8; py++) {
+        const ty = vflip ? 7 - py : py;
+        for (let px = 0; px < 8; px++) {
+          const tx = hflip ? 7 - px : px;
+          const byte = vram[(base + ty * 4 + (tx >> 1)) & 0xffff];
+          const ci = tx & 1 ? byte >> 4 : byte & 15;
+          const p = (oy + py) * 16 + ox + px;
+          const idx = m * 256 + p;
+          if (layer === 0) {
+            if (ci === 0) {
+              bottom[idx] = 0x8000;
+              both[idx] = 0x8000;
+            } else {
+              const c = palette[pal * 16 + ci] & 0x7fff;
+              bottom[idx] = c;
+              both[idx] = c;
+              bottomCover[m]++;
             }
+          } else if (ci !== 0) {
+            both[idx] = palette[pal * 16 + ci] & 0x7fff;
+            topCover[m]++;
           }
         }
       }
     }
-    for (let p = 0; p < 256; p++) {
-      const c = both[m * 256 + p];
-      if (c & 0x8000) continue;
-      const r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-      if (g > r + 2 && g >= b && g > 6) greenCount++;
-      if (b > r + 3 && b > g) blueCount++;
-      if (r + g + b < 6) dark++;
-    }
-    green[m] = greenCount / 256;
-    blue[m] = blueCount / 256;
-    const opaque = bottomCover[m] + topCover[m];
-    isVoid[m] = opaque === 0 || dark > 240 ? 1 : 0;
   }
-  return { both, bottom, topCover, bottomCover, green, blue, isVoid, attributes };
+  for (let p = 0; p < 256; p++) {
+    const c = both[m * 256 + p];
+    if (c & 0x8000) continue;
+    const r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+    if (g > r + 2 && g >= b && g > 6) greenCount++;
+    if (b > r + 3 && b > g) blueCount++;
+    if (r + g + b < 6) dark++;
+  }
+  out.green[m] = greenCount / 256;
+  out.blue[m] = blueCount / 256;
+  const opaque = bottomCover[m] + topCover[m];
+  out.isVoid[m] = opaque === 0 || dark > 240 ? 1 : 0;
+}
+
+/** The tilesets' own tiles from the ROM (`primary` at tile 0, `secondary` at tile 512, character base 0), as a VRAM
+ *  image: what a static map preview loads. */
+export function romTileVram(rom: RomReader, primary: number, secondary: number): Uint8Array {
+  const vram = new Uint8Array(0x10000);
+  if (primary) vram.set(loadTileset(rom, primary).tiles.subarray(0, 0x4000), 0);
+  if (secondary) vram.set(loadTileset(rom, secondary).tiles.subarray(0, 0x4000), 0x4000);
+  return vram;
 }
 
 /** Fraction (0..1) of pixels in metatile `m` that differ from the ground metatile `g`. */

@@ -13,6 +13,7 @@ import { flowerMaterial } from './flowers';
 import { SEABED_MATERIAL, WATER_ROCK_MATERIAL, waterMaterial } from './water';
 import { SOIL_MATERIAL } from './soil';
 import { terrainMaterial } from './terrain';
+import { INTERIOR_CATALOGUE } from './interior/index';
 import { groundMaterial, type WorldMaterials } from '../overworld/world';
 import { TreeCardMaterials, TreeCards } from '../overworld/treeCards';
 
@@ -72,6 +73,8 @@ export interface CatalogueSources {
   uniforms: KitUniforms;
   /** The view's legacy pixel-geometry materials (World draws with these very objects). */
   legacy: WorldMaterials;
+  /** Their HD twins (WorldMaterials.hd, the same objects): the legacy quads where the interior kit ran. */
+  legacyHd: Pick<WorldMaterials, 'opaque' | 'cutout'>;
   /** The metatile atlas texture the legacy tree cards sample. */
   atlas: THREE.Texture;
 }
@@ -173,11 +176,16 @@ export function worldCatalogue(src: CatalogueSources): WorldCatalogue {
   kit(WATER_ROCK_MATERIAL, PNC, true);
   kit(SOIL_MATERIAL, PNC, false);
   kit(terrainMaterial(placeholder(), v2(), v2()), PN, true);
+  // the interior families' (Phase 4: shell, floor, furniture)
+  for (const e of INTERIOR_CATALOGUE) kit(e.material, e.attrs, e.castShadow);
 
-  // the legacy pixel geometry (World.addMesh: the water casts no shadow), its tree cards, the ground plane under all
+  // the legacy pixel geometry (World.addMesh: the water casts no shadow; the HD twins on in-scope interiors), its tree
+  // cards, the ground plane under all
   add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.opaque), true);
   add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.cutout), true);
   add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacy.water), false);
+  add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacyHd.opaque), true);
+  add(new THREE.Mesh(catalogueTriangle(LEGACY), src.legacyHd.cutout), true);
   const cardMats = new TreeCardMaterials(src.atlas);
   const cards = new TreeCards(cardMats, [{ px: 0, py: 0, pz: 0, y0: 0, u0: 0, v0: 0, u1: 1, v1: 1 }]);
   add(cards.mesh, true);

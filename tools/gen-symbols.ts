@@ -17,6 +17,9 @@ const WANTED = [
   'gMapObjects', 'gSelectedObjectEvent', 'gGlobalFieldTintMode', 'sCurrentMapName',
   'gTilesetAnimTable', 'gTileset_General', 'gTileset_Petalburg', 'gTileset_Rustboro', 'gTileset_Lavaridge', 'gTileset_Sootopolis', 'gTileset_Mauville', 'gTileset_EverGrande',
   'gTileset_Slateport', 'gTileset_BattleFrontierOutsideWest', 'gTileset_BattleFrontierOutsideEast',
+  // interiors (Phase 4): the Building primary and the five in-scope secondaries
+  'gTileset_Building', 'gTileset_GenericBuilding', 'gTileset_PokemonCenter', 'gTileset_Shop', 'gTileset_Lab',
+  'gTileset_BrendansMaysHouse',
   'sPrimaryTilesetAnimCounter',
   'gBGTilemapBuffers1', 'gBGTilemapBuffers2', 'gBGTilemapBuffers3', 'gFlashEffectActive',
   // code: a map connection being crossed (the game is inside CameraMove: map load in progress)

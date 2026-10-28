@@ -12,7 +12,11 @@ import type { GridEvents } from '../kit/events';
 import type { KitUniforms } from '../kit/materials';
 import { runKit, disposeKit, warnFailure, type Family, type KitContext, type FamilyReport } from '../kit/semantics';
 import { FAMILIES } from '../kit/index';
-import { analyze, queries } from './analyze';
+import { INTERIOR_FAMILIES } from '../kit/interior/index';
+import { interiorScope } from '../kit/interior/scope';
+import { runVisible } from '../kit/interior/cutaway';
+import type { WallDir } from '../kit/interior/room';
+import { analyze, queries, K, type MapAnalysis } from './analyze';
 import { emitLegacy } from './legacyQuads';
 import { CLAIM_BLADES, CLAIM_SURFACE, type Claims } from './claims';
 import type { CellModel, ClassifyOptions } from './classify';
@@ -24,8 +28,12 @@ export interface WorldBuildContext {
   style: WorldStyle;
   events: GridEvents;
   quality: Quality;
-  /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build). */
+  /** The map ("group.num"): the kit's failures are warned about once per map (unset: every build); also names the maps
+   *  `interiorScope` leaves out (OUT_OF_SCOPE_MAPS) — unset, no map is an in-scope interior (it fails closed). */
   mapKey?: string;
+  /** The interior kit on in-scope interiors in Modern (default true; false: today's legacy room and light — the
+   *  `--ab-feature interior` baseline). */
+  interiorKit?: boolean;
 }
 
 export interface GridData {
@@ -45,6 +53,9 @@ export interface WorldMaterials {
   opaque: THREE.Material;
   cutout: THREE.Material;
   water: THREE.Material;
+  /** The HD twins of opaque and cutout (materials.ts createHdWorldMaterials): the legacy quads of a build where the
+   *  interior kit ran (the cells it leaves: smooth-edged pixels). Unset: today's everywhere. */
+  hd?: Pick<WorldMaterials, 'opaque' | 'cutout'>;
 }
 
 interface QuadBatch {
@@ -92,6 +103,13 @@ export class World {
   private kitGroup: THREE.Group | null = null;
   /** Per-family outcome of the last build (empty when the kit did not run). */
   kitReport: FamilyReport[] = [];
+  /** The interior families ran on the last build (Modern, an in-scope interior, the interior kit on), even if one of
+   *  them failed: its room light follows the clock (D8, OverworldView.updateLighting). */
+  interiorKitRan = false;
+  /** The family whose extract throws on every build (null: none): the harness's and tests' failure path (?kitFail=). */
+  private failFamily: string | null = null;
+  /** The last build's kit meshes carrying `userData.wallDir` (the interior walls): updateCutaway shows / hides them. */
+  private cutaway: THREE.Object3D[] = [];
   /** Builds so far, and the last one's ms (the renderer's stats: a map crossing builds once). */
   builds = 0;
   lastBuildMs = 0;
@@ -109,6 +127,7 @@ export class World {
     private materials: WorldMaterials,
     uniforms: KitUniforms,
     private families: readonly Family<unknown>[] = FAMILIES,
+    private interiorFamilies: readonly Family<unknown>[] = INTERIOR_FAMILIES,
   ) {
     this.kit = { uniforms, quality: 'medium', disposables: [], warned: new Set() };
     this.base.receiveShadow = true;
@@ -127,6 +146,31 @@ export class World {
       this.treeCards = null;
     }
     if (this.kitGroup) { disposeKit(this.kitGroup, this.kit); this.kitGroup = null; }
+    this.cutaway = [];
+  }
+
+  /** Makes the named family's extract throw on every build from now on (null: none): its claims roll back and its
+   *  cells render legacy, warned once per map (spec §11). */
+  setFailFamily(name: string | null): void {
+    this.failFamily = name;
+  }
+
+  /** Per frame: hides the interior walls the camera sees from outside (D5; `camBack`: kitUniforms.uCamBack), and the
+   *  pocket sides (`userData.pocketDir`: the stairs alcove's side walls) with the walls whose pocket they are. */
+  updateCutaway(camBack: THREE.Vector2): void {
+    for (const o of this.cutaway) {
+      o.visible = runVisible(o.userData.wallDir as WallDir, (o.userData.pocketDir as WallDir | undefined) ?? null, camBack);
+    }
+  }
+
+  /** The families with the failing one's extract made to throw (setFailFamily). */
+  private withFail(families: readonly Family<unknown>[]): readonly Family<unknown>[] {
+    const name = this.failFamily;
+    if (name === null || !families.some((f) => f.name === name)) return families;
+    return families.map((f) => (f.name !== name ? f : {
+      name: f.name, build: f.build.bind(f),
+      extract: () => { throw new Error(`${name} made to fail (setFailFamily)`); },
+    }));
   }
 
   build(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
@@ -138,22 +182,34 @@ export class World {
 
   private buildMeshes(grid: GridData, opts: Omit<ClassifyOptions, 'margin'>, ctx: WorldBuildContext): void {
     this.dispose();
-    const a = analyze(grid, { ...opts, margin: this.margin });
+    let a = analyze(grid, { ...opts, margin: this.margin });
     let claims: Claims | null = null;
     this.kitReport = [];
-    if (ctx.style === 'modern' && !opts.indoor && !opts.underground && this.families.length) {
+    this.interiorKitRan = false;
+    // the kit: Modern, not underground; outdoors the outdoor families, on an in-scope interior the interior ones
+    const modern = ctx.style === 'modern' && !opts.underground;
+    const interior = modern && opts.indoor && interiorScope(opts, ctx.mapKey ?? null) && (ctx.interiorKit ?? true);
+    const families = !modern ? null : !opts.indoor ? this.families : interior ? this.interiorFamilies : null;
+    if (families && families.length) {
       try {
         this.kit.quality = ctx.quality;
-        const r = runKit({ a, events: ctx.events, quality: ctx.quality, mapKey: ctx.mapKey }, this.families, this.kit);
+        // (rooms are flat: the solver's heights in a few of them are counter rings voting steps)
+        if (interior) flattenFloors(a);
+        const r = runKit({ a, events: ctx.events, quality: ctx.quality, mapKey: ctx.mapKey }, this.withFail(families), this.kit);
         claims = r.claims;
         this.kitReport = r.report;
         this.kitGroup = r.group;
         this.group.add(r.group);
+        this.interiorKitRan = interior;
+        r.group.traverse((o) => { if (o.userData.wallDir !== undefined) this.cutaway.push(o); });
       } catch (e) {
         warnFailure({ a, events: ctx.events, quality: ctx.quality, mapKey: ctx.mapKey }, this.kit.warned, 'semantic layer',
           `${String(e)}; this map uses Retro 3D`);
         claims = null;
+        this.cutaway = [];
         if (this.kitGroup) { disposeKit(this.kitGroup, this.kit); this.kitGroup = null; }
+        // (the map as today: its own heights)
+        if (interior) a = analyze(grid, { ...opts, margin: this.margin });
       }
     }
     const model: CellModel = { ...queries(a), ...emitLegacy(a, claims) };
@@ -203,14 +259,19 @@ export class World {
     this.base.scale.set(model.maxX - model.minX + 40, 1, model.maxY - model.minY + 40);
     this.base.position.set((model.minX + model.maxX) / 2, -0.6, (model.minY + model.maxY) / 2); // below water (-0.3)
     const baseMat = this.base.material as THREE.MeshStandardMaterial;
+    // (an in-scope Modern interior draws its plane after the other opaques: it lies under the room's floor, which then
+    // hides it by depth instead of shading over it — 0.2–0.4 ms of the iGPU's frame, Task 13; the picture is the same)
+    this.base.renderOrder = this.interiorKitRan ? 1 : 0;
     if (opts.indoor || model.dominantFloor < 0) baseMat.color.setRGB(0.01, 0.01, 0.012);
     else {
       const c = averageColor(opts.info, model.dominantFloor);
       baseMat.color.setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace);
     }
 
-    this.addMesh(opaque, this.materials.opaque, true);
-    this.addMesh(cutout, this.materials.cutout, true);
+    // (an in-scope Modern interior: the cells the kit leaves in HD pixels; everything else as today)
+    const legacy = (this.interiorKitRan && this.materials.hd) || this.materials;
+    this.addMesh(opaque, legacy.opaque, true);
+    this.addMesh(cutout, legacy.cutout, true);
     this.addMesh(water, this.materials.water, false);
   }
 
@@ -244,6 +305,16 @@ export class World {
   hasGrassBlades(x: number, y: number): boolean {
     const i = this.blades && this.cellOf ? this.cellOf(x, y) : -1;
     return i >= 0 && this.blades![i] === 1;
+  }
+}
+
+/** Lays every floor of an in-scope interior at height 0 (its walkable cells' heights, the ground under its blocks):
+ *  rooms are flat, floor, furniture and actors at one height. The solver gives a few rooms steps (the Lilycove Department
+ *  Store floors 13.17, 13.19, 13.20 and the Safari Zone entrance 23.0: counter rings voting height offsets). */
+export function flattenFloors(a: MapAnalysis): void {
+  for (let i = 0; i < a.N; i++) {
+    if (a.kind[i] !== K.Water && !Number.isNaN(a.height[i])) a.height[i] = 0;
+    a.groundH[i] = 0;
   }
 }
 

@@ -52,8 +52,8 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   special buildings, and props such as signs, mailboxes, fences and boulders. Their colours
   are sampled from the ROM's own tiles, so every town keeps its palette. Scenery between the
   camera and the player dithers away in a small circle, so the player is never hidden.
-  Anything the models don't cover yet (caves, interiors, mountain rock and a few unusual
-  tiles; see the limitations below) is drawn the original way: pixel art from live video
+  Anything the models don't cover yet (caves, gyms and other special interiors, mountain rock and
+  a few unusual tiles; see the limitations below) is drawn the original way: pixel art from live video
   memory on boxes, sloped roofs and camera-facing cards, so tile animations and in-game map
   edits appear immediately.
   **Settings → World style → Retro 3D** switches the whole world back to that pixel-art
@@ -72,6 +72,27 @@ Gamepads use the standard mapping. In-game saves (Start → Save) go to your bro
   S.S. Tidal, moving boxes, dolls and cushions), and shadows under feet, ripples, footprints
   and grass overlays are flat as before. NPCs standing behind tree crowns or roofs near the
   player are cleared by the same dithered fade as the player. Retro 3D keeps the flat cards.
+- **Interiors (Modern).** Houses, Pokémon Centers, Marts, Professor Birch's lab, Brendan's and
+  May's houses, Lanette's house, the Weather Institute, the Department Store floors, the Pokémon
+  League lobby and the gates — every indoor map built from the game's five ordinary building
+  tilesets, 137 maps — are modelled rooms:
+  - *Walls* have thickness, a baseboard, wainscot, rail and crown, mitred corners, and framed
+    windows. A window shows the sky and casts a soft shaft of light onto the floor by day. Low
+    half-height partitions divide rooms where the game draws a dividing wall.
+  - *Floors* are wooden boards, tiles or carpet, with bordered rugs and door mats.
+  - *Furniture* has real-world sizes and stands on the cells the game blocks. That covers beds,
+    tables with chairs that face them, TVs, PCs, bookcases, plants, fridges, sinks and kitchen
+    counters, cabinets, crates, bins and vases. The services are modelled too: the Pokémon
+    Center's healing machine and the nurse's counter, the Mart's shelves and counters, and
+    stairs up and down.
+  - *Colours* come from the room's own tiles. Wall art, posters and clocks are crisp upscaled
+    decals or small models.
+  - *Light:* the room's light follows the in-game clock. At night the windows turn deep blue,
+    the shafts go out, and lamp light keeps the room and its people readable.
+  - *Camera:* turning it cuts away the walls between the camera and the room.
+
+  Tiles the room tables don't know keep their pixel art, drawn upscaled and smoothed rather than
+  as raw pixels. **Retro 3D** keeps today's rooms, unchanged.
 - **Lighting.** The sun and sky follow the in-game clock. Building windows glow at night.
   Caves that need Flash are lit only by the player's light. Rain, thunderstorms (with
   lightning), volcanic ash, sandstorms, and underwater bubbles are real 3D particles.
@@ -141,6 +162,9 @@ npm run regress:live -- --label mine --static --gpu --selftest
 npm run regress:live -- --label mine --battles --review
                                            # battles only: live battles + a preview of every arena kind,
                                            # review sheet GBA | before | Modern | Retro (--review-before <label>)
+npm run regress:live -- --label mine --interiors --review
+                                           # interiors only: indoor live scenes + room previews (i_*),
+                                           # review sheet GBA map | before | Modern | Retro
 npx vitest run --config tests/smoke/vitest.smoke.config.ts tests/smoke/golden.test.ts tests/smoke/semantics.test.ts
                                            # ROM-driven smoke tests; coverage report → out/coverage*.txt
 ```
@@ -153,10 +177,16 @@ with `--static`, map previews showing the map's object events (`?map=…&actors=
 timer queries, `--selftest` checks the GPU inflation field and the HD edge filter against CPU
 references, and `--ab` measures what the Modern characters and objects cost over flat cards in
 the same session (`--ab-feature battle`: the Modern battle over the Retro one; `--ab-feature
-battlers`: the inflated battlers over flat cards). `--battles` runs only the battle entries:
+battlers`: the inflated battlers over flat cards; `--ab-feature interior`: the modelled rooms
+over today's interiors). `--battles` runs only the battle entries:
 the live battles and a static preview of every arena kind, each saved next to the GBA's own
-picture of the same scene. `--review` adds `_review_battle.png`, one row per battle with the
-columns GBA | before (`--review-before <label>`) | Modern | Retro. The header of the tool
+picture of the same scene. `--interiors` runs only the interior entries: the indoor live scenes
+and the room previews (`i_*`: every kind of in-scope room, orbit angles, night and dusk, and the
+out-of-scope controls). Each night or dusk room is measured against its day twin: the room must
+stay at least 0.45 as bright and its people within 0.9–1.15. In-scope day rooms' people must
+stay within 0.9–1.15 of Retro. `--review` adds `_review_battle.png`, one row per battle with the
+columns GBA | before (`--review-before <label>`) | Modern | Retro, and `_review_interior.png`
+for the interiors (the first column is the map from `out/atlas/`). The header of the tool
 documents every flag and the `stats.json` fields.
 
 `npm run regress` writes one PNG per map and hour, a contact sheet per hour
@@ -168,7 +198,11 @@ headless; the smoke tests need the ROM.
 `/?map=<group>.<num>` opens a static 3D preview of any map (WASD/mouse to fly; `&hour=`,
 `&weather=`, `&flash=` change the conditions; `&actors=1` adds the map's object events from
 their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one of them, and
-`&style=retro`, `&quality=`, `&spriteFilter=pixel` override the settings).
+`&style=retro`, `&quality=`, `&spriteFilter=pixel` override the settings; `&yaw=` turns the
+camera, and `&focus=1` puts a stand-in player at the camera target for the occlusion fade).
+`&kitFail=<family>` makes one Modern model family fail on every build. For example,
+`&kitFail=furniture` shows the failure path: that family's cells fall back to the pixel art, the
+rest stays modelled, and one warning is logged.
 
 `/?battle=<kind>` opens a static battle in any arena kind (`grass`, `longGrass`, `sand`, …
 `rayquaza`; the list is in `src/game/battle/arenaKind.ts`) straight from the ROM. `&player=` and
@@ -221,6 +255,30 @@ their ROM templates, `&focusGfx=<id>` / `&focusObj=<n>` aims the camera at one o
     half a second (the zoom carries over from the last battle).
   - Zoomed fully in, the palms on the sea's islets are above the top of the screen.
   - Windows wider than 21:9 can show unfinished scenery at the sides, such as the Sky Pillar's haze.
+- Interiors (Modern), what is not modelled:
+  - Gyms, the Battle Frontier buildings, contest halls, museums, the Trick House puzzle rooms,
+    the Elite Four rooms, secret bases, the ship, the truck and the Department Store rooftop keep
+    the pixel-art reconstruction.
+  - Art the room tables mark as legacy stays upscaled pixel art on boxes. Examples: the Pokémon
+    Center's floor emblem and escalators, the lift's floor plates, Birch's machines and book piles,
+    and the Weather Institute's tank machine and pillars (their tops are decals over pixel-art
+    boxes).
+  - Doors are closed slabs with a mat in front; they don't open.
+  - Window light shafts are light only, with no dust in the beam.
+  - Every wall has the same height, so in the Trick House's narrow corridor the walls hide part
+    of the floor from the default camera.
+  - Stairs stand in closed alcoves without a handrail. Coming upstairs, the player arrives between
+    the stairwell's rails.
+  - A battle that starts indoors uses the battle hall's fixed light; it doesn't follow the clock.
+- Interiors (Modern), the look:
+  - Wooden floors can read a strong yellow (the tile's own hue).
+  - Deep half-height partitions (the Weather Institute, Rustboro's flats) have flat lids that
+    read like counters.
+  - The Mart's gondola shelves are duller than its coolers, and potted plants are slimmer than
+    the GBA's bushy pots.
+  - The Weather Institute's desks lose the papers drawn on them.
+  - Low shelves are drawn as full-height bookcases: the Pokémon Center's magazine shelf, and a
+    small shelf standing next to a bookcase (now its own piece, but still bookcase-tall).
 - Code-level open items with no visible effect today (the order of equal-priority sprites in the
   battle preview, the height of the overworld's flat ground decals, rock walls modelled taller
   than any view shows) are tracked in the progress log.

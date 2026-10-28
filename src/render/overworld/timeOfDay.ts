@@ -43,3 +43,65 @@ export function timeOfDay(tod: number, out?: DayLight): DayLight {
 export function nightFactor(tod: number): number {
   return THREE.MathUtils.clamp(Math.max((tod - 18.3) / 1.5, (6.2 - tod) / 1.2), 0, 1);
 }
+
+/** An in-scope room's light (D8): the sun's colour and intensity, the hemisphere's sky / ground colours and intensity
+ *  (linear). The sun's direction stays as today (tod 12 indoors). */
+export interface IndoorLight { sunColor: THREE.Color; sunI: number; sky: THREE.Color; ground: THREE.Color; hemiI: number }
+
+/** Today's indoor values (updateLighting's indoor branch, moved here unchanged): sun (1, 0.95, 0.85) × 1.5, sky
+ *  (1, 0.97, 0.92), ground (0.55, 0.5, 0.45), hemisphere × 1.7. Never mutate its colours (copy them). */
+export const INDOOR_DAY: Readonly<IndoorLight> = Object.freeze({
+  sunColor: new THREE.Color(1.0, 0.95, 0.85), sunI: 1.5,
+  sky: new THREE.Color(1.0, 0.97, 0.92), ground: new THREE.Color(0.55, 0.5, 0.45), hemiI: 1.7,
+});
+
+/** The lamp-lit night of an in-scope room (D8, tuned against `nightLum` in Task 6 Step 6): a warm, dimmed sun and sky. */
+export const INDOOR_NIGHT: Readonly<IndoorLight> = Object.freeze({
+  sunColor: new THREE.Color(1.0, 0.72, 0.45), sunI: 0.6,
+  sky: new THREE.Color(0.95, 0.78, 0.6), ground: new THREE.Color(0.4, 0.32, 0.26), hemiI: 1.0,
+});
+
+/** INDOOR_DAY blended towards INDOOR_NIGHT by nightK (0..1, clamped), into `out` (default a new one; its colours are
+ *  overwritten, never shared with the constants); nightK = 0 returns INDOOR_DAY's values exactly. */
+export function indoorLight(nightK: number, out?: IndoorLight): IndoorLight {
+  const d = out ?? { sunColor: new THREE.Color(), sunI: 0, sky: new THREE.Color(), ground: new THREE.Color(), hemiI: 0 };
+  const k = THREE.MathUtils.clamp(nightK, 0, 1);
+  const D = INDOOR_DAY, N = INDOOR_NIGHT;
+  d.sunColor.copy(D.sunColor).lerp(N.sunColor, k);
+  d.sunI = D.sunI + (N.sunI - D.sunI) * k;
+  d.sky.copy(D.sky).lerp(N.sky, k);
+  d.ground.copy(D.ground).lerp(N.ground, k);
+  d.hemiI = D.hemiI + (N.hemiI - D.hemiI) * k;
+  return d;
+}
+
+/** The actors' light floor at night in an in-scope room, as a share of the day's charLight (D8): their charLight is per
+ *  channel max(the blended light's, ACTOR_NIGHT_FLOOR × INDOOR_DAY's), so characters stay as readable as by day. */
+export const ACTOR_NIGHT_FLOOR = 0.95;
+
+/** The light characters get (OverworldView.updateLighting's charLight, the one place it is computed): a Lambert
+ *  surface facing the camera, (sky × hemisphere + sun × 0.75) / π, into `out`. */
+export function cardLight(sky: THREE.Color, hemiI: number, sun: THREE.Color, sunI: number, out = new THREE.Color()): THREE.Color {
+  const k = 1 / Math.PI;
+  return out.setRGB(
+    (sky.r * hemiI + sun.r * sunI * 0.75) * k,
+    (sky.g * hemiI + sun.g * sunI * 0.75) * k,
+    (sky.b * hemiI + sun.b * sunI * 0.75) * k,
+  );
+}
+
+/** The light flat sprite cards get under the room light `L` (cardLight), into `out`. */
+export function indoorCardLight(L: Readonly<IndoorLight>, out = new THREE.Color()): THREE.Color {
+  return cardLight(L.sky, L.hemiI, L.sunColor, L.sunI, out);
+}
+
+/** By this night factor the inflated actors' floor holds its full ACTOR_NIGHT_FLOOR: ahead of the room's dimming (it
+ *  has lost only ~11 % of its light there), so the actors never dip with it over dusk and dawn. */
+export const ACTOR_FLOOR_RAMP = 0.2;
+
+/** The share of the day's light the inflated actors' and models' floor holds at night factor `nightK` (D8): 0 by day
+ *  (today's floor exactly), smoothstep up to ACTOR_NIGHT_FLOOR by ACTOR_FLOOR_RAMP, then held. Their light is about
+ *  max(the room's, this share) of the day's: 0.89–1 at every hour (tests/timeOfDay.test.ts). */
+export function actorFloorShare(nightK: number): number {
+  return ACTOR_NIGHT_FLOOR * THREE.MathUtils.smoothstep(nightK, 0, ACTOR_FLOOR_RAMP);
+}

@@ -231,15 +231,25 @@ export function terrainFragColor(warp: string): string {
   return FRAG_COLOR_HEAD + warp + FRAG_COLOR_REST;
 }
 
-const FRAG_COLOR_HEAD = /* glsl */ `
-{
-  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
+/** The grid cell under a fragment (statements): declares `vec2 cell`, the fragment's grid point un-projected from
+ *  `vKitWorld` (world (x, z − y)). Shared with the interior floors (kit/interior/geom/floorPatterns.ts); the terrain's
+ *  program text is unchanged by the split (tests/interiorFloorPatterns.test.ts pins its bytes). */
+export const TERRAIN_GRID_GLSL = /* glsl */ `  vec2 cell = vec2(vKitWorld.x, vKitWorld.z - vKitWorld.y);       // un-project to grid space
 `;
 
-const FRAG_COLOR_REST = /* glsl */ `  vec2 g = cell + warp - uGridMin;
+const FRAG_COLOR_HEAD = /* glsl */ `
+{
+` + TERRAIN_GRID_GLSL;
+
+/** The cell's texel fetch (statements): reads `cell`, `warp` (grid units; vec2(0.0) for none), `tCells`, `uGridMin`,
+ *  `uGridSize`; declares `vec2 g` (grid point from the grid's origin), `ivec2 ic` (its texel, clamped to the grid) and
+ *  `int mat` (the texel's alpha byte >> 4). Shared with the interior floors, as TERRAIN_GRID_GLSL. */
+export const TERRAIN_CELL_GLSL = /* glsl */ `  vec2 g = cell + warp - uGridMin;
   ivec2 ic = clamp(ivec2(floor(g)), ivec2(0), ivec2(uGridSize) - 1);
   int mat = int(texelFetch(tCells, ic, 0).a * 255.0 + 0.5) >> 4;
-  // Tint blends only in a narrow band at cell borders: soft edges that still hold their shape.
+`;
+
+const FRAG_COLOR_REST = TERRAIN_CELL_GLSL + /* glsl */ `  // Tint blends only in a narrow band at cell borders: soft edges that still hold their shape.
   vec2 t = g - 0.5;
   vec3 tint = kitSrgbToLinear(texture(tCells, (floor(t) + 0.5 + smoothstep(0.3, 0.7, fract(t))) / uGridSize).rgb);
   vec3 col = kitGround(mat, tint, cell);

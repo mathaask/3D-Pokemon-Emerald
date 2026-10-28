@@ -202,7 +202,7 @@ describe('semantic core', () => {
     expect(live).toEqual({ textures: 0, geometries: 0, instanced: 0 });
   });
 
-  it('a World runs the kit outdoors (Dive maps too), never on indoor or underground maps', () => {
+  it('a World runs the outdoor kit outdoors (Dive maps too), never on underground maps or indoor maps (out of the interior scope: no kit at all)', () => {
     const atlas = new MetatileAtlas({ vram: null, palette: null } as never, 1);
     const u = createKitUniforms();
     const world = new World(atlas, createWorldMaterials(atlas.target.texture, u), u, [claimer('box', 5, CLAIM_OBJECT)]);

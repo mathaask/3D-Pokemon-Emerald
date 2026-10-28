@@ -32,6 +32,9 @@ export interface StaticMap {
   grid: GridData;
   info: TileInfo;
   opts: Omit<ClassifyOptions, 'margin'>;
+  /** What `info` was analysed from: the scratch VRAM (the tilesets' ROM tiles), the metatile entries and attributes, the
+   *  BG palette. */
+  tiles: { vram: Uint8Array; entries: Uint16Array; attributes: Uint16Array; palette: Uint16Array };
 }
 
 export function loadStaticMap(group: number, num: number): StaticMap {
@@ -54,6 +57,7 @@ export function loadStaticMap(group: number, num: number): StaticMap {
     map,
     rom,
     info,
+    tiles: { vram: bus.vram, entries: atlas.entries, attributes: atlas.attributes, palette },
     grid: {
       width: map.layout.width, height: map.layout.height, cells: map.layout.grid,
       border: [...map.layout.border], borderW: 2, borderH: 2, borderPhase: 0,
@@ -65,6 +69,7 @@ export function loadStaticMap(group: number, num: number): StaticMap {
       underground: map.mapType === 4,
       underwater: map.mapType === 5,
       secondaryTileset: map.layout.secondaryTileset,
+      primaryTileset: map.layout.primaryTileset,
     },
   };
 }

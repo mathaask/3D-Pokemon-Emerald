@@ -13,17 +13,25 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { kitMaterial, type KitUniforms } from '../../kit/materials';
+import { kitMaterial } from '../../kit/materials';
 import { BUILDING_BODY, BUILDING_GLASS } from '../../kit/buildings';
 import { PROP_GLOW } from '../../kit/props';
 import { SOIL_MATERIAL } from '../../kit/soil';
 import { luma, mix, scale, type RGB } from '../../kit/palette';
-import { rng, type V3 } from '../../kit/geom';
+import type { V3 } from '../../kit/geom';
+import { Soup, lathe, lin, type LatheColor } from '../../kit/soup';
+import { glowMesh } from '../../kit/glow';
+import {
+  SHELF, SHELL, addShelf, addWindow, shellPalette, shellProfile, wallFrameAt, wallPath, type ShellColors, type WallFrame,
+} from '../../kit/interior/wallParts';
 import type { ArenaPalette } from '../palette';
 import type { ArenaPart, CatalogueEntry } from '../modernArena';
 import { GROUND_Y, PLATFORM_FOOTPRINT, type Stage } from '../stage';
 import { COURT_BOUNDS } from './floor';
-import { Soup, lathe, lin, type LatheColor } from './soup';
+
+// (the shell's profile, windows, bookcases and the glow mesh moved to the kit in Phase 4: re-exported for the stadium
+// rooms and the tests)
+export { SHELF, SHELL, glowMesh, type ShellColors };
 
 // ------------------------------------------------------------------------------------------------- the halls
 
@@ -46,16 +54,12 @@ export const HALLS: Readonly<Record<HallKind, Hall>> = {
 
 export type Wall = 'back' | 'left' | 'right';
 
-/** A wall seen from inside the room: its inner face's origin on the floor (the back wall's at x = centre.x, the side
- *  walls' at z = centre.z), `u` along it to the right, `w` into the room; a point on it at (s along u, h over the floor,
- *  d into the room); and its run of s (the side walls' from their front ends to the back wall). */
-interface WallFrame { o: V3; u: V3; w: V3; s: [number, number]; at(s: number, h: number, d: number): V3 }
-
+/** A wall of the room seen from inside it (kit/interior/wallParts.ts WallFrame): its inner face's origin on the floor (the
+ *  back wall's at x = centre.x, the side walls' at z = centre.z), `u` along it to the right, `w` into the room; its run
+ *  of s (the side walls' from their front ends to the back wall). */
 export function wallFrame(wall: Wall, spec: RoomSpec, stage: Stage): WallFrame {
   const cx = stage.centre.x, cz = stage.centre.z, hw = spec.halfWidth;
-  const f = (o: V3, u: V3, w: V3, s: [number, number]): WallFrame => ({
-    o, u, w, s, at: (a, h, d) => [o[0] + u[0] * a + w[0] * d, o[1] + h, o[2] + u[2] * a + w[2] * d],
-  });
+  const f = wallFrameAt;
   switch (wall) {
     case 'back': return f([cx, GROUND_Y, cz + spec.back], [1, 0, 0], [0, 0, 1], [-hw, hw]);
     case 'left': return f([cx - hw, GROUND_Y, cz], [0, 0, -1], [1, 0, 0], [-spec.front, -spec.back]);
@@ -63,37 +67,12 @@ export function wallFrame(wall: Wall, spec: RoomSpec, stage: Stage): WallFrame {
   }
 }
 
-/** A shell's colours (sRGB): the baseboard, the wainscot and its raised panels, the trims (chair rail, crown), the upper
- *  wall. */
-export interface ShellColors { base: RGB; wainscot: RGB; panel: RGB; trim: RGB; wall: RGB }
-
-/** The shell's build: walls `thick` thick; the baseboard `base` tall; the wainscot's top (its chair rail) `wainscot` over
- *  the floor — tuned from the brief's 1.8 to 1.15, inside the frame at every hall (the frame top stands 1.55–1.79 over
- *  the floor at the back wall, yaw 0): at 1.8 the idle camera would see a plain band of wainscot, never the rail nor the
- *  wall over it —; the crown `crown` deep under the top; raised panels `width` wide, `gap` apart, from `bottom` over the floor to
- *  `top` under the rail, standing `raise` off the wainscot with bevels `inset` wide. Under the crown, its relief stands at
- *  most `relief` off the inner face (the baseboard's and the rail's faces; the panels 0.05): what stands against a wall
- *  (a bookcase's back) keeps in front of that, or the trim shows through it. */
-export const SHELL = { thick: 0.4, base: 0.35, wainscot: 1.15, crown: 0.42, relief: 0.075,
-  panel: { width: 1.5, gap: 0.4, bottom: 0.5, top: 0.16, raise: 0.03, inset: 0.035 } };
-
 /** The default shell colours of a palette: a darker baseboard (the accent darkened), a lighter wainscot (the wall a
  *  little towards the accent), white trims, the upper wall the GBA's top-band stripe (the wall 0.45 towards the
  *  accent). */
 function shellColors(p: ArenaPalette): ShellColors {
   const wainscot = mix(p.wall, p.accent, 0.12);
   return { base: scale(p.accent, 0.55), wainscot, panel: scale(wainscot, 1.04), trim: mix(p.wall, [1, 1, 1], 0.5), wall: mix(p.wall, p.accent, 0.45) };
-}
-
-/** The shell's cross-section, from the floor up its inner face, over its top and down its outer face: (d into the room
- *  from the inner face, h over the floor) and each step's colour. */
-function shellProfile(H: number, W: number): { pts: [number, number][]; col: (keyof ShellColors | 'cap')[] } {
-  return {
-    pts: [[SHELL.relief, -0.04], [SHELL.relief, 0.29], [0.035, SHELL.base], [0.02, SHELL.base], [0.02, W - 0.09], [SHELL.relief, W - 0.05], [SHELL.relief, W + 0.01],
-      [0.03, W + 0.06], [0, W + 0.06], [0, H - SHELL.crown], [0.06, H - SHELL.crown + 0.06], [0.06, H - 0.24], [0.16, H - 0.12], [0.16, H],
-      [-SHELL.thick, H], [-SHELL.thick, -0.04]],
-    col: ['base', 'base', 'base', 'wainscot', 'trim', 'trim', 'trim', 'trim', 'wall', 'trim', 'trim', 'trim', 'trim', 'cap', 'cap'],
-  };
 }
 
 /**
@@ -105,29 +84,12 @@ function shellProfile(H: number, W: number): { pts: [number, number][]; col: (ke
 export function roomShell(spec: RoomSpec, stage: Stage, p: ArenaPalette, colors: ShellColors = shellColors(p)): THREE.BufferGeometry {
   const s = new Soup();
   const cx = stage.centre.x, cz = stage.centre.z, hw = spec.halfWidth;
-  const { pts, col } = shellProfile(spec.height, SHELL.wainscot);
-  const C: Record<keyof ShellColors | 'cap', RGB> = { base: lin(colors.base), wainscot: lin(colors.wainscot), panel: lin(colors.panel),
-    trim: lin(colors.trim), wall: lin(colors.wall), cap: lin(scale(colors.wall, 0.8)) };
+  const C = shellPalette(colors);
   const zf = cz + spec.front;
-  // the U path at offset d into the room (the corners mitred): left front → left back → right back → right front
-  const path = (d: number): V3[] => [[cx - hw + d, 0, zf], [cx - hw + d, 0, cz + spec.back + d], [cx + hw - d, 0, cz + spec.back + d], [cx + hw - d, 0, zf]];
-  const inward: V3[] = [[1, 0, 0], [0, 0, 1], [-1, 0, 0]];
-  for (let k = 0; k + 1 < pts.length; k++) {
-    const [d0, h0] = pts[k], [d1, h1] = pts[k + 1];
-    const a = path(d0), b = path(d1), y0 = GROUND_Y + h0, y1 = GROUND_Y + h1;
-    const l = Math.hypot(h1 - h0, d1 - d0), nd = (h1 - h0) / l, nh = -(d1 - d0) / l;
-    for (let j = 0; j < 3; j++) {
-      const n: V3 = [inward[j][0] * nd, nh, inward[j][2] * nd];
-      s.quad([a[j][0], y0, a[j][2]], [a[j + 1][0], y0, a[j + 1][2]], [b[j + 1][0], y1, b[j + 1][2]], [b[j][0], y1, b[j][2]], n, C[col[k]]);
-    }
-    // the side walls' front ends: the section between the outer face and the profile
-    if (h1 > h0 && !(d0 === -SHELL.thick && d1 === -SHELL.thick)) {
-      for (const sx of [-1, 1]) {
-        const x = (d: number) => cx + sx * (hw - d);
-        s.quad([x(-SHELL.thick), y0, zf], [x(d0), y0, zf], [x(d1), y1, zf], [x(-SHELL.thick), y1, zf], [0, 0, 1], C[col[k]]);
-      }
-    }
-  }
+  // the U path (kit wallPath: the corners mitred, the side walls' front ends capped): left front → left back → right
+  // back → right front
+  wallPath(s, [[cx - hw, zf], [cx - hw, cz + spec.back], [cx + hw, cz + spec.back], [cx + hw, zf]], [[1, 0], [0, 1], [-1, 0]], GROUND_Y,
+    shellProfile(spec.height, SHELL.wainscot), C, true);
   // the wainscot's raised panels along each wall
   const P = SHELL.panel, pitch = P.width + P.gap, h0 = P.bottom, h1 = SHELL.wainscot - P.top;
   for (const wall of ['back', 'left', 'right'] as Wall[]) {
@@ -386,66 +348,6 @@ export function hallLayout(kind: HallKind): HallLayout {
   }
 }
 
-/** A window on a wall: its casing (trim colour) standing off the wall, a sill, a cross of mullions; the glass behind them
- *  (light sky blue, paler to the top: daylight outside). Its sill `sill` over the floor, `width` × `height`. */
-const WINDOW = { width: 2.3, height: 2.6, sill: SHELL.wainscot + 0.14, frame: 0.12, depth: 0.08, mullion: 0.07 };
-function addWindow(body: Soup, glass: Soup, F: WallFrame, at: number, trim: RGB): void {
-  const W = WINDOW, x0 = at - W.width / 2, x1 = at + W.width / 2, y0 = W.sill, y1 = W.sill + W.height, f = W.frame;
-  const t = lin(trim), o = F.o;
-  const box = (s0: number, s1: number, h0: number, h1: number, d0: number, d1: number, c: RGB) => body.box(o, F.u, F.w, s0, s1, h0, h1, d0, d1, c, true);
-  box(x0 - f, x0, y0, y1, 0, W.depth, t);
-  box(x1, x1 + f, y0, y1, 0, W.depth, t);
-  box(x0 - f, x1 + f, y1, y1 + f, 0, W.depth, t);
-  // the sill: deeper, a little wider
-  box(x0 - f - 0.08, x1 + f + 0.08, y0 - 0.08, y0, 0, W.depth + 0.1, scale(t, 0.97));
-  // mullions: one upright, one across at 0.6 of the height
-  const m = W.mullion / 2, mh = y0 + W.height * 0.6;
-  box(at - m, at + m, y0, y1, 0.01, W.depth * 0.7, t);
-  box(x0, x1, mh - m, mh + m, 0.01, W.depth * 0.7, t);
-  // the glass: two rows of panes, a gradient up
-  const lo = lin([0.6, 0.78, 0.92]), hi = lin([0.86, 0.94, 1.0]);
-  const g = (h: number) => mix(lo, hi, (h - y0) / W.height);
-  glass.quadN(F.at(x0, y0, 0.012), F.at(x1, y0, 0.012), F.at(x1, y1, 0.012), F.at(x0, y1, 0.012), F.w, [F.w, F.w, F.w, F.w],
-    [g(y0), g(y0), g(y1), g(y1)]);
-}
-
-/** A bookcase against a wall: its carcass (sides, top, back, a plinth, three shelves) in `wood`, books of many colours,
- *  widths, heights and depths on its four shelves (seeded), a few gaps between them. Its back panel, shelves, plinth and
- *  books stand `back` off the wall — in front of the wall's relief (SHELL.relief: the rail and the baseboard, the raised
- *  panels; at 0.035 the rail's white stripe crossed the middle shelf and panel edges showed between the books) — `depth`
- *  its front; its sides and top run back to the wall (the relief ends inside them). */
-export const SHELF = { width: 2.5, height: 2.5, back: SHELL.relief + 0.015, depth: 0.58, board: 0.05, plinth: 0.14 };
-const BOOKS: RGB[] = [[0.78, 0.33, 0.28], [0.3, 0.47, 0.72], [0.38, 0.6, 0.42], [0.9, 0.76, 0.36], [0.62, 0.44, 0.3], [0.92, 0.9, 0.84],
-  [0.55, 0.38, 0.62], [0.28, 0.62, 0.66]];
-function addShelf(body: Soup, F: WallFrame, at: number, wood: RGB, seed: number): void {
-  const S = SHELF, x0 = at - S.width / 2, x1 = at + S.width / 2, o = F.o, w = lin(wood), inner = lin(scale(wood, 0.72));
-  const box = (s0: number, s1: number, h0: number, h1: number, d0: number, d1: number, c: RGB) => body.box(o, F.u, F.w, s0, s1, h0, h1, d0, d1, c);
-  box(x0, x0 + S.board, 0, S.height, 0.01, S.depth, w);
-  box(x1 - S.board, x1, 0, S.height, 0.01, S.depth, w);
-  box(x0, x1, S.height - S.board, S.height, 0.01, S.depth, w);
-  box(x0 + S.board, x1 - S.board, 0, S.plinth, S.back, S.depth - 0.02, scale(w, 0.85));
-  // the back panel (in front of the wall's relief)
-  body.quad(F.at(x0 + S.board, S.plinth, S.back), F.at(x1 - S.board, S.plinth, S.back), F.at(x1 - S.board, S.height - S.board, S.back),
-    F.at(x0 + S.board, S.height - S.board, S.back), F.w, inner);
-  const shelfH = (S.height - S.plinth - S.board) / 4;
-  const r = rng(seed * 7121 + 0x5be1);
-  for (let i = 0; i < 4; i++) {
-    const y = S.plinth + i * shelfH;
-    if (i > 0) box(x0 + S.board, x1 - S.board, y - S.board / 2, y + S.board / 2, S.back, S.depth, w);
-    // books along the shelf, left to right
-    let x = x0 + S.board + 0.03;
-    while (x < x1 - S.board - 0.1) {
-      const bw = 0.07 + 0.08 * r();
-      if (r() < 0.08) { x += 0.15 + 0.2 * r(); continue; }
-      const bh = shelfH * (0.62 + 0.28 * r()), depth = (S.depth - S.back) * (0.62 + 0.25 * r());
-      const c = lin(scale(BOOKS[Math.floor(r() * BOOKS.length)], 0.9 + 0.15 * r()));
-      if (x + bw > x1 - S.board - 0.02) break;
-      box(x, x + bw, y + S.board / 2, y + S.board / 2 + bh, S.back + 0.01, S.back + 0.01 + depth, c);
-      x += bw + 0.008;
-    }
-  }
-}
-
 /** A light panel on the barrier: `width` along the arc, from `y0` to `y1` over the floor, just in front of its face,
  *  curved with it; a soft vertical gradient in its vertex colours (brighter in the middle). */
 export const PANEL = { width: 2.2, y0: 0.2, y1: 0.62, segs: 6 };
@@ -500,22 +402,6 @@ export function hallColors(kind: HallKind, p: ArenaPalette): HallColors {
     }
     default: return base;
   }
-}
-
-// ------------------------------------------------------------------------------------------------- glowing props
-
-/** A mesh of `geometry` in PROP_GLOW, glowing `emissive` (linear) for its own draw only (PROP_GLOW's own glow is × uNight:
- *  none indoors): the Frontier's light panels, Phoebe's candle flames (stadium.ts). Its material is made here for it alone
- *  — the glow is right only for a material's single user: three re-uploads a material's uniforms (emissive among them)
- *  only when the material changes between draws, and the kit pool's configure() never resets `emissive`; the reset after
- *  the draw keeps the pooled material black for its next user (PROP_GLOW shares its pool with BUILDING_GLASS: one
- *  program). Never hand its material to another mesh. */
-export function glowMesh(uniforms: KitUniforms, geometry: THREE.BufferGeometry, emissive: RGB): THREE.Mesh {
-  const material = kitMaterial(uniforms, PROP_GLOW).material;
-  const m = new THREE.Mesh(geometry, material);
-  m.onBeforeRender = () => { material.emissive.setRGB(emissive[0], emissive[1], emissive[2]); };
-  m.onAfterRender = () => { material.emissive.setRGB(0, 0, 0); };
-  return m;
 }
 
 // ------------------------------------------------------------------------------------------------- the part

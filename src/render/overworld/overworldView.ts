@@ -13,17 +13,18 @@ import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldMaterials, type WorldStyle } from './world';
 import { worldCatalogue, type WorldCatalogue } from '../kit/catalogue';
-import { analyzeMetatiles } from './tileInfo';
+import { analyzeMetatiles, romMetatiles, romTileVram, type TileInfo } from './tileInfo';
+import { interiorScope } from '../kit/interior/scope';
 import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
 import { Sky } from './sky';
 import { Weather } from './weather';
-import { nightFactor, timeOfDay } from './timeOfDay';
-import { createWorldMaterials } from './materials';
+import { ACTOR_NIGHT_FLOOR, INDOOR_DAY, actorFloorShare, cardLight, indoorCardLight, indoorLight, nightFactor, timeOfDay, type IndoorLight } from './timeOfDay';
+import { createHdWorldMaterials, createWorldMaterials } from './materials';
 import { createKitUniforms, pickFadeActors, setKitActors, setKitFocus, setKitFocusExtra, type FadeFoot, type KitUniforms } from '../kit/materials';
 import { ActorLayer, uprightFoot, type ActorFrame, type SpriteFilter } from '../actors/actorLayer';
 import type { SpritePixelSource } from '../actors/spriteColors';
-import type { ProgramInfo } from '../actors/inflatedActors';
+import { LIGHT_FLOOR, type ProgramInfo } from '../actors/inflatedActors';
 
 export { hidesGrassOverlay } from '../actors/actorLayer';
 
@@ -90,9 +91,15 @@ export class OverworldView {
   private lastGrid: Uint16Array | null = null;
   private haveWorld = false;
   private style: WorldStyle = 'modern';
+  /** The interior kit on in-scope interiors (Modern; false: today's legacy rooms and light, the A/B baseline). */
+  private interiorKit = true;
+  /** The blended indoor light of an in-scope room (D8), reused every frame. */
+  private indoorScratch: IndoorLight = indoorLight(0);
   quality: Quality = 'medium';
   private shadowQuality: Quality = 'medium';
   private romReader: RomReader | null = null;
+  /** The interior kit's colour source (ClassifyOptions.colorInfo), per tileset pair (their ROM tiles) and palette. */
+  private colorCache: { primary: number; secondary: number; vram: Uint8Array; palette: Uint16Array; info: TileInfo | null } | null = null;
   private eventsCache: { key: string; events: GridEvents } = { key: '', events: NO_EVENTS };
   private eventsWarned = false;
 
@@ -125,6 +132,10 @@ export class OverworldView {
   /** 0..1 progress of the battle-entry effect (pushes the camera in and twists it). */
   battleZoom = 0;
   private charLight = new THREE.Color(1, 1, 1);
+  /** The light the inflated actors' and models' floor follows (charLight; raised in an in-scope room at night, D8). */
+  private actorFloor = new THREE.Color(1, 1, 1);
+  /** INDOOR_DAY's card light (scratch). */
+  private dayCard = new THREE.Color();
   /** What the actor layer reads each frame (one object, updated in place). */
   private actorFrame: ActorFrame = {
     style: 'modern',
@@ -134,10 +145,11 @@ export class OverworldView {
     cameraRight: this.cameraRight,
     cameraPosition: this.camera.position,
     charLight: this.charLight,
+    lightFloor: this.actorFloor,
   };
 
   /** The legacy pixel-geometry materials (the World's; the program catalogue draws with them too). */
-  private worldMats: WorldMaterials;
+  private worldMats: Required<WorldMaterials>;
   /** The precompile (started once): what it compiles besides the actors, whether its frame was drawn. */
   private pre: PrecompileState | null = null;
   /** The precompile's cost (ms): compileAsync issued → its programs ready (parallel, off the main thread), the frame
@@ -152,10 +164,13 @@ export class OverworldView {
   constructor(private gbaTex: GbaTextures, private spriteAtlas: SpriteAtlas, maxAnisotropy: number, private readonly field?: SpriteField,
     instanceUniforms = true) {
     this.atlas = new MetatileAtlas(gbaTex, maxAnisotropy);
-    const mats = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
+    // (with their HD twins: World draws the cells an in-scope Modern interior's kit leaves with them; the catalogue
+    // precompiles both)
+    const legacy = createWorldMaterials(this.atlas.target.texture, this.kitUniforms);
+    const mats: Required<WorldMaterials> = { ...legacy, hd: createHdWorldMaterials(this.atlas.target.texture, this.kitUniforms) };
     this.worldMats = mats;
-    this.opaqueMat = mats.opaque;
-    this.cutoutMat = mats.cutout;
+    this.opaqueMat = legacy.opaque;
+    this.cutoutMat = legacy.cutout;
     this.world = new World(this.atlas, mats, this.kitUniforms);
     this.actors = new ActorLayer(spriteAtlas, { field, kit: this.kitUniforms, instanceUniforms });
     this.scene.add(this.world.group);
@@ -209,6 +224,21 @@ export class OverworldView {
     this.style = s;
     this.gridKey = '';
     this.applyShadowSettings();
+  }
+
+  /** The interior kit on in-scope interiors on or off (Modern; off: today's legacy room and light — the harness's
+   *  `--ab-feature interior` baseline); the world is rebuilt on the next sync. */
+  setInteriorKit(on: boolean): void {
+    if (on === this.interiorKit) return;
+    this.interiorKit = on;
+    this.gridKey = '';
+  }
+
+  /** Makes the named kit family fail on every build (null: none; the preview's `&kitFail=`): its cells render legacy,
+   *  warned once per map. Takes effect at the next build. */
+  setFailFamily(name: string | null): void {
+    this.world.setFailFamily(name);
+    this.gridKey = '';
   }
 
   /**
@@ -278,7 +308,7 @@ export class OverworldView {
     // (an async body: a synchronous throw becomes the rejection)
     pre.compiled = (async () => {
       // the catalogue's kit materials pool apart: a build never takes them (their ids, the opaque draw order, stay)
-      pre.catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy: this.worldMats, atlas: this.atlas.target.texture });
+      pre.catalogue = worldCatalogue({ uniforms: createKitUniforms(), legacy: this.worldMats, legacyHd: this.worldMats.hd, atlas: this.atlas.target.texture });
       const target = new THREE.WebGLRenderTarget(1, 1);
       const prev = renderer.getRenderTarget();
       let ready: Promise<unknown>;
@@ -426,15 +456,41 @@ export class OverworldView {
   buildWorld(grid: GridData, bus: Bus, bgPalette: Uint16Array, primaryTileset: number, events: GridEvents = NO_EVENTS,
     secondaryTileset = 0, mapKey?: string): void {
     const info = analyzeMetatiles(bus, this.atlas.entries, this.atlas.attributes, this.charBase, bgPalette);
+    const indoor = this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE;
+    // the interior kit samples its colours from the tilesets' static tiles: live VRAM holds whichever frame a tile
+    // animation shows (the Building TV swaps every 8 frames), and a room rebuilt on another frame must not re-tint
+    const kit = this.worldStyle === 'modern' && this.interiorKit && this.mapType !== MAP_TYPE_UNDERGROUND
+      && interiorScope({ indoor, primaryTileset, secondaryTileset }, mapKey ?? null);
     this.world.build(grid, {
       info,
+      colorInfo: kit ? this.staticColorInfo(bus, info, primaryTileset, secondaryTileset, bgPalette) : undefined,
       generalPrimary: primaryTileset === SYM.gTileset_General,
-      indoor: this.mapType === MAP_TYPE_INDOOR || this.mapType === MAP_TYPE_SECRET_BASE,
+      indoor,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
       underwater: this.mapType === MAP_TYPE_UNDERWATER,
       secondaryTileset,
-    }, { style: this.worldStyle, events, quality: this.quality, mapKey });
+      primaryTileset,
+    }, { style: this.worldStyle, events, quality: this.quality, mapKey, interiorKit: this.interiorKit });
     this.haveWorld = true;
+  }
+
+  /** The metatiles analysed on the tilesets' ROM tiles (no tile animation's frame) under `palette`: the interior kit's
+   *  colours (ClassifyOptions.colorInfo). Cached per tileset pair and palette (a rebuild of the room costs nothing); made
+   *  from the live analysis `live` (this build's, under the same palette) by decoding again only the metatiles that draw
+   *  an animated tile (romMetatiles: a full decode cost 10-15 ms in the door walk's build frame). */
+  private staticColorInfo(bus: Bus, live: TileInfo, primary: number, secondary: number, palette: Uint16Array): TileInfo {
+    let c = this.colorCache;
+    if (!c || c.primary !== primary || c.secondary !== secondary) {
+      this.romReader ??= new RomReader(bus.rom);
+      c = this.colorCache = { primary, secondary, vram: romTileVram(this.romReader, primary, secondary), palette: new Uint16Array(256), info: null };
+    }
+    let same = c.info !== null;
+    for (let k = 0; k < 256 && same; k++) same = c.palette[k] === palette[k];
+    if (!same || !c.info) {
+      c.palette.set(palette.subarray(0, 256));
+      c.info = romMetatiles(live, bus.vram, this.charBase, c.vram, this.atlas.entries, c.palette);
+    }
+    return c.info;
   }
 
   /** Static map preview: set tilesets/map type directly (no emulator state). */
@@ -517,13 +573,18 @@ export class OverworldView {
     let groundColor = new THREE.Color(0.45, 0.5, 0.35);
     let hemiI = 1.15;
     let fog = new THREE.Color(0.8, 0.9, 1.0);
+    // An in-scope room whose interior kit ran follows the clock (D8): today's indoor light by day, a warm lamp-lit night.
+    const lit = this.worldStyle === 'modern' && this.world.interiorKitRan;
+    const nightOut = lit ? nightFactor(hour) : 0;
+    this.kitUniforms.uOutdoorNight.value = nightOut;
 
     if (indoor) {
-      sunColor = new THREE.Color(1.0, 0.95, 0.85);
-      sunI = 1.5;
-      skyColor = new THREE.Color(1.0, 0.97, 0.92);
-      groundColor = new THREE.Color(0.55, 0.5, 0.45);
-      hemiI = 1.7;
+      const room = lit ? indoorLight(nightOut, this.indoorScratch) : INDOOR_DAY;
+      sunColor = room.sunColor.clone();
+      sunI = room.sunI;
+      skyColor = room.sky.clone();
+      groundColor = room.ground.clone();
+      hemiI = room.hemiI;
       fog = new THREE.Color(0.02, 0.02, 0.03);
     } else if (underground) {
       sunColor = new THREE.Color(0.9, 0.85, 1.0);
@@ -604,19 +665,28 @@ export class OverworldView {
     fogObj.near = fogNear * this.zoom;
     fogObj.far = fogFar * this.zoom;
     this.sky.setColors(skyColor, fog, indoor || underground, this.time);
-    // Characters are lit with a simplified model (no normal): ambient + part of the sun.
-    // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI.
-    const k = 1 / Math.PI;
+    // Characters are lit like a Lambert surface facing the camera: (ambient + part of the sun) / PI (cardLight, shared
+    // with indoorCardLight: D8's day floor below equals this exactly).
     if (state.flashLevel > 0) {
       // Characters are drawn near the player's light.
       this.charLight.setRGB(0.85, 0.75, 0.6);
+      this.actorFloor.copy(this.charLight);
       return;
     }
-    this.charLight.setRGB(
-      (skyColor.r * hemiI + sunColor.r * sunI * 0.75) * k,
-      (skyColor.g * hemiI + sunColor.g * sunI * 0.75) * k,
-      (skyColor.b * hemiI + sunColor.b * sunI * 0.75) * k,
-    );
+    cardLight(skyColor, hemiI, sunColor, sunI, this.charLight);
+    this.actorFloor.copy(this.charLight);
+    // (D8: in an in-scope room the actors keep near the room's day light, per channel: the cards through charLight (at
+    // least ACTOR_NIGHT_FLOOR of the day's), the inflated actors and models — lit by the room's lights, floored at
+    // LIGHT_FLOOR × their floor light — through a floor light holding actorFloorShare(nightK) of the day's, which rises
+    // ahead of the room's dimming over dusk and dawn; by day both are today's exactly)
+    if (lit && indoor) {
+      const day = indoorCardLight(INDOOR_DAY, this.dayCard);
+      const card = ACTOR_NIGHT_FLOOR, floor = actorFloorShare(nightOut) / LIGHT_FLOOR;
+      this.charLight.setRGB(Math.max(this.charLight.r, day.r * card), Math.max(this.charLight.g, day.g * card),
+        Math.max(this.charLight.b, day.b * card));
+      this.actorFloor.setRGB(Math.max(this.charLight.r, day.r * floor), Math.max(this.charLight.g, day.g * floor),
+        Math.max(this.charLight.b, day.b * floor));
+    }
   }
 
   /** Per displayed frame: camera smoothing, billboards, lights. */
@@ -653,6 +723,8 @@ export class OverworldView {
     const yawFx = this.yaw + bz * 1.2;
     // (the camera's horizontal back direction: "in front of" for the NPC occlusion fade)
     this.kitUniforms.uCamBack.value.set(Math.sin(yawFx), Math.cos(yawFx));
+    // the interior walls the camera sees from outside vanish (D5)
+    this.world.updateCutaway(this.kitUniforms.uCamBack.value);
     const offset = new THREE.Vector3(
       Math.sin(yawFx) * Math.cos(pitch),
       Math.sin(pitch),

@@ -55,6 +55,7 @@ async function main(): Promise<void> {
   try {
     const page = await browser.newPage();
     page.on('console', (m) => {
+      if (m.location().url?.endsWith('/favicon.ico')) return;   // (the dev server has no favicon: its 404 is noise)
       if (m.type() === 'error' || m.type() === 'warn') console.log(`[page ${m.type()}] ${m.text()}`);
     });
     page.on('pageerror', (e) => console.log(`[page error] ${(e as Error).message}`));

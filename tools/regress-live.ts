@@ -3,8 +3,9 @@
 // each scene in both world styles. Same inputs give the same frames, so runs diff pixel for pixel.
 //
 //   npm run regress:live -- --label <name> [--styles modern,retro] [--only a,b] [--dpr 1]
-//     [--query k=v&…] [--compare <label>] [--gpu] [--selftest] [--static] [--battles] [--review [--review-before <label>]]
-//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers] [--ab-aa]]
+//     [--query k=v&…] [--compare <label> [--expect-same]] [--gpu] [--selftest] [--static] [--battles] [--interiors]
+//     [--review [--review-before <label>]]
+//     [--ab [--ab-method frame|block] [--ab-rounds n] [--ab-settle n] [--ab-timed n] [--ab-feature actors|npcfade|battle|battlers|interior] [--ab-aa]]
 //
 // Output: out/regress-live/<label>/<entry>_<style>.png, _sheet_<style>.png (4 columns), _crops.png
 // (per entry 320×400 centre crops, Modern | Retro: the camera centres on the player) and stats.json
@@ -16,15 +17,20 @@
 // Live battle entries also save the GBA's own frame after their steps (emu.gbaPng(): the PPU's composite, 2× nearest) as
 // gba_<entry>.png, one per entry (the emulation is the same in both styles); static battle entries (STATIC_BATTLE) save the
 // GBA's picture of their scratch hardware (preview.referencePng(): BG3 + the battler sprites) as ref_<entry>.png.
-// --static adds the static preview entries (the map previews with object events from ROM templates, STATIC, and the battle
-// previews, STATIC_BATTLE); --battles the battle entries (isBattleEntry: live battle*, static b_*): alone it runs only
-// those, with --static every entry;
+// --static adds the static preview entries (the map previews with object events from ROM templates, STATIC and the interior
+// previews STATIC_INTERIOR, and the battle previews, STATIC_BATTLE); --battles the battle entries (isBattleEntry: live
+// battle*, static b_*), --interiors the interior entries (isInteriorEntry: static i_*, the live ones in INTERIOR_LIVE):
+// alone (either or both) they run only those, with --static every entry;
 // --only names entries of either kind. --query is appended to every page URL. --compare diffs every PNG against out/regress-live/<label>/
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
 // pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png / ref_<entry>.png too, reported with the diffs, not in
-// stats; a missing reference fails the run as a shot's does).
+// stats; a missing reference fails the run as a shot's does). The diffs are reported, not gated, unless --expect-same: then a
+// control (isSameControl: every Retro shot, the non-interior Modern entries, OUT_OF_SCOPE_INTERIOR, door_exit, the GBA
+// pictures) that differs from its reference by even one pixel fails the run.
 // --review writes _review_battle.png: one row per battle entry of the run, columns GBA (gba_ / ref_<entry>.png) | before
-// (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots).
+// (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots);
+// and _review_interior.png: one row per interior entry of the run, columns GBA map (out/atlas/<group>_<num>_<Name>.png,
+// the offline render tools/map-atlas.ts writes, of the entry's map: interiorMap; blank if missing) | before | Modern | Retro.
 // --gpu times 60 more frames on the GPU after the screenshot (timer
 // queries, medians). stats.json is merged per label, so partial --only runs add or replace entries
 // (a failed entry's shot and stats are removed); the sheets are rebuilt from every PNG in the folder.
@@ -66,18 +72,31 @@
 // (run it with --only <battle entries>: elsewhere both arms draw the same frames). --ab-feature battlers switches the
 // Modern battle's inflated battlers (with their field passes, the flat enemy shadow, the skipped OBJ-window masks) against
 // today's cards (Phase 3 Task 5, flagged over Phase 2's actor budget +1.0 ms GPU / +0.5 ms CPU), likewise on the battle
-// entries.
+// entries. --ab-feature interior switches Phase 4's interior kit on in-scope rooms (shell, floor, furniture, the HD legacy
+// cells and the clock-following light) against today's interior (flagged over +2.0 ms GPU — the Phase 4 ruling; the plan proposed +1.5 / +0.5 ms CPU): every switch
+// rebuilds the world (the half's settle frames absorb it); run it with --only <indoor live entries, in-scope i_* entries>
+// (the previews of out-of-scope maps and the rooftop draw the same frames in both arms and are skipped).
 // Actor luminance (every run with both styles): after each screenshot the actors (both views' on the live page:
 // emu.renderer.setActorMask; the preview's) are drawn flat magenta
 // once more without advancing time (_mask_<entry>_<style>.png); at the end, per entry, the Modern / Retro
 // ratio of the shots' mean luma over the pixels where an actor is visible in both masks (occluders and the
 // Modern occlusion dither excluded) goes into stats (`actorLum` on the Modern key) and a table. A mask that is not the
 // shot's frame (more than MASK_MISMATCH_MAX of the pixels away from the actors differ: the transition's zoom moved on)
-// flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary).
+// flags the entry's luminance UNRELIABLE (`maskMismatch`, `unreliable`; left out of the summary). Gated (Phase 4 Task 13)
+// on the in-scope day interior entries (dayActorGated: --interiors entries ending indoors, not OUT_OF_SCOPE_INTERIOR, not a
+// night / dusk twin) with a reliable measure: each within DAY_ACTOR_BAND, their median ≥ DAY_ACTOR_MEDIAN_MIN (a failure
+// fails the run; an entry without a measure is listed, not gated — but a run whose in-scope day interiors give none
+// fails: never a vacuous pass).
+// Night twins (every run with Modern; NIGHT_TWINS, Phase 4's D8): a night interior preview's Modern shot against its day
+// twin's — night / day mean luma of the room (non-actor pixels) and of the actors (`nightLum` on the night entry's Modern
+// key, and a table); gated on the in-scope pairs: room 0.45-0.8 at night, 0.7-0.95 at dusk, actors 0.9-1.15, and both measurable (no actor measure, or
+// a twin without its Modern shot in this run, fails; a failure fails the run). Selecting either twin runs both.
 // A step may switch something first (its third element, evaluated in the page); an entry with `sameAs` must end
 // exactly as that entry (0 px against its shot in this run's folder, else it fails; --compare diffs it against that
 // entry's reference) and, with `samePrograms`, with as many shader programs (a switch that compiled one fails it):
-// lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle.
+// lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle,
+// vigoroth_switch in an in-scope interior (its rebuild in the other tile-animation phase) and vigoroth_v the
+// classic 2D view (V) and back there.
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -175,6 +194,18 @@ const LIVE: LiveEntry[] = [
   { name: 'item_indoor', state: 'out/s16.state', steps: [['', 30]], walk: 'RIGHT' },         // indoor item ball (gfx 59)
   { name: 'truck_inside', state: 'out/truck.state', steps: [['', 30]], walk: 'RIGHT' },      // moving boxes (gfx 113)
   { name: 'vigoroth', state: 'out/littleroot.state', steps: [['', 30]] },                     // indoor, Vigoroths (Pokémon)
+  // (Phase 4 Task 13) vigoroth with the world style switched to the other one and back mid-steps, in an in-scope room
+  // (the interior kit built, dropped and rebuilt): no page error, the same 30 frames end as vigoroth with as many programs
+  // (nothing compiled: the interior's programs are in the boot catalogue). The way back builds in the other tile-animation
+  // phase than vigoroth's first build (frame 21; the Building tileset's TV, on in this room, swaps its tiles every 8
+  // frames: the metatile atlas redraws at frames 2, 10, 18, 26): the kit samples its colours from the tilesets' static
+  // tiles (ClassifyOptions.colorInfo; FW-A found the furniture re-tinted up to 17/255 by a rebuild in the other phase
+  // while it read live VRAM, FW-B fixed it), so it must end exactly as vigoroth, 0 px
+  { name: 'vigoroth_switch', state: 'out/littleroot.state', sameAs: 'vigoroth', samePrograms: true, steps: [['', 10],
+    ['', 10, TOGGLE_STYLE], ['', 10, TOGGLE_STYLE]] },
+  // vigoroth through the classic 2D view (V) and back: the 3D room comes back exactly as it was (0 px)
+  { name: 'vigoroth_v', state: 'out/littleroot.state', sameAs: 'vigoroth', steps: [['', 10],
+    ['', 10, "emu.renderer.mode = 'classic'"], ['', 10, "emu.renderer.mode = 'auto'"]] },
   // Battles (Phase 3; frames counted from the state's load, probed with GameState: scene, animActive, sprites). The
   // first battle (Route 101, environment 9 PLAIN): Torchic vs Zigzagoon at the move menu; its intro (s28: from frame
   // 59 Zigzagoon slides in from the left, from 69 the player's back picture from the right, under the intro's palette
@@ -223,7 +254,32 @@ const LIVE: LiveEntry[] = [
   { name: 'cross_lr', state: 'out/r101.state', steps: [['', 30], ['DOWN', 300]], crossings: 1 },
   { name: 'cross_oldale', state: 'out/r101.state', steps: [['', 38], ['LEFT', 72], ['UP', 64], ['RIGHT', 176], ['UP', 64], ['LEFT', 16],
     ['UP', 32], ['LEFT', 32], ['UP', 32], ['LEFT', 64], ['UP', 120]], crossings: 1 },
+  // Door walks (Phase 4; crossing-gated: no compile, one build per map load, frame ≤ build + crossingMargin; frames from
+  // the state's load, probed with GameState: map, player cell, gPaletteFade). (Added in Phase 4 Task 1: their p4-base
+  // references are that task's capture.)
+  // door_enter: Littleroot (s22, player 12,9) two cells east, then up into May's house door (14,8, reached at 92; UP
+  // released at 102): fade-out 129-151, MaysHouse_1F (1.2) loads at 152 (screen2d 155-161), fade-in 162-183, the player
+  // on the mat (2,8) from 184; the shot at 222, 38 frames after the fade-in
+  { name: 'door_enter', state: 'out/s22.state', steps: [['', 30], ['RIGHT', 32], ['UP', 40], ['', 120]], crossings: 1 },
+  // door_exit: May's house 1F (s21, an indoor free-walk state: player 2,3) down onto the exit mat (2,8, reached at 96),
+  // DOWN held on it to frame 112: fade-out 111-133, Littleroot (0.9) loads at 134 (screen2d 137-142), fade-in 142-164,
+  // the player steps out of the door (14,8 → 14,9) from 166; the shot at 212, 47 frames after the fade-in
+  { name: 'door_exit', state: 'out/s21.state', steps: [['', 30], ['DOWN', 82], ['', 100]], crossings: 1 },
 ];
+
+/**
+ * The live entries --interiors runs, each with the map its review row shows (the GBA map column: the map the entry ends
+ * on). The probe of every out/*.state (Phase 4 Task 1, 30 frames from the load; "free" = a held direction moves the
+ * player) found indoors: littleroot / s2 / s3 / s8 (Brendan's house 1F, 1.0: cutscenes; s9 walks left / right only),
+ * s4 (Brendan's 2F, 1.1: free), s5 / s7 (1.1: held), s11-s15 (May's 1F, 1.2: held), s21 (1.2: free), s16-s18 / s20
+ * (May's 2F, 1.3: free; s19 held), after_battle / s31-s34 (Birch's lab, 1.4: held), truck (InsideOfTruck, 25.40: free).
+ * Outdoors: lr_out, s1, s10, s22-s25, s35 (Littleroot), r101, s26, s27, wild_transition (Route 101); in a battle or 2D
+ * screen: battle1, fuzz, s28, intro, intro2, pre_battle, s6, s30.
+ */
+const INTERIOR_LIVE: Record<string, string> = {
+  vigoroth: '1.0', vigoroth_switch: '1.0', vigoroth_v: '1.0', item_indoor: '1.3', truck_inside: '25.40', door_enter: '1.2',
+  door_exit: '0.9',
+};
 
 /**
  * Static preview scenes, run with --static (or named by --only): the map preview with the map's
@@ -268,6 +324,84 @@ const STATIC: StaticEntry[] = [
   // --only woods_npc_yaw)
   { name: 'woods_npc_yaw', q: 'map=24.11&x=32.5&y=34.5&focus=1&yaw=3.1416' },
 ];
+
+/**
+ * Static interior previews (Phase 4), run with --static or --interiors (or named by --only): as STATIC (60 frames, hour
+ * 11 unless q sets one; the harness adds actors=1 to every map preview, so q's own is documentation). Every in-scope
+ * kind (house, Pokémon Center, Mart, lab, flat, department store, league, institute, trick house, gate), orbit angles,
+ * the Low preset, night (D8: Modern in-scope interiors follow the clock — each night entry has a day twin with the same
+ * camera: i_pc_night ↔ i_pc_1f, i_house_night ↔ i_house_1f, i_lab_night ↔ i_lab, i_mart_night ↔ i_mart, i_gym_night ↔
+ * i_gym; dusk, Task 12: i_pc_dusk ↔ i_pc_1f, i_house_dusk ↔ i_house_1f), a stand-in player at the nurse's counter, the
+ * furniture family's failure hook and out-of-scope controls (i_gym, i_gym_night, i_secret, and i_dept_roof since Task 12
+ * ruled the rooftop out of scope: Modern 0.00 % for ever).
+ * (Added in Phase 4 Task 1: their p4-base references are that task's capture; the dusk entries' are copies of their day
+ * twins' — at p4-base the hour changed no room: every i_*_night shot equals its day twin's, 0 px, both styles.)
+ */
+const STATIC_INTERIOR: StaticEntry[] = [
+  { name: 'i_house_1f', q: 'map=1.0&actors=1' },            // Brendan's house 1F: kitchen, table + chairs on a rug, stairs
+  { name: 'i_house_2f', q: 'map=1.1&actors=1' },            // Brendan's room: bed, PC, stairs down
+  { name: 'i_may_1f', q: 'map=1.2&actors=1' },
+  { name: 'i_lab', q: 'map=1.4&actors=1' },                 // Birch's lab: bookcases, desks, plants, machine
+  { name: 'i_oldale_house', q: 'map=2.0&actors=1' },        // GenericBuilding house
+  { name: 'i_pc_1f', q: 'map=2.2&actors=1' },               // Pokémon Center 1F: nurse, counter, healing machine, PC
+  { name: 'i_pc_2f', q: 'map=2.3&actors=1' },
+  { name: 'i_mart', q: 'map=2.4&actors=1' },                // Mart: shelves, counter, clerk
+  { name: 'i_flat', q: 'map=11.13&actors=1' },              // Rustboro Flat2 1F
+  { name: 'i_fortree_house', q: 'map=12.0&actors=1' },      // 8×6
+  { name: 'i_sootopolis_house', q: 'map=15.5&actors=1' },   // 8×7
+  { name: 'i_dept_1f', q: 'map=13.16&actors=1' },
+  { name: 'i_dept_roof', q: 'map=13.21&actors=1' },        // out of scope (Task 12: OUT_OF_SCOPE_MAPS): a control
+  { name: 'i_league', q: 'map=16.10&actors=1' }, { name: 'i_weather', q: 'map=32.0&actors=1' },
+  { name: 'i_trickhouse', q: 'map=29.2' },                  // corridor maze 15×24
+  { name: 'i_gate', q: 'map=29.11&actors=1' },              // cycling road gate (Shop)
+  { name: 'i_pc_yaw', q: 'map=2.2&actors=1&yaw=1.5708' },   // camera from the east (cutaway)
+  { name: 'i_house_back', q: 'map=1.0&yaw=3.1416' },        // camera from the north: back wall cut, front wall shown
+  { name: 'i_house_low', q: 'map=1.0&preset=3' },           // Low preset
+  { name: 'i_pc_night', q: 'map=2.2&actors=1&hour=21' },    // windows / shafts at night
+  { name: 'i_house_night', q: 'map=1.0&actors=1&hour=21' }, // D8: the house's lamp-lit night
+  { name: 'i_lab_night', q: 'map=1.4&actors=1&hour=21' },
+  { name: 'i_mart_night', q: 'map=2.4&actors=1&hour=21' },
+  // dusk (Task 12): nightFactor(19) ≈ 0.47, mid-blend — the inflated actors' light floor rises with the night, the room
+  // dims first: their likeliest dip
+  { name: 'i_pc_dusk', q: 'map=2.2&actors=1&hour=19' },
+  { name: 'i_house_dusk', q: 'map=1.0&actors=1&hour=19' },
+  // a stand-in player (&focus=1) at the counter: the nurse's template (local id 1, gfx 58) stands at 7,2, the counter
+  // between, the stand-in two rows south at 7,4 (cell centre)
+  { name: 'i_pc_nurse', q: 'map=2.2&actors=1&x=7.5&y=4.5&focus=1' },
+  // the furniture family made to fail (&kitFail): its cells legacy, the shell and the floor modelled, one warning
+  { name: 'i_house_fail', q: 'map=1.0&kitFail=furniture' },
+  { name: 'i_gym', q: 'map=8.1' },                           // out of scope: Modern 0.00 % for ever
+  { name: 'i_gym_night', q: 'map=8.1&hour=21' },             // out of scope: today's fixed indoor light at night too
+  { name: 'i_secret', q: 'map=25.0' },                       // out of scope (SECRET_BASE): SecretBase_RedCave1
+];
+
+/** The interior entries Phase 4 leaves alone in both styles (out of scope: Modern 0.00 % against p4-base for ever). */
+const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'i_dept_roof', 'truck_inside']);
+
+/**
+ * D8's night twins: night entry → its day entry (the same map and camera at hour 11). After a run with Modern, each pair
+ * with both Modern shots and masks in the folder gets `nightLum` (on the night entry's Modern key, and a table): roomLuma
+ * = night / day mean sRGB luma (Rec. 709) of the pixels no actor covers in either mask (with a 1-px margin), actorLum =
+ * night / day mean luma of the actor pixels visible in both masks (as actorLum; null under ACTOR_LUM_MIN_PX). Gated on the
+ * in-scope pairs (not OUT_OF_SCOPE_INTERIOR): roomLuma within roomBand (NIGHT_ROOM_BAND / DUSK_ROOM_BAND — D8: the room
+ * follows the clock and stays readable at night), actorLum within NIGHT_ACTOR_BAND (the actors lit as by day); an unmeasured actorLum, or a twin without its Modern shot in this run,
+ * fails (never a vacuous pass). With Modern, selecting either twin runs both (main's selection). Today's fixed indoor light reads ≈ 1.0 (p4-base). Every live entry
+ * is day: each save state's in-game clock reads 10:00 under manual mode's fixed RTC (nightFactor 0; probed in Phase 4
+ * Task 1).
+ */
+const NIGHT_TWINS: Record<string, string> = {
+  i_pc_night: 'i_pc_1f', i_house_night: 'i_house_1f', i_lab_night: 'i_lab', i_mart_night: 'i_mart', i_gym_night: 'i_gym',
+  i_pc_dusk: 'i_pc_1f', i_house_dusk: 'i_house_1f',   // dusk, hour 19 (Task 12): the same gate
+};
+/** The room's night / day luma an in-scope pair must read, two-sided (a room that stopped following the clock reads
+ *  1.000 and fails, as one gone too dark does): night (hour 21, nightFactor 1) 0.45-0.8, dusk (the `_dusk` twins, hour
+ *  19, nightFactor ≈ 0.47) 0.7-0.95. Measured at 7f5e0b9: night 0.607-0.629, dusk 0.829-0.841 — each bound keeps ≥ 0.1
+ *  of margin for look tuning (floors, lamps), while D8 switched off (1.000), a night room left at its dusk light, or a
+ *  dusk room already at night's, fail. */
+const NIGHT_ROOM_BAND: [number, number] = [0.45, 0.8];
+const DUSK_ROOM_BAND: [number, number] = [0.7, 0.95];
+const roomBand = (night: string): [number, number] => (night.endsWith('_dusk') ? DUSK_ROOM_BAND : NIGHT_ROOM_BAND);
+const NIGHT_ACTOR_BAND: [number, number] = [0.9, 1.15];
 
 /**
  * Static battle scenes, run with --static or --battles (or named by --only): the battle preview (src/render/battlePreview.ts,
@@ -325,6 +459,29 @@ const isStaticBattle = (e: Entry): boolean => e.kind === 'static' && e.q.startsW
 /** The entries --battles runs: the live ones named battle* and the static battle previews. */
 const isBattleEntry = (e: Entry): boolean => (e.kind === 'live' && e.name.startsWith('battle')) || isStaticBattle(e);
 
+/** The entries --interiors runs: the static interior previews (i_*) and the live ones in INTERIOR_LIVE. */
+const isInteriorEntry = (e: Entry): boolean => (e.kind === 'static' && e.name.startsWith('i_')) || (e.kind === 'live' && e.name in INTERIOR_LIVE);
+
+/** --expect-same's controls (Phase 4): the shots its interior work must leave pixel-identical — every Retro shot, every
+ *  Modern entry that is no interior entry (outdoors, battles, the Phase 2 / 3 entries), the out-of-scope interiors
+ *  (OUT_OF_SCOPE_INTERIOR) and door_exit (it ends outdoors, 47 frames after the fade-in). */
+const isSameControl = (e: Entry, style: string): boolean => style === 'retro' || !isInteriorEntry(e) || OUT_OF_SCOPE_INTERIOR.has(e.name)
+  || e.name === 'door_exit';
+
+/** An interior entry's map, "group.num" (the interior review's GBA map column): a preview's map=, a live entry's
+ *  INTERIOR_LIVE map; null for others. */
+const interiorMap = (e: Entry): string | null => (e.kind === 'live' ? INTERIOR_LIVE[e.name] ?? null
+  : /(?:^|&)map=(\d+\.\d+)/.exec(e.q)?.[1] ?? null);
+
+/** The day actor-luminance gate's entries (Phase 4): interior entries ending indoors (map group 0 is the towns and routes:
+ *  door_exit ends outside), in scope (not OUT_OF_SCOPE_INTERIOR), and not a night / dusk twin (NIGHT_TWINS gates those). */
+const dayActorGated = (e: Entry): boolean => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name) && !(e.name in NIGHT_TWINS)
+  && !(interiorMap(e)?.startsWith('0.') ?? true);
+/** In-scope day interiors' actors against Retro: each within the band, their median at least this (Phase 4: the inflated
+ *  actors lit as in Retro, the room's light round them). */
+const DAY_ACTOR_BAND: [number, number] = [0.9, 1.15];
+const DAY_ACTOR_MEDIAN_MIN = 0.95;
+
 /** The GBA's own picture of a battle entry (the review's GBA column): live gba_<entry>, static ref_<entry> (no .png). */
 const gbaName = (e: Entry): string => `${e.kind === 'live' ? 'gba' : 'ref'}_${e.name}`;
 
@@ -350,11 +507,11 @@ const FIELD_GPU_MS = 0.3;
 /** --ab-feature: what the A/B switches off for its baseline, on the live page (emu) and, where it can, the static
  *  preview (idle only: nothing walks there), and its budgets over that baseline (GPU frame, renderer CPU; ms), flagged
  *  in the table: the Phase 2 actors +1.0 / +0.5, the NPC occlusion fade (Task 11) +0.3 / +0.5, the Modern battle (Phase 3)
- *  +3.0 / +0.5. `previewWhen`: the static entries (by query) where the switch changes anything (the NPC fade needs a
+ *  +3.0 / +0.5. `previewWhen`: the static entries where the switch changes anything (the NPC fade needs a
  *  stand-in player, &focus; the battle style a battle preview; elsewhere both arms would be the same frames). */
 interface AbFeature {
   what: string; gpuMs: number; cpuMs: number; live: (on: boolean) => string; preview?: (on: boolean) => string;
-  previewWhen?: (q: string) => boolean;
+  previewWhen?: (e: Entry) => boolean;
 }
 const AB_FEATURES: Record<string, AbFeature> = {
   actors: {
@@ -364,7 +521,7 @@ const AB_FEATURES: Record<string, AbFeature> = {
   npcfade: {
     what: "NPC occlusion fade on vs off (the player's circle only)", gpuMs: 0.3, cpuMs: 0.5,
     live: (on) => `emu.renderer.overworld.setNpcFade(${on})`, preview: (on) => `preview.setNpcFade(${on})`,
-    previewWhen: (q) => /(^|&)focus=/.test(q),
+    previewWhen: (e) => e.kind === 'static' && /(^|&)focus=/.test(e.q),
   },
   // (Phase 3: the battle's world style alone — the live page's PostFX keeps its style's tilt-shift; the preview's
   // setStyle switches both, as Renderer.setWorldStyle does)
@@ -372,14 +529,24 @@ const AB_FEATURES: Record<string, AbFeature> = {
     what: 'Modern vs Retro battle (BattleView world style)', gpuMs: 3.0, cpuMs: 0.5,
     live: (on) => `emu.renderer.battle.setWorldStyle('${on ? 'modern' : 'retro'}')`,
     preview: (on) => `preview.setStyle('${on ? 'modern' : 'retro'}')`,
-    previewWhen: (q) => q.startsWith('battle='),
+    previewWhen: (e) => e.kind === 'static' && e.q.startsWith('battle='),
   },
   // (Phase 3 Task 5: the Modern battle's inflated battlers and their field passes against today's cards, same arena)
   battlers: {
     what: 'Modern battlers inflated (+ their field passes) vs cards', gpuMs: 1.0, cpuMs: 0.5,
     live: (on) => `emu.renderer.battle.inflation = ${on}`,
     preview: (on) => `preview.setInflation(${on})`,
-    previewWhen: (q) => q.startsWith('battle='),
+    previewWhen: (e) => e.kind === 'static' && e.q.startsWith('battle='),
+  },
+  // (Phase 4 Task 13: the interior kit on in-scope rooms against today's interior, light included — off, the world builds
+  // no kit there, so `interiorKitRan` is false: no night blend, uOutdoorNight 0. Each switch rebuilds the world: the
+  // half's settle frames absorb it. The in-scope interior previews only, by entry (a new i_* entry is in unless it joins
+  // OUT_OF_SCOPE_INTERIOR): the rooftop and the out-of-scope controls draw the same frames in both arms)
+  interior: {
+    what: 'Phase 4 interior kit (shell, floor, furniture, HD legacy, light) vs today\'s interior', gpuMs: 2.0, cpuMs: 0.5,
+    live: (on) => `emu.renderer.overworld.setInteriorKit(${on})`,
+    preview: (on) => `preview.setInteriorKit(${on})`,
+    previewWhen: (e) => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name),
   },
 };
 
@@ -413,6 +580,8 @@ interface EntryStats {
   ab?: { method: AbMethod; rounds: number; half?: AbHalf; idle: AbVariant; walk?: AbVariant; aa?: boolean };
   /** On the Modern key: Modern / Retro actor luminance (both styles in the run). */
   actorLum?: ActorLum;
+  /** On a night twin's Modern key: its luma against its day twin (NIGHT_TWINS). */
+  nightLum?: NightLum;
   /** Crossing entries: the walk's frames (CROSSING). */
   crossing?: CrossingStats;
   /** Scene-change entries: the walk's frames (SCENE_CHANGE_MS). */
@@ -608,6 +777,78 @@ const LUM_FN = `(async function (shotM, shotR, maskM, maskR) {
   return { pixels: n, modern: n ? sm / n : 0, retro: n ? sr / n : 0, mismatch: Math.max(mismatch(pm, mm), mismatch(pr, mr)) / (w * h) };
 })`;
 
+// A night twin's luma against its day twin (NIGHT_TWINS): the mean sRGB luma (Rec. 709) of both Modern shots over the
+// room's pixels (no actor's magenta within 1 px in either mask) and over the actor pixels visible in both masks (eroded by
+// 1 px, as LUM_FN). A string for the page, as DIFF_FN.
+const NIGHT_FN = `(async function (shotN, shotD, maskN, maskD) {
+  function load(src) {
+    return new Promise(function (res, rej) {
+      var i = new Image();
+      i.onload = function () { res(i); };
+      i.onerror = function () { rej(new Error('cannot decode image')); };
+      i.src = src;
+    });
+  }
+  var imgs = await Promise.all([load(shotN), load(shotD), load(maskN), load(maskD)]);
+  var w = imgs[0].naturalWidth, h = imgs[0].naturalHeight;
+  function pixels(img) {
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    return g.getImageData(0, 0, w, h).data;
+  }
+  var pn = pixels(imgs[0]), pd = pixels(imgs[1]), mn = pixels(imgs[2]), md = pixels(imgs[3]);
+  function magenta(d, x, y) { var k = (y * w + x) * 4; return d[k] > 200 && d[k + 1] < 90 && d[k + 2] > 200; }
+  function any(x, y) { return magenta(mn, x, y) || magenta(md, x, y); }
+  function both(x, y) { return magenta(mn, x, y) && magenta(md, x, y); }
+  function luma(d, k) { return 0.2126 * d[k] + 0.7152 * d[k + 1] + 0.0722 * d[k + 2]; }
+  var rn = 0, rN = 0, rD = 0, an = 0, aN = 0, aD = 0;
+  for (var y = 1; y < h - 1; y++) {
+    for (var x = 1; x < w - 1; x++) {
+      var k = (y * w + x) * 4;
+      if (!(any(x, y) || any(x - 1, y) || any(x + 1, y) || any(x, y - 1) || any(x, y + 1))) {
+        rN += luma(pn, k); rD += luma(pd, k); rn++;
+      } else if (both(x, y) && both(x - 1, y) && both(x + 1, y) && both(x, y - 1) && both(x, y + 1)) {
+        aN += luma(pn, k); aD += luma(pd, k); an++;
+      }
+    }
+  }
+  return { roomPx: rn, roomNight: rn ? rN / rn : 0, roomDay: rn ? rD / rn : 0, actorPx: an, actorNight: an ? aN / an : 0, actorDay: an ? aD / an : 0 };
+})`;
+
+/** A night twin's Modern luma against its day twin's (NIGHT_TWINS): ratios night / day (actorLum null under
+ *  ACTOR_LUM_MIN_PX visible actor pixels), the means behind them, and the in-scope gate's verdict (null: not gated). */
+interface NightLum {
+  day: string; roomLuma: number; actorLum: number | null; room: [number, number]; actor: [number, number] | null;
+  actorPx: number; gated: boolean; broken?: string[];
+}
+
+async function nightLum(page: Page, night: string, day: string, files: [string, string, string, string]): Promise<NightLum> {
+  const url = (f: string) => JSON.stringify(`data:image/png;base64,${fs.readFileSync(f).toString('base64')}`);
+  await page.setContent('<html><body></body></html>');
+  const r = await page.evaluate(`${NIGHT_FN}(${files.map(url).join(', ')})`) as
+    { roomPx: number; roomNight: number; roomDay: number; actorPx: number; actorNight: number; actorDay: number };
+  const actorOk = r.actorPx >= ACTOR_LUM_MIN_PX && r.actorDay > 0;
+  const n: NightLum = {
+    day, roomLuma: r.roomDay > 0 ? round(r.roomNight / r.roomDay, 3) : 0, actorLum: actorOk ? round(r.actorNight / r.actorDay, 3) : null,
+    room: [round(r.roomNight, 1), round(r.roomDay, 1)], actor: actorOk ? [round(r.actorNight, 1), round(r.actorDay, 1)] : null,
+    actorPx: r.actorPx, gated: !OUT_OF_SCOPE_INTERIOR.has(night),
+  };
+  if (n.gated) {
+    const broken: string[] = [];
+    const [lo, hi] = roomBand(night);
+    if (!(n.roomLuma >= lo && n.roomLuma <= hi)) broken.push(`roomLuma ${n.roomLuma} outside ${lo}-${hi}`);
+    // (no actor measure is a failure, not a pass: D8's actor rule cannot be judged on an entry whose actors vanished)
+    if (n.actorLum === null) broken.push(`actorLum unmeasured (${n.actorPx} actor px visible in both masks < ${ACTOR_LUM_MIN_PX})`);
+    else if (!(n.actorLum >= NIGHT_ACTOR_BAND[0] && n.actorLum <= NIGHT_ACTOR_BAND[1])) {
+      broken.push(`actorLum ${n.actorLum} outside ${NIGHT_ACTOR_BAND.join('-')}`);
+    }
+    if (broken.length) n.broken = broken;
+  }
+  return n;
+}
+
 async function actorLum(page: Page, files: [string, string, string, string]): Promise<ActorLum | null> {
   const url = (f: string) => JSON.stringify(`data:image/png;base64,${fs.readFileSync(f).toString('base64')}`);
   await page.setContent('<html><body></body></html>');
@@ -644,7 +885,7 @@ const CAPTION = 'figcaption{position:absolute;left:4px;top:2px;color:#ff0;font:b
 
 /** Contact sheets (4 thumbnails per row, one per style) and the centre-crop sheet, from every PNG in `dir`. */
 async function buildSheets(page: Page, dir: string): Promise<void> {
-  const order = [...LIVE, ...STATIC, ...STATIC_BATTLE].map((e) => e.name);
+  const order = [...LIVE, ...STATIC, ...STATIC_INTERIOR, ...STATIC_BATTLE].map((e) => e.name);
   const shots = new Map<string, Set<string>>();
   for (const f of fs.readdirSync(dir)) {
     const m = /^([^_].*)_(modern|retro)\.png$/.exec(f);
@@ -690,14 +931,33 @@ const REVIEW_H = 300;
  * --review: _review_battle.png in `dir`, one row per battle entry of the run (`entries`, in run order): the GBA's picture
  * (gba_ / ref_<entry>.png in this folder) | before (<entry>_modern.png in `beforeDir`; blank without one) | Modern | Retro
  * (this run's shots). Each cell names its entry and column; a header row labels the columns. A missing picture is a
- * blank cell marked "(missing)".
+ * blank cell marked "(missing)". And _review_interior.png likewise, one row per interior entry of the run, its first
+ * column the GBA map: the offline atlas render of the entry's map (interiorMap; out/atlas from tools/map-atlas.ts, a
+ * blank cell when it is missing). Neither sheet is written without its rows.
  */
 async function buildReview(page: Page, dir: string, entries: Entry[], beforeDir: string, beforeLabel: string): Promise<void> {
-  const rows = entries.filter(isBattleEntry);
+  await reviewSheet(page, dir, entries.filter(isBattleEntry), { label: 'GBA', file: (e) => path.join(dir, `${gbaName(e)}.png`) },
+    beforeDir, beforeLabel, '_review_battle.png');
+  // (the interior sheet's first column: the offline atlas render of the entry's map, out/atlas/<group>_<num>_<Name>.png)
+  const atlasDir = path.resolve(dir, '../../atlas');
+  const atlas = fs.existsSync(atlasDir) ? fs.readdirSync(atlasDir) : [];
+  const atlasFile = (e: Entry): string | null => {
+    const m = interiorMap(e);
+    const f = m && atlas.find((n) => n.startsWith(`${m.replace('.', '_')}_`) && n.endsWith('.png'));
+    return f ? path.join(atlasDir, f) : null;
+  };
+  await reviewSheet(page, dir, entries.filter(isInteriorEntry), { label: 'GBA map', file: atlasFile }, beforeDir, beforeLabel,
+    '_review_interior.png');
+}
+
+/** One review sheet (see buildReview): `rows`' entries, the `first` column (the GBA's picture, scaled nearest) | before |
+ *  Modern | Retro, into `out` in `dir`; none written without rows. */
+async function reviewSheet(page: Page, dir: string, rows: Entry[], first: { label: string; file: (e: Entry) => string | null },
+  beforeDir: string, beforeLabel: string, out: string): Promise<void> {
   if (!rows.length) return;
   // (the GBA's pictures scale nearest, the 3D shots smoothly)
   const columns: { label: string; file: (e: Entry) => string | null; pixelated?: true }[] = [
-    { label: 'GBA', file: (e) => path.join(dir, `${gbaName(e)}.png`), pixelated: true },
+    { ...first, pixelated: true },
     // (an entry with `sameAs` ends as that entry: its before is that entry's)
     { label: beforeLabel ? `before (${beforeLabel})` : 'before',
       file: (e) => (beforeDir ? path.join(beforeDir, `${(e.kind === 'live' && e.sameAs) || e.name}_modern.png`) : null) },
@@ -716,7 +976,7 @@ async function buildReview(page: Page, dir: string, entries: Entry[], beforeDir:
     .h{height:28px;color:#fff;font:bold 18px sans-serif;line-height:28px;text-align:center;background:#000}
     figure{margin:0;position:relative;width:${REVIEW_W}px;height:${REVIEW_H}px;background:#111;outline:1px solid #333}
     img{width:${REVIEW_W}px;height:${REVIEW_H}px;display:block;object-fit:contain}.px{image-rendering:pixelated}${CAPTION}</style>
-    ${head}${cells.join('')}`, path.join(dir, '_review_battle.png'), REVIEW_W * 4, 1);
+    ${head}${cells.join('')}`, path.join(dir, out), REVIEW_W * 4, 1);
 }
 
 /**
@@ -896,6 +1156,9 @@ async function main(): Promise<void> {
   const extra = arg('query', '');
   const compare = arg('compare', '');
   const gpu = flag('gpu');
+  const expectSame = flag('expect-same');
+  if (expectSame && !compare) throw new Error('--expect-same needs --compare <label>');
+  const sameFailures: string[] = []; // --expect-same: controls that differ from the reference
   const selftest = flag('selftest');
   const ab = flag('ab');
   const abMethod = arg('ab-method', 'frame') as AbMethod;
@@ -910,16 +1173,32 @@ async function main(): Promise<void> {
   if (!abFeature) throw new Error(`unknown --ab-feature ${abFeatureName} (${Object.keys(AB_FEATURES).join(', ')})`);
   const abRows: string[] = [];
   const lumRows: { name: string; lum: ActorLum }[] = [];
+  const dayActorFailures: string[] = []; // in-scope day interiors' actors outside DAY_ACTOR_BAND (or their median low)
+  let dayGatedMeasured = 0;              // the in-scope day interiors with a reliable measure
+  const nightRows: { name: string; n: NightLum }[] = [];
+  const nightFailures: string[] = []; // in-scope night twins outside D8's bounds, or not measurable
+  const shotThisRun = new Set<string>(); // the entry_style keys this run shot (and kept)
   const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
-    ...[...STATIC, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
+    ...[...STATIC, ...STATIC_INTERIOR, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
-  // --only picks entries of both kinds by name; otherwise --static picks every entry, --battles the battle entries, and
-  // neither every live entry
-  const statics = flag('static'), battles = flag('battles');
-  const entries = only.length ? all.filter((e) => only.includes(e.name))
-    : all.filter((e) => statics || (battles ? isBattleEntry(e) : e.kind === 'live'));
+  // (a misspelt name in the interior tables would drop an entry from --interiors or a pair from the night gate unseen;
+  // the night twins are map previews: NIGHT_FN compares renderStill frames, with no mask-mismatch check as LUM_FN's)
+  const known = (n: string, kind?: 'static') => all.some((e) => e.name === n && (!kind || e.kind === kind));
+  for (const n of [...Object.keys(INTERIOR_LIVE), ...OUT_OF_SCOPE_INTERIOR]) if (!known(n)) throw new Error(`unknown interior entry: ${n}`);
+  for (const n of Object.entries(NIGHT_TWINS).flat()) if (!known(n, 'static')) throw new Error(`NIGHT_TWINS names no static entry: ${n}`);
+  // --only picks entries of both kinds by name; otherwise --static picks every entry, --battles the battle entries,
+  // --interiors the interior entries (both flags: either), and none of these every live entry. With Modern, a selected
+  // night twin brings its twin (NIGHT_TWINS: the pair is measured within one run)
+  const statics = flag('static'), battles = flag('battles'), interiors = flag('interiors');
+  const picked = new Set((only.length ? all.filter((e) => only.includes(e.name))
+    : all.filter((e) => statics || (battles || interiors ? (battles && isBattleEntry(e)) || (interiors && isInteriorEntry(e))
+      : e.kind === 'live'))).map((e) => e.name));
+  if (styles.includes('modern')) {
+    for (const pair of Object.entries(NIGHT_TWINS)) if (pair.some((n) => picked.has(n))) pair.forEach((n) => picked.add(n));
+  }
+  const entries = all.filter((e) => picked.has(e.name));
   const outDir = path.join(root, 'out/regress-live', label);
   const refDir = compare ? path.join(root, 'out/regress-live', compare) : '';
   // (the same folder however spelled: ./p2, p2/, P2 on Windows' case-insensitive file system)
@@ -984,7 +1263,9 @@ async function main(): Promise<void> {
           } else {
             q = ['autostart=1', 'manual=1', 'actors=1', e.q, `style=${style}`, extra].filter(Boolean).join('&');
           }
-          await page.goto(`http://localhost:${port}/?${q}`, { waitUntil: 'load' });
+          // (the run's first pages wait for Vite's cold transform of the whole renderer: past puppeteer's default 30 s on
+          // the dev machine at times, as the ready wait below allows)
+          await page.goto(`http://localhost:${port}/?${q}`, { waitUntil: 'load', timeout: 120_000 });
           await page.waitForFunction(e.kind === 'live' ? '!!(window.emu && window.emu.step)' : '!!(window.preview && window.preview.frames)',
             { timeout: 120_000, polling: 100 });
           if (!gpuName) {
@@ -1099,7 +1380,7 @@ async function main(): Promise<void> {
             entry.cpuMs = round(g.cpuMs, 3);
           }
           // (an entry that equals another one: measured there)
-          if (ab && style === 'modern' && !(e.kind === 'live' && e.sameAs) && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e.q) ?? true)))) {
+          if (ab && style === 'modern' && !(e.kind === 'live' && e.sameAs) && (e.kind === 'live' || (abFeature.preview && (abFeature.previewWhen?.(e) ?? true)))) {
             const r = entry.ab = e.kind === 'live' ? await abMeasure(page, e, abRounds, abFeature, abMethod, abAa, abHalf)
               : await abMeasureStatic(page, abRounds, abFeature, abMethod, abAa, abHalf);
             const cell = (v?: AbVariant) => (v ? `${v.dGpu >= 0 ? '+' : ''}${v.dGpu.toFixed(2)}${v.dGpu > abFeature.gpuMs ? ' OVER' : ''} | `
@@ -1119,6 +1400,7 @@ async function main(): Promise<void> {
             if (!fs.existsSync(plain)) throw new Error(`no ${sameAs}_${style}.png in this run's folder to equal (run ${sameAs} first)`);
             const d = await diffPng(page, file, plain);
             const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
+            // (pixels -1: the sizes differ — never the same)
             if (d.pixels !== 0) throw new Error(`differs from ${sameAs}_${style}: ${d.pixels} px (${d.pct.toFixed(2)} %), bbox ${b}`);
             line += ` | = ${sameAs} (0 px)`;
             if (e.kind === 'live' && e.samePrograms) {
@@ -1136,12 +1418,14 @@ async function main(): Promise<void> {
               const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
               diffs.push(`diff ${key.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
               line += ` | diff ${d.pct.toFixed(2)} % (${d.pixels} px)`;
+              if (expectSame && isSameControl(e, style) && d.pixels !== 0) sameFailures.push(`${key} (${d.pixels} px, bbox ${b})`);
             } else {
               missingRefs.push(key);
               diffs.push(`diff ${key.padEnd(24)} no reference in ${compare}`);
             }
           }
           stats[key] = entry;
+          shotThisRun.add(key);
           fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
           console.log(line);
         } catch (err) {
@@ -1173,6 +1457,8 @@ async function main(): Promise<void> {
             const b = d.bbox ? `${d.bbox.x},${d.bbox.y} ${d.bbox.w}x${d.bbox.h}` : '-';
             diffs.push(`diff ${name.padEnd(24)} ${d.pct.toFixed(2).padStart(6)} %  ${String(d.pixels).padStart(8)} px  bbox ${b}`);
             console.log(`gba  ${name.padEnd(24)} diff ${d.pct.toFixed(2)} % (${d.pixels} px)`);
+            // (the GBA's own picture does not depend on the renderer: always a control)
+            if (expectSame && d.pixels !== 0) sameFailures.push(`${name} (${d.pixels} px, bbox ${b})`);
           } catch (err) {
             gbaDiffFailures.push(name);
             console.log(`[${name}] FAILED: ${(err as Error).message}`);
@@ -1195,6 +1481,27 @@ async function main(): Promise<void> {
         if (lum) st.actorLum = lum;
         else delete st.actorLum;
         if (lum) lumRows.push({ name: e.name, lum });
+      }
+      fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
+    }
+    // D8's night twins: every pair of the run (the selection added each selected entry's twin), measured from both Modern
+    // shots of this run only (no older run's shot may stand in for one). A gated pair that cannot be measured (an entry of
+    // it failed) fails the gate; an out-of-scope one is skipped
+    if (styles.includes('modern')) {
+      current = 'night twins';
+      for (const [night, day] of Object.entries(NIGHT_TWINS)) {
+        if (!entries.some((e) => e.name === night || e.name === day)) continue;
+        const st = stats[`${night}_modern`];
+        const files = [`${night}_modern.png`, `${day}_modern.png`, `_mask_${night}_modern.png`, `_mask_${day}_modern.png`]
+          .map((f) => path.join(outDir, f)) as [string, string, string, string];
+        if (!shotThisRun.has(`${night}_modern`) || !shotThisRun.has(`${day}_modern`) || !files.every((f) => fs.existsSync(f))) {
+          if (st) delete st.nightLum;
+          if (!OUT_OF_SCOPE_INTERIOR.has(night)) nightFailures.push(`${night} (no Modern shot of it and of ${day} in this run to compare)`);
+          continue;
+        }
+        const n = st.nightLum = await nightLum(page, night, day, files);
+        nightRows.push({ name: night, n });
+        if (n.broken) nightFailures.push(`${night} (${n.broken.join('; ')})`);
       }
       fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2));
     }
@@ -1222,6 +1529,32 @@ async function main(): Promise<void> {
       console.log(`median ${median(r).toFixed(3)}, min ${min.lum.ratio.toFixed(3)} (${min.name}), max ${Math.max(...r).toFixed(3)}`
         + (ok.length < lumRows.length ? ` (${lumRows.length - ok.length} unreliable left out)` : ''));
     }
+    // the in-scope day interiors' gate (dayActorGated): each reliable measure within the band, their median ≥ the floor
+    const gated = ok.filter((x) => { const e = entries.find((y) => y.name === x.name); return !!e && dayActorGated(e); });
+    const unmeasured = entries.filter((e) => dayActorGated(e) && !gated.some((x) => x.name === e.name)).map((e) => e.name);
+    for (const x of gated) {
+      if (!(x.lum.ratio >= DAY_ACTOR_BAND[0] && x.lum.ratio <= DAY_ACTOR_BAND[1])) dayActorFailures.push(`${x.name} ${x.lum.ratio.toFixed(3)}`);
+    }
+    dayGatedMeasured = gated.length;
+    if (gated.length) {
+      const m = median(gated.map((x) => x.lum.ratio));
+      if (m < DAY_ACTOR_MEDIAN_MIN) dayActorFailures.push(`median ${m.toFixed(3)} < ${DAY_ACTOR_MEDIAN_MIN}`);
+      console.log(`in-scope day interiors (gated: ${DAY_ACTOR_BAND.join('-')}, median ≥ ${DAY_ACTOR_MEDIAN_MIN}): ${gated.length} entries, `
+        + `median ${m.toFixed(3)}, ${Math.min(...gated.map((x) => x.lum.ratio)).toFixed(3)}-${Math.max(...gated.map((x) => x.lum.ratio)).toFixed(3)}`
+        + (unmeasured.length ? `; not measured (not gated): ${unmeasured.join(', ')}` : ''));
+    }
+  }
+  // (never a vacuous pass: in-scope day interiors ran in both styles, yet not one gave a reliable measure)
+  const dayGatedRun = styles.includes('modern') && styles.includes('retro') ? entries.filter(dayActorGated).map((e) => e.name) : [];
+  if (dayGatedRun.length && !dayGatedMeasured) dayActorFailures.push(`no reliable measure of any of ${dayGatedRun.join(', ')}`);
+  if (nightRows.length) {
+    console.log(`\nnight twins, Modern night / day (mean sRGB luma; gated in scope: room ${NIGHT_ROOM_BAND.join('-')} at night, ${DUSK_ROOM_BAND.join('-')} at dusk, actors ${NIGHT_ACTOR_BAND.join('-')}):`);
+    console.log('| night | day | roomLuma | room night / day | actorLum | actor night / day | actor px | gate |');
+    console.log('|---|---|---|---|---|---|---|---|');
+    for (const { name, n } of nightRows) {
+      console.log(`| ${name} | ${n.day} | ${n.roomLuma.toFixed(3)} | ${n.room.join(' / ')} | ${n.actorLum?.toFixed(3) ?? '-'} | `
+        + `${n.actor?.join(' / ') ?? '-'} | ${n.actorPx} | ${!n.gated ? 'out of scope' : n.broken ? `FAILED: ${n.broken.join('; ')}` : 'passed'} |`);
+    }
   }
   if (abRows.length) {
     const how = abMethod === 'frame' ? `${abRounds} ABBA quads (per half ${abHalf.settle} settle + ${abHalf.timed} timed frames)`
@@ -1241,7 +1574,11 @@ async function main(): Promise<void> {
       + `> ${XBR_BAKED_VS_LIVE} bytes off the live one) in: ${selftestFailures.join(', ')}`);
   }
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
-  if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length) {
+  if (nightFailures.length) console.log(`night-twin gates (D8) failed in: ${nightFailures.join(', ')}`);
+  if (dayActorFailures.length) console.log(`day actor-luminance gate (in-scope interiors vs Retro) failed: ${dayActorFailures.join(', ')}`);
+  if (sameFailures.length) console.log(`--expect-same: controls that differ from ${compare}: ${sameFailures.join(', ')}`);
+  if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length
+    || nightFailures.length || dayActorFailures.length || sameFailures.length) {
     process.exitCode = 1;
   }
 }
