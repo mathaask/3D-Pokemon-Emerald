@@ -24,72 +24,83 @@ export interface TileInfo {
   attributes: Uint16Array;
 }
 
+/** Decodes all 1024 metatiles of a tileset pair (`bus.vram` from `charBase`, under `palette`). */
 export function analyzeMetatiles(
   bus: { readonly vram: ArrayLike<number> }, entries: Uint16Array, attributes: Uint16Array, charBase: number, palette: Uint16Array,
 ): TileInfo {
-  const both = new Uint16Array(1024 * 256);
-  const bottom = new Uint16Array(1024 * 256);
-  const topCover = new Uint16Array(1024);
-  const bottomCover = new Uint16Array(1024);
-  const green = new Float32Array(1024);
-  const blue = new Float32Array(1024);
-  const isVoid = new Uint8Array(1024);
-  const vram = bus.vram;
+  const info: TileInfo = {
+    both: new Uint16Array(1024 * 256),
+    bottom: new Uint16Array(1024 * 256),
+    topCover: new Uint16Array(1024),
+    bottomCover: new Uint16Array(1024),
+    green: new Float32Array(1024),
+    blue: new Float32Array(1024),
+    isVoid: new Uint8Array(1024),
+    attributes,
+  };
+  // (one call per metatile: V8 optimises decodeMetatile by its call count within the first analysis. As one loop over
+  // all 1024 metatiles the work ran on on-stack replacement, and the function's third call in a session (the interior
+  // kit's ROM-tile colours make one more per room) at times ran unoptimised, 50–170 ms instead of 15, in the build frame)
+  for (let m = 0; m < 1024; m++) decodeMetatile(m, bus.vram, entries, charBase, palette, info);
+  return info;
+}
 
-  for (let m = 0; m < 1024; m++) {
-    let greenCount = 0;
-    let blueCount = 0;
-    let dark = 0;
-    for (let layer = 0; layer < 2; layer++) {
-      for (let sub = 0; sub < 4; sub++) {
-        const e = entries[m * 8 + layer * 4 + sub];
-        const tile = e & 0x3ff;
-        const hflip = (e & 0x400) !== 0;
-        const vflip = (e & 0x800) !== 0;
-        const pal = e >>> 12;
-        const base = charBase + tile * 32;
-        const ox = (sub & 1) * 8;
-        const oy = (sub >> 1) * 8;
-        for (let py = 0; py < 8; py++) {
-          const ty = vflip ? 7 - py : py;
-          for (let px = 0; px < 8; px++) {
-            const tx = hflip ? 7 - px : px;
-            const byte = vram[(base + ty * 4 + (tx >> 1)) & 0xffff];
-            const ci = tx & 1 ? byte >> 4 : byte & 15;
-            const p = (oy + py) * 16 + ox + px;
-            const idx = m * 256 + p;
-            if (layer === 0) {
-              if (ci === 0) {
-                bottom[idx] = 0x8000;
-                both[idx] = 0x8000;
-              } else {
-                const c = palette[pal * 16 + ci] & 0x7fff;
-                bottom[idx] = c;
-                both[idx] = c;
-                bottomCover[m]++;
-              }
-            } else if (ci !== 0) {
-              both[idx] = palette[pal * 16 + ci] & 0x7fff;
-              topCover[m]++;
+/** Metatile `m`'s pixels (both layers, the bottom layer), covers, green / blue shares and void flag, into `out`. */
+function decodeMetatile(
+  m: number, vram: ArrayLike<number>, entries: Uint16Array, charBase: number, palette: Uint16Array, out: TileInfo,
+): void {
+  const { both, bottom, topCover, bottomCover } = out;
+  let greenCount = 0;
+  let blueCount = 0;
+  let dark = 0;
+  for (let layer = 0; layer < 2; layer++) {
+    for (let sub = 0; sub < 4; sub++) {
+      const e = entries[m * 8 + layer * 4 + sub];
+      const tile = e & 0x3ff;
+      const hflip = (e & 0x400) !== 0;
+      const vflip = (e & 0x800) !== 0;
+      const pal = e >>> 12;
+      const base = charBase + tile * 32;
+      const ox = (sub & 1) * 8;
+      const oy = (sub >> 1) * 8;
+      for (let py = 0; py < 8; py++) {
+        const ty = vflip ? 7 - py : py;
+        for (let px = 0; px < 8; px++) {
+          const tx = hflip ? 7 - px : px;
+          const byte = vram[(base + ty * 4 + (tx >> 1)) & 0xffff];
+          const ci = tx & 1 ? byte >> 4 : byte & 15;
+          const p = (oy + py) * 16 + ox + px;
+          const idx = m * 256 + p;
+          if (layer === 0) {
+            if (ci === 0) {
+              bottom[idx] = 0x8000;
+              both[idx] = 0x8000;
+            } else {
+              const c = palette[pal * 16 + ci] & 0x7fff;
+              bottom[idx] = c;
+              both[idx] = c;
+              bottomCover[m]++;
             }
+          } else if (ci !== 0) {
+            both[idx] = palette[pal * 16 + ci] & 0x7fff;
+            topCover[m]++;
           }
         }
       }
     }
-    for (let p = 0; p < 256; p++) {
-      const c = both[m * 256 + p];
-      if (c & 0x8000) continue;
-      const r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-      if (g > r + 2 && g >= b && g > 6) greenCount++;
-      if (b > r + 3 && b > g) blueCount++;
-      if (r + g + b < 6) dark++;
-    }
-    green[m] = greenCount / 256;
-    blue[m] = blueCount / 256;
-    const opaque = bottomCover[m] + topCover[m];
-    isVoid[m] = opaque === 0 || dark > 240 ? 1 : 0;
   }
-  return { both, bottom, topCover, bottomCover, green, blue, isVoid, attributes };
+  for (let p = 0; p < 256; p++) {
+    const c = both[m * 256 + p];
+    if (c & 0x8000) continue;
+    const r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
+    if (g > r + 2 && g >= b && g > 6) greenCount++;
+    if (b > r + 3 && b > g) blueCount++;
+    if (r + g + b < 6) dark++;
+  }
+  out.green[m] = greenCount / 256;
+  out.blue[m] = blueCount / 256;
+  const opaque = bottomCover[m] + topCover[m];
+  out.isVoid[m] = opaque === 0 || dark > 240 ? 1 : 0;
 }
 
 /** The tilesets' own tiles from the ROM (`primary` at tile 0, `secondary` at tile 512, character base 0), as a VRAM
