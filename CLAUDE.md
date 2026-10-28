@@ -8,9 +8,12 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - **All four phases are done** — 1 (outdoor environment), 2 (characters, Pokémon, field objects), 3 (battles),
   4 (interiors: 137 in-scope rooms, light follows the clock) — merged to `main`; results, numbers and known gaps in
   the progress log; full rulings in `phase{1,2,3,4}-sdd-ledger.md`. Hitch fix and the battle-feet fix are merged too.
-- **Next (not started; ask the user):** Phase 4b (gyms, Frontier and the other interiors), terrain height solver v2
-  (mountain ridges), a look-polish pass over the Phase 3/4 known gaps, or interior perf (pre-baked xBR, simpler
-  bookcases). Write the plan first (`docs/superpowers/plans/`), then execute
+- **Phase 4b — gyms, League/E4/Hall of Fame, town special rooms, Trick House — in progress** on branch
+  `phase4b-special-interiors`, plan `docs/superpowers/plans/2026-10-28-phase4b-special-interiors.md` (user-approved:
+  gym puzzles modern but GBA-exact; Retro also gets the incremental cell-change update; REAL raised platforms; a fixture
+  tool may write the warp destination in RAM). SDD ledger `.superpowers/sdd/2026-10-28-phase4b-special-interiors/progress.md`;
+  baseline `p4b-base`. Later: Phase 4c (Frontier, contests, S.S. Tidal, facility rooms, secret bases), terrain solver v2,
+  a look-polish pass, interior perf. Write the plan first (`docs/superpowers/plans/`), then execute
   subagent-driven (only `opus` subagents work here; the user wants parallel agents where files don't overlap). Show
   the user a phase progress bar in every update (they write Norwegian; reply in Norwegian). Merge + push to `origin`
   (private account) without asking.
