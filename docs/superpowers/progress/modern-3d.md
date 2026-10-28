@@ -430,7 +430,7 @@ reviews (0 critical), one fix wave in four parallel fixers + re-review, and a pe
     `roundBox`/`roundedBlock` duplication left; `shellRuns`/`planOpenings` run 3× per build (negligible).
 
 ## Next step
-- **Phase 4b (remaining interiors) started 2026-10-28** — user: "Videre"; scope chosen = ALL four groups (gyms, League/E4 rooms, special buildings, Battle Frontier + secret bases); gym puzzles modernised but reading exactly like the GBA (same cell logic and visibility). Survey `.superpowers/sdd/phase4b-survey.md` → plan(s) in `docs/superpowers/plans/` (likely 4b = gyms + League + special buildings, 4c = Frontier + secret bases), user approval before execution.
+- **Phase 4b (remaining interiors) in progress** on branch `phase4b-special-interiors`, plan `docs/superpowers/plans/2026-10-28-phase4b-special-interiors.md` (15 tasks, user-approved 2026-10-28 with: Retro also gets the incremental cell-change update; REAL raised platforms on gym tiers; a fixture tool may write the warp destination in RAM). SDD ledger `.superpowers/sdd/2026-10-28-phase4b-special-interiors/progress.md`. Started 2026-10-28 — user: "Videre"; scope chosen = ALL four groups (gyms, League/E4 rooms, special buildings, Battle Frontier + secret bases); gym puzzles modernised but reading exactly like the GBA (same cell logic and visibility). Survey `.superpowers/sdd/phase4b-survey.md` → plan(s) in `docs/superpowers/plans/` (likely 4b = gyms + League + special buildings, 4c = Frontier + secret bases), user approval before execution.
 - **Phase 4 is complete (2026-10-28)** and merged to `main`. All four phases of the spec are done. Other candidates
   (ask the user): Phase 4b (gyms, Frontier and the other interiors), the terrain height solver v2 (mountain ridges),
   a look-polish pass over the Phase 3/4 known gaps, or interior perf (pre-baked xBR, simpler bookcases).
@@ -517,3 +517,10 @@ reviews (0 critical), one fix wave in four parallel fixers + re-review, and a pe
   Fortree 0.4, Lilycove 0.5, Mossdeep 0.6, Sootopolis 0.7, Brendan's house 1F 1.0, Granite Cave 1F 24.7.
 - Bash heredocs with large content fail in this harness — write big files with the Write tool.
 - `npx tsx -e "..."` with dynamic imports hung once; use a script file in `.scratch/` (gitignored).
+
+## Phase 4b status
+- [x] Survey (194 out-of-scope indoor maps; 31 never modelled; cave-like maps → cave pass) · [x] Plan (user-approved)
+- [ ] preflight · [ ] 1 harness + fixtures + `p4b-base` · [ ] 2 scope/tables scaffold · [ ] 3 incremental cell-change update
+- [ ] 4a–4e tables · [ ] 5 room layout v2 · [ ] 6 puzzle state core · [ ] 13 rotating gates · [ ] 7 integration
+- [ ] 8 puzzle floors · [ ] 9 raised mechanics · [ ] 10 gym/League shell · [ ] 11a props · [ ] 11b special furniture
+- [ ] 12 floors v2 + raised tiers · [ ] 14 smoke/coverage/live · [ ] 15 perf/docs · [ ] final review · [ ] merge
