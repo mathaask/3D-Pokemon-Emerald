@@ -520,7 +520,7 @@ reviews (0 critical), one fix wave in four parallel fixers + re-review, and a pe
 
 ## Phase 4b status
 - [x] Survey (194 out-of-scope indoor maps; 31 never modelled; cave-like maps → cave pass) · [x] Plan (user-approved)
-- [ ] preflight · [ ] 1 harness + fixtures + `p4b-base` · [ ] 2 scope/tables scaffold · [ ] 3 incremental cell-change update
+- [x] preflight (44 findings, all ruled; heights from tierFace labels — game elevation has no tiers; Retro collision edits still rebuild = known gap) · [ ] 1 harness + fixtures + `p4b-base` (c9b08f7: 366 shots; in review) · [ ] 2 scope/tables scaffold · [ ] 3 incremental cell-change update
 - [ ] 4a–4e tables · [ ] 5 room layout v2 · [ ] 6 puzzle state core · [ ] 13 rotating gates · [ ] 7 integration
 - [ ] 8 puzzle floors · [ ] 9 raised mechanics · [ ] 10 gym/League shell · [ ] 11a props · [ ] 11b special furniture
 - [ ] 12 floors v2 + raised tiers · [ ] 14 smoke/coverage/live · [ ] 15 perf/docs · [ ] final review · [ ] merge
