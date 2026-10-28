@@ -8,7 +8,10 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
 - **All four phases are done** — 1 (outdoor environment), 2 (characters, Pokémon, field objects), 3 (battles),
   4 (interiors: 137 in-scope rooms, light follows the clock) — merged to `main`; results, numbers and known gaps in
   the progress log; full rulings in `phase{1,2,3,4}-sdd-ledger.md`. Hitch fix and the battle-feet fix are merged too.
-- **Phase 4b — gyms, League/E4/Hall of Fame, town special rooms, Trick House — in progress** on branch
+- **PAUSED 2026-10-28** at the user's request (another project needed capacity). Nothing is running. Resume from the
+  "Phase 4b status" section of the progress log (its "Resume here" list) and the end of the SDD ledger. Ask the user
+  before resuming.
+- **Phase 4b — gyms, League/E4/Hall of Fame, town special rooms, Trick House — in progress (tasks 1–6, 13 done)** on branch
   `phase4b-special-interiors`, plan `docs/superpowers/plans/2026-10-28-phase4b-special-interiors.md` (user-approved:
   gym puzzles modern but GBA-exact; Retro also gets the incremental cell-change update; REAL raised platforms; a fixture
   tool may write the warp destination in RAM). SDD ledger `.superpowers/sdd/2026-10-28-phase4b-special-interiors/progress.md`;

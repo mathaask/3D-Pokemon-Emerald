@@ -518,9 +518,26 @@ reviews (0 critical), one fix wave in four parallel fixers + re-review, and a pe
 - Bash heredocs with large content fail in this harness — write big files with the Write tool.
 - `npx tsx -e "..."` with dynamic imports hung once; use a script file in `.scratch/` (gitignored).
 
-## Phase 4b status
+## Phase 4b status — **PAUSED 2026-10-28** (user: another project needs capacity first)
 - [x] Survey (194 out-of-scope indoor maps; 31 never modelled; cave-like maps → cave pass) · [x] Plan (user-approved)
-- [x] preflight (44 findings, all ruled; heights from tierFace labels — game elevation has no tiers; Retro collision edits still rebuild = known gap) · [ ] 1 harness + fixtures + `p4b-base` (c9b08f7: 366 shots; in review) · [x] 2 scope/tables scaffold (b15d351: 182 maps with the 4b flag, 23 tables, tier labels) · [ ] 3 incremental cell-change update
-- [ ] 4a–4e tables (all 23 tilesets 100 % labelled: 4a 6240d58, 4b d90cfef, 4c 02124bf, 4d 5c0028b, 4e 463365f; batch review running) · [ ] 5 room layout v2 (9a8f1f9: tier heights from labels; in review) · [x] 6 puzzle state core (71feccb, 169e750) · [ ] 13 rotating gates (running) · [ ] 7 integration
-- [ ] 8 puzzle floors · [ ] 9 raised mechanics · [ ] 10 gym/League shell · [ ] 11a props · [ ] 11b special furniture
-- [ ] 12 floors v2 + raised tiers · [ ] 14 smoke/coverage/live · [ ] 15 perf/docs · [ ] final review · [ ] merge
+- [x] preflight (44 findings, all ruled; heights from `tierFace` labels — the game's elevation has no tiers; Retro
+  collision edits still rebuild = known gap)
+- [x] 1 harness + fixtures + `p4b-base` (c9b08f7; 366 shots; review: harness gate fixes done in Task 3; minors open)
+- [x] 2 scope/tables scaffold (b15d351: 182 maps with the 4b flag, 23 tables, tier labels)
+- [x] 3 incremental cell-change update (b0cb9f5: a cell change patches in 2–10 ms instead of a 12–41 ms rebuild;
+  visual-only changes 0 builds; patched = rebuilt in both styles) — **review not run yet**
+- [~] 4 tables: 4a 6240d58 ✓ · 4d 5c0028b ✓ · 4e 463365f ✓ · 4b d90cfef and 4c 02124bf **need a small fix round**
+- [x] 5 room layout v2 (9a8f1f9: tier heights from labels, dais, risers; 137 Phase 4 layouts identical)
+- [x] 6 puzzle state core (71feccb, 169e750) · [x] 13 rotating gates (4c75618: turnstile models) — **review not run yet**
+- [ ] 7 integration · [ ] 8 puzzle floors · [ ] 9 raised mechanics · [ ] 10 gym/League shell · [ ] 11a props
+- [ ] 11b special furniture · [ ] 12 floors v2 + raised tiers · [ ] 14 smoke/coverage/live · [ ] 15 perf/docs
+- [ ] final review · [ ] merge
+- **Resume here (in order; full detail at the end of the SDD ledger
+  `.superpowers/sdd/2026-10-28-phase4b-special-interiors/progress.md`):**
+  1. Reviews of Task 3 (b0cb9f5) and Task 13 (4c75618), in parallel.
+  2. Fix rounds 4b (walkable statue tops → floor) and 4c (Trick House 7 arrows/switches → arrowTile/floorSwitch;
+     Champion dais chamfer cells) — fresh agents with `task-4-review.md`.
+  3. Controller: the TIERS ruling into `scope.ts` with a pin (tiers on the dais maps + Sootopolis + 16.4; E4 halls
+     16.5–16.9 flat).
+  4. Group A/B join gate (`--static --compare p4b-base`); explain the i_pc_2f / i_dept_1f / i_league Modern diffs.
+  5. Task 7 (integration) with the carried notes, then group C (8–12), 14, 15, final review, merge, push.
