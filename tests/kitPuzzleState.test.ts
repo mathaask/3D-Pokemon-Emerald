@@ -7,7 +7,9 @@ import {
   PUZZLE_LOOK, PUZZLE_STATE_GLSL, PuzzleStateTexture, arrowRotation, puzzleCells, puzzleKindIndex, puzzleLiveCells,
   puzzleLookGlsl, puzzleUniforms,
 } from '../src/render/kit/interior/puzzle/state';
-import { PUZZLE_KINDS, puzzleStateCount } from '../src/render/kit/tables/building';
+import {
+  INTERIOR_TABLES, PUZZLE_KINDS, puzzleStateCount, type InteriorTable, type PuzzleId,
+} from '../src/render/kit/tables/building';
 import { extractAll, type Extracted, type Family } from '../src/render/kit/semantics';
 import { NO_EVENTS } from '../src/render/kit/events';
 import { CLAIM_OBJECT, CLAIM_SURFACE, CLAIM_TOP } from '../src/render/overworld/claims';
@@ -15,7 +17,7 @@ import { furnitureFamily } from '../src/render/kit/interior/index';
 import { shellFamily } from '../src/render/kit/interior/shell';
 import { floorFamily } from '../src/render/kit/interior/floors';
 import type { RGB } from '../src/render/kit/palette';
-import { INTERIOR_LEGEND } from './helpers/fakeInterior';
+import { INTERIOR_LEGEND, fakeInterior } from './helpers/fakeInterior';
 import { fakePuzzle, rawOf } from './helpers/puzzle';
 
 const luma = ([r, g, b]: RGB) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -101,6 +103,37 @@ describe('puzzle state core', () => {
     live.apply(v.i, rawOf('barrier', 1, /* pole */ 0)); expect(tex.variant(v.i)).toBe(0);
     expect(tex.state(v.i)).toBe(1);
     expect(live.accepts(cells[0].i, INTERIOR_LEGEND.W.mt)).toBe(false);    // another plain id
+  });
+
+  it('switches a pinned cell off to its pin\'s variant, whatever it showed at build time (F4, a table pin)', () => {
+    // a fake table on a fake secondary: a V-beam pin (variant 2) built showing a pole id (variant 0), then switched off
+    const SECONDARY = 0x7fff0001, KEY = '99.0', FLOOR = INTERIOR_LEGEND['.'].mt;
+    const table: InteriorTable = {
+      name: 'FakePuzzleTable', ids: new Map(), target: 0, pins: [],
+      puzzle: new Map<number, PuzzleId>([[0x2b0, { kind: 'barrier', state: 1, variant: 0, blocked: true }],
+        [0x2b1, { kind: 'barrier', state: 1, variant: 2, blocked: true }]]),
+      puzzleCells: { [KEY]: [{ x: 2, y: 2, kind: 'barrier', variant: 2, offId: FLOOR, offState: 0 }] },
+    };
+    const tables = INTERIOR_TABLES as Map<number, InteriorTable>;
+    const onTable = (ch: string) => {
+      const { a } = fakeInterior(['     ', ' WWW ', ` .${ch}. `, '     '], { p: { mt: 0x2b0, blocked: true, id: 'barrier' } });
+      a.opts.secondaryTileset = SECONDARY;
+      return a;
+    };
+    tables.set(SECONDARY, table);
+    try {
+      const built = onTable('p'), rebuiltA = onTable('.');
+      const cells = puzzleCells(built, KEY), tex = new PuzzleStateTexture(built, cells);
+      expect(cells.map((c) => [c.kind, c.state, c.variant])).toEqual([['barrier', 1, 0]]);
+      const live = puzzleLiveCells('puzzle', built, cells, tex);
+      expect(live.accepts(cells[0].i, FLOOR)).toBe(true);
+      live.apply(cells[0].i, FLOOR);
+      const rebuilt = new PuzzleStateTexture(rebuiltA, puzzleCells(rebuiltA, KEY));
+      expect([tex.state(cells[0].i), tex.variant(cells[0].i)]).toEqual([0, 2]);
+      expect([...(tex.texture.image.data as Uint8Array)]).toEqual([...(rebuilt.texture.image.data as Uint8Array)]);
+    } finally {
+      tables.delete(SECONDARY);
+    }
   });
 
   it('makes a patched texture equal the rebuilt one, and a skipped patch differ (F8)', () => {

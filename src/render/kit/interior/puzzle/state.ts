@@ -24,14 +24,16 @@ import type { LiveCells } from '../../semantics';
 import type { RGB } from '../../palette';
 
 /** A mechanic cell: its analysis index, map-local position, kind, variant and state at build time. A position-listed
- *  cell (F4) also carries its pin's `offId` (the plain id it shows when off) and `offState`. */
+ *  cell (F4) also carries its pin's `offId` (the plain id it shows when off), `offState` and `offVariant` (the pin's
+ *  variant: what the texel reads when off, whatever variant the cell showed at build time). */
 export interface PuzzleCell {
   i: number; x: number; y: number; kind: PuzzleKind; variant: number; state: number;
-  offId?: number; offState?: number;
+  offId?: number; offState?: number; offVariant?: number;
 }
 
-/** A seeded cell (the test seam): its PuzzleId, and with `offId` it is a position-listed cell (F4). */
-export interface PuzzleSeedCell extends PuzzleId { offId?: number; offState?: number }
+/** A seeded cell (the test seam): its PuzzleId, and with `offId` it is a position-listed cell (F4; `offVariant`: its
+ *  pin's variant, default the seeded variant). */
+export interface PuzzleSeedCell extends PuzzleId { offId?: number; offState?: number; offVariant?: number }
 
 /** The seam's data per analysis: one entry per cell, and the metatile → meaning lookup `accepts` / `apply` use. */
 interface Seed { ids: readonly (PuzzleSeedCell | null)[]; lookup: (m: number) => PuzzleId | null }
@@ -52,15 +54,17 @@ export function seedPuzzleIds(a: MapAnalysis, ids: readonly (PuzzleId | PuzzleSe
   seeds.set(a, { ids, lookup: look });
 }
 
-/** The meaning of metatile m on this analysis' map (seeded, or its secondary's table: ids ≥ 512, and below 512 only when
- *  the table is of the analysis' primary, as interiorId reads them). */
+/** The meaning of metatile m on this analysis' map (seeded, or its secondary's table: ids ≥ 512, and below 512 only on
+ *  another primary than Building when the table is of it, as interiorId reads them: Building's own ids are never
+ *  mechanics). */
 function lookupOf(a: MapAnalysis): (m: number) => PuzzleId | null {
   const seed = seeds.get(a);
   if (seed) return seed.lookup;
   const secondary = a.opts.secondaryTileset ?? 0, primary = a.opts.primaryTileset ?? SYM.gTileset_Building;
   const t = INTERIOR_TABLES.get(secondary);
   const own = t !== undefined && (t.primary ?? SYM.gTileset_Building) === primary;
-  return (m) => (m >= 512 || own ? puzzleId(m, secondary) : null);
+  const low = own && primary !== SYM.gTileset_Building;
+  return (m) => (m >= 512 || low ? puzzleId(m, secondary) : null);
 }
 
 /** Every analysis cell whose metatile is a mechanic id of the map's secondary (through puzzleId, or the seed), and
@@ -74,7 +78,7 @@ export function puzzleCells(a: MapAnalysis, mapKey?: string | null): PuzzleCell[
       const p = seed.ids[i];
       if (!p || a.kind[i] === K.Void) continue;
       const c: PuzzleCell = { i, x: a.cellX(i), y: a.cellY(i), kind: p.kind, variant: p.variant, state: p.state };
-      if (p.offId !== undefined) { c.offId = p.offId; c.offState = p.offState ?? 0; }
+      if (p.offId !== undefined) { c.offId = p.offId; c.offState = p.offState ?? 0; c.offVariant = p.offVariant ?? p.variant; }
       out.push(c);
     }
     return out;
@@ -95,7 +99,7 @@ export function puzzleCells(a: MapAnalysis, mapKey?: string | null): PuzzleCell[
       // the pin's kind whatever id it shows; a mechanic id of that kind gives the state and variant, else the off state
       const own = id && id.kind === pin.kind ? id : null;
       out.push({ i, x: a.cellX(i), y: a.cellY(i), kind: pin.kind, variant: own ? own.variant : pin.variant,
-        state: own ? own.state : (pin.offState ?? 0), offId: pin.offId, offState: pin.offState ?? 0 });
+        state: own ? own.state : (pin.offState ?? 0), offId: pin.offId, offState: pin.offState ?? 0, offVariant: pin.variant });
     } else if (id) {
       out.push({ i, x: a.cellX(i), y: a.cellY(i), kind: id.kind, variant: id.variant, state: id.state });
     }
@@ -193,7 +197,7 @@ export function puzzleUniforms(tex: PuzzleStateTexture, a: MapAnalysis): Record<
 
 /** accepts: raw's metatile is a mechanic id of the same **kind** as the cell's, any variant, or the cell's listed
  *  `offId` (collision and elevation any; F4). apply: tex.set(i, its state, its variant) (the off id: `offState`, the
- *  pin's variant). A change it does not accept is ignored by apply (World.patch asks accepts first). */
+ *  pin's variant `offVariant`, so a patch writes what a rebuild reads). A change it does not accept is ignored by apply (World.patch asks accepts first). */
 export function puzzleLiveCells(name: string, a: MapAnalysis, cells: readonly PuzzleCell[], tex: PuzzleStateTexture): LiveCells {
   const look = lookupOf(a);
   const byCell = new Map<number, PuzzleCell>();
@@ -214,7 +218,7 @@ export function puzzleLiveCells(name: string, a: MapAnalysis, cells: readonly Pu
       const c = byCell.get(i);
       if (!c) return;
       const p = meaning(c, raw);
-      if (p === 'off') tex.set(i, c.offState ?? 0, c.variant);
+      if (p === 'off') tex.set(i, c.offState ?? 0, c.offVariant ?? c.variant);
       else if (p) tex.set(i, p.state, p.variant);
     },
   };
@@ -258,7 +262,8 @@ export const PUZZLE_LOOK: Readonly<Record<PuzzleKind, readonly PuzzleStateLook[]
 };
 
 /** An arrow tile's chevron rotation per state (= direction: 0 N, 1 E, 2 S, 3 W), radians clockwise seen from above,
- *  from a chevron pointing north (grid −y, world −z). */
+ *  from a chevron pointing north (grid −y, world −z): direction (x, z) = (sin r, −cos r), state 1 → +x. three's
+ *  `rotation.y` turns the other way (counter-clockwise seen from above): use −r there. */
 const ARROW_ROTATION: readonly number[] = [0, Math.PI / 2, Math.PI, 1.5 * Math.PI];
 
 /** The rotation puzzleLookGlsl's `puzzleArrowRotation(state)` gives state s (exported for the tests). */

@@ -14,7 +14,7 @@ import { fakeInterior, type FakeCell } from './fakeInterior';
 
 /** A legend cell that may be a mechanic: its meaning (`puzzle`), and with `offId` a position-listed cell (F4) whose off
  *  state shows that plain id (read as `offState`). */
-export interface PuzzleFakeCell extends FakeCell { puzzle?: PuzzleId; offId?: number; offState?: number }
+export interface PuzzleFakeCell extends FakeCell { puzzle?: PuzzleId; offId?: number; offState?: number; offVariant?: number }
 
 const KINDS = new Set<InteriorId | null>(PUZZLE_KINDS);
 
@@ -83,7 +83,7 @@ export function fakePuzzle(rows: string[], legend?: Record<string, PuzzleFakeCel
     const p = c.puzzle ?? (KINDS.has(c.id) ? { kind: c.id as PuzzleKind, state: 0, variant: 0, blocked: c.blocked } : null);
     if (!p) continue;
     known.set(c.mt, p);
-    byMt.set(c.mt, c.offId !== undefined ? { ...p, offId: c.offId, offState: c.offState ?? 0 } : p);
+    byMt.set(c.mt, c.offId !== undefined ? { ...p, offId: c.offId, offState: c.offState ?? 0, offVariant: c.offVariant ?? p.variant } : p);
   }
   const puzzle = new Array<PuzzleSeedCell | null>(a.N);
   for (let i = 0; i < a.N; i++) puzzle[i] = byMt.get(a.mt[i]) ?? null;
