@@ -20,6 +20,11 @@ const WANTED = [
   // interiors (Phase 4): the Building primary and the five in-scope secondaries
   'gTileset_Building', 'gTileset_GenericBuilding', 'gTileset_PokemonCenter', 'gTileset_Shop', 'gTileset_Lab',
   'gTileset_BrendansMaysHouse',
+  // Phase 4b: the 23 secondaries of the gyms, the League, the Hall of Fame, the town specials and the Trick House
+  ...['PetalburgGym', 'RustboroGym', 'DewfordGym', 'MauvilleGym', 'LavaridgeGym', 'FortreeGym', 'MossdeepGym', 'SootopolisGym',
+    'EliteFour', 'CableClub', 'TrickHousePuzzle', 'OceanicMuseum', 'LilycoveMuseum', 'Facility', 'MauvilleGameCorner',
+    'MossdeepGameCorner', 'BikeShop', 'PokemonFanClub', 'PokemonSchool', 'PokemonDayCare', 'SeashoreHouse',
+    'PrettyPetalFlowerShop', 'MysteryEventsHouse'].map((n) => `gTileset_${n}`),
   'sPrimaryTilesetAnimCounter',
   'gBGTilemapBuffers1', 'gBGTilemapBuffers2', 'gBGTilemapBuffers3', 'gFlashEffectActive',
   // code: a map connection being crossed (the game is inside CameraMove: map load in progress)

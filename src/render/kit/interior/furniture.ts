@@ -43,6 +43,12 @@ export const FURNITURE_SPEC: Readonly<Record<FurnitureKind, FurnitureSpec>> = {
   vase: { height: 0.6, depth: 0.5 }, counter: { height: 0.88, depth: 0.9 }, healer: { height: 1.3, depth: 0.8 },
   pcCounter: { height: 0.88, depth: 0.9 }, martShelf: { height: 1.6, depth: 1.4 }, stairsUp: { height: 1.6, depth: 1 },
   stairsDown: { height: 0, depth: 1 },
+  // Phase 4b's gym, League and special-room furniture (starting values: Tasks 11a / 11b report tuning)
+  statue: { height: 1.6, depth: 0.8 }, pillar: { height: 2.6, depth: 0.7 }, brazier: { height: 1.1, depth: 0.6 },
+  dais: { height: 0.3, depth: 2.0 }, displayCase: { height: 1.1, depth: 0.8 }, fishTank: { height: 1.5, depth: 0.8 },
+  modelShip: { height: 1.0, depth: 1.2 }, plinth: { height: 0.9, depth: 0.7 }, slotMachine: { height: 1.5, depth: 0.7 },
+  rouletteTable: { height: 0.95, depth: 1.6 }, schoolDesk: { height: 0.75, depth: 0.7 }, flowerBin: { height: 0.7, depth: 0.8 },
+  bikeRack: { height: 0.9, depth: 1.0 }, machine: { height: 1.4, depth: 0.8 },
 };
 
 /** Low furniture (≤ 1.2 high) never fades, its screens included (D7: the nurse behind her counter). */
@@ -61,6 +67,10 @@ export const FURNITURE_SPLIT: Readonly<Record<FurnitureKind, FurnitureSplit>> = 
   plant: 'column', fridge: 'rects', sink: 'rects', cabinet: 'rects', crate: 'cell', trashCan: 'cell',
   vase: 'cell', counter: 'component', healer: 'component', pcCounter: 'component', martShelf: 'component',
   stairsUp: 'component', stairsDown: 'component',
+  // Phase 4b
+  statue: 'component', pillar: 'cell', brazier: 'cell', dais: 'component', displayCase: 'rects', fishTank: 'rects',
+  modelShip: 'component', plinth: 'cell', slotMachine: 'cell', rouletteTable: 'component', schoolDesk: 'cell',
+  flowerBin: 'cell', bikeRack: 'rects', machine: 'rects',
 };
 
 /** Furniture on cells the player walks over is this high at most (the walkable-furniture ruling): every walkable cell's

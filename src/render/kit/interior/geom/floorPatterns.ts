@@ -46,6 +46,9 @@ export const VOID_RECESS_NORTH = -RECESS;
 
 export const FLOOR_MAT: Readonly<Record<FloorKind, FloorMat>> = {
   boards: FloorMat.Boards, tiles: FloorMat.Tiles, carpet: FloorMat.Carpet, rug: FloorMat.Rug, mat: FloorMat.Mat,
+  // Phase 4b's floor kinds, until Task 12 gives them their own patterns
+  stone: FloorMat.Tiles, ice: FloorMat.Tiles, sand: FloorMat.Carpet, metal: FloorMat.Tiles, ledge: FloorMat.Tiles,
+  tier: FloorMat.Tiles,
 };
 const FLOOR_SET = new Set<InteriorId>(FLOOR_KINDS);
 /** A room without any floor metatile (no walkable cell at all): warm wood. */

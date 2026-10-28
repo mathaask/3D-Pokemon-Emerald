@@ -27,10 +27,11 @@ describe('service furniture', () => {
     expect(countClusters(out.tall, BALL_RED)).toBe(6);                 // six red ball halves (sRGB; the helper compares lin())
   });
 
-  it('gives every furniture kind a generator (home + service = FURNITURE_KINDS, no kind left legacy unnoticed)', () => {
+  it('gives every Phase 4 furniture kind a generator (home + service = FURNITURE_KINDS\' first 19, none left legacy unnoticed)', () => {
     const home = Object.keys(HOME_GENERATORS), service = Object.keys(SERVICE_GENERATORS);
     expect(home.filter((k) => service.includes(k))).toEqual([]);
-    expect([...home, ...service].sort()).toEqual([...FURNITURE_KINDS].sort());
+    // (Phase 4b's 14 kinds, appended after them, get theirs from furnitureLeague / furnitureSpecial: Tasks 7, 11a, 11b)
+    expect([...home, ...service].sort()).toEqual(FURNITURE_KINDS.slice(0, 19).sort());
   });
 
   it('lights the computer screen in the low glow (it never fades)', () => {

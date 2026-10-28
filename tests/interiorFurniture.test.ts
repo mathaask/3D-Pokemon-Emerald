@@ -32,13 +32,16 @@ describe('furniture fitting', () => {
   });
   it('never fades low furniture, its screens included', () => {
     expect(FURNITURE_KINDS.filter(isLow)).toEqual(['bed', 'table', 'chair', 'tv', 'pc', 'sink', 'cabinet', 'crate', 'trashCan',
-      'vase', 'counter', 'pcCounter', 'stairsDown']);
+      'vase', 'counter', 'pcCounter', 'stairsDown',
+      // Phase 4b (statue, pillar, fishTank, slotMachine and machine stay tall)
+      'brazier', 'dais', 'displayCase', 'modelShip', 'plinth', 'rouletteTable', 'schoolDesk', 'flowerBin', 'bikeRack']);
     expect(FURNITURE_LOW.fade).toBeFalsy(); expect(FURNITURE_TALL.fade).toBe(true);
     expect(FURNITURE_GLOW_LOW.fade).toBeFalsy();
   });
   it('has a spec for every kind, real-world high, never deeper than 2', () => {
     for (const k of FURNITURE_KINDS) {
-      expect(FURNITURE_SPEC[k].height, k).toBeLessThanOrEqual(2.1);
+      // (a gym or League pillar reaches its room's ceiling art: 2.6, Phase 4b)
+      expect(FURNITURE_SPEC[k].height, k).toBeLessThanOrEqual(k === 'pillar' ? 2.6 : 2.1);
       expect(FURNITURE_SPEC[k].depth, k).toBeLessThanOrEqual(2);
     }
   });
