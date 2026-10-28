@@ -13,7 +13,7 @@ import { safeLiveGridEvents, NO_EVENTS, type GridEvents } from '../kit/events';
 import { MetatileAtlas } from './metatileAtlas';
 import { World, type GridData, type WorldMaterials, type WorldStyle } from './world';
 import { worldCatalogue, type WorldCatalogue } from '../kit/catalogue';
-import { analyzeMetatiles, romTileVram, type TileInfo } from './tileInfo';
+import { analyzeMetatiles, romMetatiles, romTileVram, type TileInfo } from './tileInfo';
 import { interiorScope } from '../kit/interior/scope';
 import type { SpriteClassifier } from '../../game/spriteKinds';
 import { SYM } from '../../game/symbols';
@@ -463,7 +463,7 @@ export class OverworldView {
       && interiorScope({ indoor, primaryTileset, secondaryTileset }, mapKey ?? null);
     this.world.build(grid, {
       info,
-      colorInfo: kit ? this.staticColorInfo(bus, primaryTileset, secondaryTileset, bgPalette) : undefined,
+      colorInfo: kit ? this.staticColorInfo(bus, info, primaryTileset, secondaryTileset, bgPalette) : undefined,
       generalPrimary: primaryTileset === SYM.gTileset_General,
       indoor,
       underground: this.mapType === MAP_TYPE_UNDERGROUND,
@@ -475,8 +475,10 @@ export class OverworldView {
   }
 
   /** The metatiles analysed on the tilesets' ROM tiles (no tile animation's frame) under `palette`: the interior kit's
-   *  colours (ClassifyOptions.colorInfo). Cached per tileset pair and palette (a rebuild of the room costs nothing). */
-  private staticColorInfo(bus: Bus, primary: number, secondary: number, palette: Uint16Array): TileInfo {
+   *  colours (ClassifyOptions.colorInfo). Cached per tileset pair and palette (a rebuild of the room costs nothing); made
+   *  from the live analysis `live` (this build's, under the same palette) by decoding again only the metatiles that draw
+   *  an animated tile (romMetatiles: a full decode cost 10-15 ms in the door walk's build frame). */
+  private staticColorInfo(bus: Bus, live: TileInfo, primary: number, secondary: number, palette: Uint16Array): TileInfo {
     let c = this.colorCache;
     if (!c || c.primary !== primary || c.secondary !== secondary) {
       this.romReader ??= new RomReader(bus.rom);
@@ -486,7 +488,7 @@ export class OverworldView {
     for (let k = 0; k < 256 && same; k++) same = c.palette[k] === palette[k];
     if (!same || !c.info) {
       c.palette.set(palette.subarray(0, 256));
-      c.info = analyzeMetatiles({ vram: c.vram }, this.atlas.entries, this.atlas.attributes, 0, c.palette);
+      c.info = romMetatiles(live, bus.vram, this.charBase, c.vram, this.atlas.entries, c.palette);
     }
     return c.info;
   }

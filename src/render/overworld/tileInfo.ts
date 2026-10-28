@@ -45,6 +45,39 @@ export function analyzeMetatiles(
   return info;
 }
 
+/**
+ * The metatiles on the tilesets' ROM tiles (`romVram`: romTileVram's layout, tile 0 at 0) from their live analysis
+ * (`live`: analyzeMetatiles of `liveVram` from `charBase`, under the same `palette`): bit for bit
+ * analyzeMetatiles({ vram: romVram }, entries, live.attributes, 0, palette), but only the metatiles drawing a tile whose
+ * bytes differ (a tile animation's current frame) are decoded again; the rest are copied. `live` stays as it was.
+ */
+export function romMetatiles(
+  live: TileInfo, liveVram: ArrayLike<number>, charBase: number, romVram: ArrayLike<number>, entries: Uint16Array,
+  palette: Uint16Array,
+): TileInfo {
+  const differs = new Uint8Array(1024);
+  for (let t = 0; t < 1024; t++) {
+    const a = charBase + t * 32, b = t * 32;
+    for (let k = 0; k < 32; k++) {
+      if (liveVram[(a + k) & 0xffff] !== romVram[(b + k) & 0xffff]) { differs[t] = 1; break; }
+    }
+  }
+  const out: TileInfo = {
+    both: live.both.slice(), bottom: live.bottom.slice(), topCover: live.topCover.slice(),
+    bottomCover: live.bottomCover.slice(), green: live.green.slice(), blue: live.blue.slice(), isVoid: live.isVoid.slice(),
+    attributes: live.attributes,
+  };
+  for (let m = 0; m < 1024; m++) {
+    let redo = false;
+    for (let s = 0; s < 8 && !redo; s++) redo = differs[entries[m * 8 + s] & 0x3ff] === 1;
+    if (!redo) continue;
+    out.topCover[m] = 0;
+    out.bottomCover[m] = 0;
+    decodeMetatile(m, romVram, entries, 0, palette, out);
+  }
+  return out;
+}
+
 /** Metatile `m`'s pixels (both layers, the bottom layer), covers, green / blue shares and void flag, into `out`. */
 function decodeMetatile(
   m: number, vram: ArrayLike<number>, entries: Uint16Array, charBase: number, palette: Uint16Array, out: TileInfo,

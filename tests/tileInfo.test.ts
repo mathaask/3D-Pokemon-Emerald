@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeMetatiles, type TileInfo } from '../src/render/overworld/tileInfo';
+import { analyzeMetatiles, romMetatiles, type TileInfo } from '../src/render/overworld/tileInfo';
 
 /** A deterministic pseudo-random source (xorshift32). */
 function rng(seed: number): () => number {
@@ -61,5 +61,38 @@ describe('analyzeMetatiles', () => {
     expect(info.topCover[0]).toBe(0);
     expect(info.isVoid[0]).toBe(1);
     expect(info.both[0]).toBe(0x8000);
+  });
+});
+
+describe('romMetatiles', () => {
+  /** The ROM tiles as romTileVram lays them (tile 0 at 0) from a live VRAM read at `charBase`, with `changed` tiles'
+   *  bytes altered (a tile animation's other frame). */
+  function romFrom(live: Uint8Array, charBase: number, changed: number[], seed: number): Uint8Array {
+    const r = rng(seed);
+    const rom = new Uint8Array(0x10000);
+    for (let i = 0; i < 0x8000; i++) rom[i] = live[(charBase + i) & 0xffff];
+    for (const t of changed) for (let k = 0; k < 32; k++) rom[t * 32 + k] = r() & 0xff;
+    return rom;
+  }
+
+  it.each([
+    [0, [], 4],
+    [0, [5, 77, 512, 1023], 5],
+    [0x4000, [0, 1, 300], 6],
+    [0x8000, [700, 701], 7], // (reads past 0xffff wrap round, as the decode does)
+  ])('equals a full decode of the ROM tiles (charBase %i, tiles %j changed)', (charBase, changed, seed) => {
+    const { vram, entries, attributes, palette } = inputs(seed);
+    const live = analyzeMetatiles({ vram }, entries, attributes, charBase, palette);
+    const rom = romFrom(vram, charBase, changed, seed + 100);
+    const want = analyzeMetatiles({ vram: rom }, entries, attributes, 0, palette);
+    const got = romMetatiles(live, vram, charBase, rom, entries, palette);
+    expect(digest(got)).toBe(digest(want));
+    // (a changed tile changes the analysis: the case re-decodes something)
+    if (changed.length) expect(digest(want)).not.toBe(digest(live));
+    for (const k of ['both', 'bottom', 'topCover', 'bottomCover', 'green', 'blue', 'isVoid'] as const) {
+      expect(got[k]).toEqual(want[k]);
+    }
+    // (the live analysis is left as it was)
+    expect(digest(live)).toBe(digest(analyzeMetatiles({ vram }, entries, attributes, charBase, palette)));
   });
 });
