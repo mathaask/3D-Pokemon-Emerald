@@ -9,6 +9,7 @@
 //   &spriteFilter=pixel  Modern actors with nearest texels (default: HD smooth sprite edges)
 //   &manual=1            no frame loop: frames advance through preview.frames(n) (1/60 s each)
 //   &kitFail=<family>    that kit family fails on every build (its cells legacy, warned once): the failure path
+//   preview.setCells([[x, y, raw], …])  runtime cell edits (the harness's puzzle edit entries: a gym switch's metatiles)
 
 import * as THREE from 'three';
 import { Bus } from '../gba/bus';
@@ -49,6 +50,11 @@ export class PreviewApp {
   private pitch = 0;
   private zoom = 0;
   private buildMs = 0;
+  /** The map's grid (a copy of the ROM layout's; setCells replaces it with an edited copy, so a grid once built is never
+   *  written in place: the previous one stays intact for a diff). */
+  private grid: GridData;
+  /** setCells calls that changed a cell (live play's OverworldView.gridChanges). */
+  private gridChangeCount = 0;
   /** The interior kit on (setInteriorKit). */
   private interiorKit = true;
   /** Rebuilds the world (as crossing a map connection does, with warm code); returns the time in ms. */
@@ -106,10 +112,10 @@ export class PreviewApp {
     this.view.setActorPixelSource({ vram: bus.vram, palette, map2d: false });
     const mem = new Mem(bus);
     this.view.setStatic(mem, map.layout.primaryTileset, map.layout.secondaryTileset, map.mapType);
-    const grid: GridData = {
+    this.grid = {
       width: map.layout.width,
       height: map.layout.height,
-      cells: map.layout.grid,
+      cells: map.layout.grid.slice(),
       border: [...map.layout.border],
       borderW: 2,
       borderH: 2,
@@ -124,7 +130,7 @@ export class PreviewApp {
     this.view.finishPrecompile(this.webgl);
     this.rebuild = () => {
       const t0 = performance.now();
-      this.view.buildWorld(grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset,
+      this.view.buildWorld(this.grid, bus, palette.subarray(0, 256), map.layout.primaryTileset, gridEvents(map.events, 0), map.layout.secondaryTileset,
         `${group}.${num}`);
       return performance.now() - t0;
     };
@@ -277,10 +283,40 @@ export class PreviewApp {
     return { buildMs, firstFrameMs: performance.now() - t0 };
   }
 
-  /** Render statistics of the last frame (all passes), the shader programs and the last world build time. */
-  stats(): { calls: number; triangles: number; programs: number; buildMs: number } {
+  /**
+   * Runtime cell edits, as the game makes them (MapGridSetMetatileIdAt: the harness's edit entries apply a gym switch's or a
+   * door's metatiles from the decomp, tools/lib/decompEdits.ts): each [x, y, raw] writes the map-local cell's grid u16
+   * (out-of-map cells are ignored). When a cell changed, the world takes the change as live play's sync would — today a
+   * rebuild ('build'; Phase 4b's incremental update returns 'patch' where it patches in place) — and gridChanges counts it;
+   * an edit list that changes no cell does nothing (gridChanges stays: the harness flags it).
+   */
+  setCells(edits: readonly (readonly [x: number, y: number, raw: number])[]): 'patch' | 'build' {
+    const g = this.grid;
+    const cells = g.cells.slice();
+    let changed = 0;
+    for (const [x, y, raw] of edits) {
+      if (x < 0 || y < 0 || x >= g.width || y >= g.height) continue;
+      const i = y * g.width + x;
+      if (cells[i] !== (raw & 0xffff)) {
+        cells[i] = raw & 0xffff;
+        changed++;
+      }
+    }
+    if (changed) {
+      // (a new grid object: the one built before stays as it was)
+      this.grid = { ...g, cells };
+      this.gridChangeCount++;
+      this.rebuild();
+    }
+    return 'build';
+  }
+
+  /** Render statistics of the last frame (all passes), the shader programs, the first world build's time (cold), the
+   *  world builds so far and the last one's ms, and the cell edits taken (setCells). */
+  stats(): { calls: number; triangles: number; programs: number; buildMs: number; builds: number; lastBuildMs: number; gridChanges: number } {
     const info = this.webgl.info;
-    return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0, buildMs: Math.round(this.buildMs) };
+    return { calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0, buildMs: Math.round(this.buildMs),
+      builds: this.view.builds, lastBuildMs: this.view.lastBuildMs, gridChanges: this.gridChangeCount };
   }
 
   /** One frame; `fixedDt` (seconds) replaces the wall-clock time step. */

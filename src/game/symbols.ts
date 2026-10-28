@@ -220,6 +220,7 @@ export const SYM = {
   gSpecialVar_Result: 0x020375f0,
   gLocalTime: 0x03005cf8,
   sRtc: 0x03000dc0,
+  sWarpDestination: 0x020322e4,
 } as const;
 
 export const SYM_SIZE: Record<keyof typeof SYM, number> = {
@@ -442,6 +443,7 @@ export const SYM_SIZE: Record<keyof typeof SYM, number> = {
   gSpecialVar_Result: 2,
   gLocalTime: 8,
   sRtc: 12,
+  sWarpDestination: 8,
 };
 
 export type SymName = keyof typeof SYM;

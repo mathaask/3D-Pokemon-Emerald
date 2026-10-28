@@ -25,8 +25,8 @@
 // (a pixel differs when a channel differs by > 8; diff = { pct (2 decimals), bbox (null: identical),
 // pixels (-1: sizes differ) }; a battle entry's gba_<entry>.png / ref_<entry>.png too, reported with the diffs, not in
 // stats; a missing reference fails the run as a shot's does). The diffs are reported, not gated, unless --expect-same: then a
-// control (isSameControl: every Retro shot, the non-interior Modern entries, OUT_OF_SCOPE_INTERIOR, door_exit, the GBA
-// pictures) that differs from its reference by even one pixel fails the run.
+// control (isSameControl: every Retro shot, the non-interior Modern entries, OUT_OF_SCOPE_INTERIOR, door_exit, Phase 4's
+// interior entries PHASE4_INTERIOR, the GBA pictures) that differs from its reference by even one pixel fails the run.
 // --review writes _review_battle.png: one row per battle entry of the run, columns GBA (gba_ / ref_<entry>.png) | before
 // (out/regress-live/<--review-before>/<entry>_modern.png; blank without the flag) | Modern | Retro (this run's shots);
 // and _review_interior.png: one row per interior entry of the run, columns GBA map (out/atlas/<group>_<num>_<Name>.png,
@@ -97,6 +97,12 @@
 // lr_truck_switch toggles the world style and the sprite edges mid-steps, battle_switch likewise in a battle,
 // vigoroth_switch in an in-scope interior (its rebuild in the other tile-animation phase) and vigoroth_v the
 // classic 2D view (V) and back there.
+// Puzzles (Phase 4b): a static entry's `edits` (EditSpec: the decomp's setmetatile lists or explicit cells, applied
+// through preview.setCells after a 30-frame settle, each step's frames drained and timed) and a live entry's `puzzle` (a
+// walk over a gym mechanic, recorded as a crossing's: every frame drained) record what each runtime cell change costs
+// (`puzzle` in stats: per change its frame ms, rebuild ms, first frame ms, patch ms) and, where their PuzzleGate says
+// 'gate' for the style, gate it (see PuzzleGate). The o_* entries (outdoor cell changes: Fortree's bridges, Route 113's
+// ash, Pacifidlog's logs) run with --static only and only record. Fixtures: tools/puzzle-states.ts (out/pz_*.state).
 // Exits non-zero when an entry fails, the page logs an error, --compare lacks a reference shot, or a
 // self-test misses parity.
 
@@ -105,6 +111,48 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
 import puppeteer, { type Page } from 'puppeteer-core';
+import { RomReader } from '../src/game/rom/reader';
+import { loadMap } from '../src/game/rom/maps';
+import { editRaw, metatileId, scriptEdits, type DecompEdit } from './lib/decompEdits';
+
+/** Refusals of the incremental update by reason (Task 3's PatchRefusal names: 'structure', 'claimedNotLive', …) → count. */
+type RefusalCounts = Partial<Record<string, number>>;
+/**
+ * A puzzle walk's or edit entry's gate (Phase 4b). 'record': report only (today's rebuild ms and first frame per change).
+ * 'gate' (preflight F3): after the settle, programs constant, gridChanges ≥ 1; the refusals (stats().refusals, by reason:
+ * Task 3) exactly as `expect` lists them for the style (none listed: none) — a change the incremental path refuses
+ * rebuilds the world, so the world builds equal the refusals and patches + refusals == gridChanges; every refused change's
+ * frame ≤ its build + crossingMargin(build) (a crossing's budget); every patched one within its budget (path 'live' ≤
+ * PATCH_BUDGET_MS.live = 1.0 ms, 'legacy' ≤ 12 ms: stats().lastPatchMs after the change) and its frame ≤ the walk's median
+ * frame + PATCH_FRAME_MARGIN_MS (+ 4 / + 16 ms). An unexpected refusal or build fails. Per style: `retro` / `modern` (a
+ * style in 'record' records). `expect`: the refusals the style's run must make — a change that turns a floor cell into a
+ * blocked one or back (collision zero ↔ non-zero: `collision` in the record) changes the analysis' `kind` and is
+ * refused 'structure' by the legacy path (Mauville's barriers, the Trick House doors, the E4 entrance: their art really
+ * changes from floor to standing face), recorded per change at p4b-base.
+ */
+interface PuzzleGate {
+  retro: 'record' | 'gate'; modern: 'record' | 'gate'; path: 'live' | 'legacy';
+  expect?: { retro?: RefusalCounts; modern?: RefusalCounts };
+}
+/** Every puzzle entry records until Task 3 (legacy patches) and the group-C join (live cells) switch their gates on. */
+const RECORD: PuzzleGate = { retro: 'record', modern: 'record', path: 'legacy' };
+/** RECORD with `n` 'structure' refusals expected in both styles (the changes with collision changes, p4b-base: the
+ *  Modern rooms are legacy until Task 7 switches the 4b scope on; the C join revises Modern's). */
+const recordStructure = (n: number): PuzzleGate => ({ ...RECORD, expect: { retro: { structure: n }, modern: { structure: n } } });
+const PATCH_BUDGET_MS = { live: 1.0, legacy: 12 } as const;
+const PATCH_FRAME_MARGIN_MS = { live: 4, legacy: 16 } as const;
+
+/**
+ * A static entry's cell edits (one step of them): `script` = a map's setmetatile list from the decomp (scriptEdits: the
+ * map's decomp name, and the script label, else every setmetatile of the map), `cells` = explicit [x, y, METATILE_* label
+ * (`label+n` for an id n further: a door frame's bottom half), blocked] (the edits C code makes: thin ice, the sliding
+ * doors, the outdoor tasks). Map-local cells; each becomes the grid u16 editRaw makes from the cell's value before it.
+ * `after`: frames rendered after the step (default 30; the next step or the shot follows).
+ */
+interface EditSpec { script?: [mapName: string, label?: string]; cells?: [x: number, y: number, metatileLabel: string, blocked: boolean][]; after?: number }
+/** EditSpec cells: one label on cells `xs` of row `y`. */
+const cellRow = (xs: number[], y: number, label: string, blocked = false): [number, number, string, boolean][] =>
+  xs.map((x) => [x, y, label, blocked]);
 
 interface LiveEntry {
   /** `steps`: keys held for n frames each; a step's third element is evaluated in the page before its frames (a
@@ -127,6 +175,9 @@ interface LiveEntry {
   /** A walk between scenes (battle entry or exit), run as a crossing's walk: 'record' its frames and programs, or also
    *  'gate' them. See SCENE_CHANGE_MS below. */
   sceneChange?: 'record' | 'gate';
+  /** A puzzle walk (Phase 4b): its steps after the first (an idle settle of ≥ 30 frames) change cells of the map; every
+   *  frame drained and recorded as a crossing's, the changes reported per frame (PuzzleStats) and gated by the gate. */
+  puzzle?: PuzzleGate;
 }
 
 /**
@@ -265,6 +316,28 @@ const LIVE: LiveEntry[] = [
   // DOWN held on it to frame 112: fade-out 111-133, Littleroot (0.9) loads at 134 (screen2d 137-142), fade-in 142-164,
   // the player steps out of the door (14,8 → 14,9) from 166; the shot at 212, 47 frames after the fade-in
   { name: 'door_exit', state: 'out/s21.state', steps: [['', 30], ['DOWN', 82], ['', 100]], crossings: 1 },
+  // Puzzle walks (Phase 4b Task 1; the fixtures are tools/puzzle-states.ts's out/pz_*.state, probed free; frames from the
+  // state's load, the grid changes found by that probe, which runs these same steps). Each change comes after the 30-frame
+  // settle and the shot ≥ 30 frames after the last one. (Their p4b-base references are that task's capture.)
+  // pz_ice: Sootopolis Gym 1F (15.0) from the stairs (8,20) three steps north over thin ice: each ice cell cracks
+  // (0x20D → 0x20E) as the player steps off it, at 45 (8,19), 61 (8,18), 77 (8,17); the shot at 138
+  { name: 'pz_ice', state: 'out/pz_sootopolis.state', steps: [['', 30], ['UP', 48], ['', 60]], puzzle: RECORD },
+  // pz_switch: Mauville Gym (10.0) from 0,16 onto switch 1 (0,15): at 57 the switch is pressed and every barrier toggles
+  // (27 cells in one frame: MauvilleGymPressSwitch + MauvilleGymSetDefaultBarriers); the shot at 136
+  { name: 'pz_switch', state: 'out/pz_mauville.state', steps: [['', 30], ['UP', 16], ['', 90]], puzzle: recordStructure(1) },
+  // pz_arrows: Mossdeep Gym (14.0) from 16,34 onto the green floor switch (15,34): the rotating tile puzzle moves and turns
+  // the statues on the green arrows — objects, not cells: no grid change (Emerald's arrows never change; the arrow edits in
+  // its scripts.inc are Ruby/Sapphire leftovers that never run); the shot at 136
+  { name: 'pz_arrows', state: 'out/pz_mossdeep.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: RECORD },
+  // pz_e4_door: Sidney's room (16.0) from the entrance (6,13) at the fade-in: the on-frame script walks the player in (to
+  // 6,7) and at 99 closes the door behind (5-7,12 → EntryDoor_ClosedTop, 5-7,13 → ClosedBottom, blocked); the shot at 180
+  { name: 'pz_e4_door', state: 'out/pz_e4.state', steps: [['', 30], ['', 150]], puzzle: recordStructure(1) },
+  // pz_th3: Trick House puzzle 3 (29.5) from 5,14 onto button 1 (4,14): at 57 the button presses and the blue doors close
+  // (26 cells), at 58 the red ones open (49 cells); the shot at 136
+  { name: 'pz_th3', state: 'out/pz_th3.state', steps: [['', 30], ['LEFT', 16], ['', 90]], puzzle: recordStructure(2) },
+  // gym_hole: Lavaridge Gym 1F (4.1) from 11,18 west into the hole at 10,18 → B1F (4.2) at 126 (crossing-gated: one build,
+  // no compile); the shot at 196, 70 frames after the load
+  { name: 'gym_hole', state: 'out/pz_lavaridge.state', steps: [['', 30], ['LEFT', 16], ['', 150]], crossings: 1 },
 ];
 
 /**
@@ -279,6 +352,8 @@ const LIVE: LiveEntry[] = [
 const INTERIOR_LIVE: Record<string, string> = {
   vigoroth: '1.0', vigoroth_switch: '1.0', vigoroth_v: '1.0', item_indoor: '1.3', truck_inside: '25.40', door_enter: '1.2',
   door_exit: '0.9',
+  // Phase 4b's puzzle walks (gym_hole ends on Lavaridge Gym B1F)
+  pz_ice: '15.0', pz_switch: '10.0', pz_arrows: '14.0', pz_e4_door: '16.0', pz_th3: '29.5', gym_hole: '4.2',
 };
 
 /**
@@ -291,7 +366,14 @@ const INTERIOR_LIVE: Record<string, string> = {
  * framed patch holds stages 0-2 (r104_berries / r104_night); r123_berries frames Route 123's
  * two rows of six (templates 0-3, 9-16), all five stages.
  */
-interface StaticEntry { name: string; q: string; selftest?: boolean }
+interface StaticEntry {
+  name: string; q: string; selftest?: boolean;
+  /** Runtime cell edits (Phase 4b): 30 frames, then each step's setCells and its `after` frames (drained, timed), then the
+   *  shot (instead of 60 frames). A step that changes no cell fails the entry. */
+  edits?: EditSpec | EditSpec[];
+  /** The edits' gate (PuzzleGate; an entry with edits records without one). */
+  puzzle?: PuzzleGate;
+}
 const STATIC: StaticEntry[] = [
   { name: 'littleroot_npcs', q: 'map=0.9&focusGfx=17', selftest: true }, { name: 'rustboro_npcs', q: 'map=0.3' },
   { name: 'r104_berries', q: 'map=0.19&focusGfx=60' }, { name: 'r104_night', q: 'map=0.19&focusGfx=60&hour=21' },
@@ -323,6 +405,16 @@ const STATIC: StaticEntry[] = [
   // round 2: its p2-base Retro and Modern references were captured at 9cd7896, before the NPC fade, with --label p2-base
   // --only woods_npc_yaw)
   { name: 'woods_npc_yaw', q: 'map=24.11&x=32.5&y=34.5&focus=1&yaw=3.1416' },
+  // Outdoor runtime cell changes (Phase 4b Task 1: measured, never gated — making outdoor families live is not in 4b; run
+  // with --static only). Fortree City (0.4): four bridge planks over the trees lowered as the player walks them
+  // (field_tasks.c: BridgeOverTrees_Raised 0x256 → _Lowered); Route 113 (0.28): four ash grass cells shaken bare
+  // (AshGrass 0x20A → NormalGrass); Pacifidlog (0.15): a horizontal log pair's sunk frame (FloatingLogs → SubmergedLogs)
+  { name: 'o_fortree_bridge', q: 'map=0.4&x=16.5&y=14.5', puzzle: RECORD,
+    edits: { cells: cellRow([15, 16, 17, 18], 14, 'METATILE_Fortree_BridgeOverTrees_Lowered') } },
+  { name: 'o_ash', q: 'map=0.28&x=45.5&y=3.5', puzzle: RECORD,
+    edits: { cells: cellRow([44, 45, 46, 47], 3, 'METATILE_Fallarbor_NormalGrass') } },
+  { name: 'o_pacifidlog', q: 'map=0.15&x=5&y=17.5', puzzle: RECORD,
+    edits: { cells: [[4, 17, 'METATILE_Pacifidlog_SubmergedLogs_HorizontalLeft', false], [5, 17, 'METATILE_Pacifidlog_SubmergedLogs_HorizontalRight', false]] } },
 ];
 
 /**
@@ -373,10 +465,116 @@ const STATIC_INTERIOR: StaticEntry[] = [
   { name: 'i_gym', q: 'map=8.1' },                           // out of scope: Modern 0.00 % for ever
   { name: 'i_gym_night', q: 'map=8.1&hour=21' },             // out of scope: today's fixed indoor light at night too
   { name: 'i_secret', q: 'map=25.0' },                       // out of scope (SECRET_BASE): SecretBase_RedCave1
+  // Phase 4b (Task 1; their p4b-base references are that task's capture, before any 4b code: today's legacy rooms). The
+  // gyms (the camera on the map centre unless set), with orbit views of the tiered gyms (real raised platforms: the tiers
+  // must read from the side too) and the puzzle family's failure hook
+  { name: 'i_g_petalburg_entry', q: 'map=8.1&actors=1&x=4.5&y=105' }, // Petalburg: the entrance room (Wally, the guide)
+  { name: 'i_g_rustboro', q: 'map=11.3&actors=1' },
+  { name: 'i_g_rustboro_yaw', q: 'map=11.3&actors=1&yaw=-0.9' },     // tiers from the south-west
+  { name: 'i_g_dewford', q: 'map=3.3&actors=1' },
+  { name: 'i_g_dewford_dark', q: 'map=3.3&actors=1&flash=4' },       // the gym's darkness (flashLevel 4: D10)
+  { name: 'i_g_mauville', q: 'map=10.0&actors=1' },                  // barriers, switches
+  { name: 'i_g_lavaridge', q: 'map=4.1&actors=1' },                  // geyser holes, ledges
+  { name: 'i_g_lavaridge_yaw', q: 'map=4.1&actors=1&yaw=0.9' },
+  { name: 'i_g_lavaridge_b1f', q: 'map=4.2&actors=1' },
+  { name: 'i_g_fortree', q: 'map=12.1&actors=1' },                   // rotating gates, ledges
+  { name: 'i_g_fortree_yaw', q: 'map=12.1&actors=1&yaw=-0.9' },
+  { name: 'i_g_mossdeep', q: 'map=14.0&actors=1' },                  // arrow tiles, warp pads, statues
+  { name: 'i_g_mossdeep_yaw', q: 'map=14.0&actors=1&yaw=1.5708' },
+  { name: 'i_g_sootopolis', q: 'map=15.0&actors=1' },                // thin ice tiers, hidden stairs
+  { name: 'i_g_sootopolis_yaw', q: 'map=15.0&actors=1&yaw=0.9' },    // the ice tiers from the south-east
+  { name: 'i_g_sootopolis_low', q: 'map=15.0&actors=1&preset=3' },   // the tiers at the Low preset
+  { name: 'i_g_sootopolis_b1f', q: 'map=15.1&actors=1' },
+  { name: 'i_g_mauville_fail', q: 'map=10.0&actors=1&kitFail=puzzle' }, // the puzzle family made to fail (today: no such family)
+  // the League: the Elite Four's rooms, the halls between them, the Hall of Fame
+  { name: 'i_e4_sidney', q: 'map=16.0&actors=1' }, { name: 'i_e4_phoebe', q: 'map=16.1&actors=1' },
+  { name: 'i_e4_glacia', q: 'map=16.2&actors=1' }, { name: 'i_e4_drake', q: 'map=16.3&actors=1' },
+  { name: 'i_e4_champion', q: 'map=16.4&actors=1' }, { name: 'i_e4_hall', q: 'map=16.5&actors=1' },
+  { name: 'i_e4_hall5', q: 'map=16.9&actors=1' },
+  { name: 'i_e4_back', q: 'map=16.0&actors=1&yaw=3.1416' },          // Sidney's room from the north
+  { name: 'i_hof', q: 'map=16.11&actors=1' },
+  { name: 'i_hof_yaw', q: 'map=16.11&actors=1&yaw=0.9' },            // the dais's tiers from the side
+  // the town special rooms
+  { name: 'i_s_fanclub', q: 'map=9.6&actors=1' }, { name: 'i_s_ocean_1f', q: 'map=9.7&actors=1' },
+  { name: 'i_s_ocean_2f', q: 'map=9.8&actors=1' }, { name: 'i_s_bikeshop', q: 'map=10.1&actors=1' },
+  { name: 'i_s_corner', q: 'map=10.3&actors=1' }, { name: 'i_s_devon_1f', q: 'map=11.0&actors=1' },
+  { name: 'i_s_devon_3f', q: 'map=11.2&actors=1' }, { name: 'i_s_school', q: 'map=11.4&actors=1' },
+  { name: 'i_s_lily_1f', q: 'map=13.2&actors=1' }, { name: 'i_s_lily_2f', q: 'map=13.3&actors=1' },
+  { name: 'i_s_corner_mossdeep', q: 'map=14.11&actors=1' }, { name: 'i_s_mystery', q: 'map=15.13&actors=1' },
+  { name: 'i_s_mystery_b1f', q: 'map=15.14&actors=1' }, { name: 'i_s_flowers', q: 'map=17.1&actors=1' },
+  { name: 'i_s_daycare', q: 'map=22.0&actors=1' }, { name: 'i_s_seashore', q: 'map=28.0&actors=1' },
+  // the Trick House's eight puzzle rooms (29.3-29.10)
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ name: `i_th${n}`, q: `map=29.${n + 2}&actors=1` })),
+  // night / dusk twins of the new rooms (NIGHT_TWINS; Dewford's dark night: room band exempt, D10)
+  { name: 'i_g_mauville_night', q: 'map=10.0&actors=1&hour=21' }, { name: 'i_e4_drake_night', q: 'map=16.3&actors=1&hour=21' },
+  { name: 'i_s_ocean_night', q: 'map=9.7&actors=1&hour=21' }, { name: 'i_th3_night', q: 'map=29.5&actors=1&hour=21' },
+  { name: 'i_g_sootopolis_dusk', q: 'map=15.0&actors=1&hour=19' }, { name: 'i_e4_champion_dusk', q: 'map=16.4&actors=1&hour=19' },
+  { name: 'i_g_dewford_night_dark', q: 'map=3.3&actors=1&flash=4&hour=21' },
+  // controls for Phase 4c (out of scope in 4b: Modern 0.00 % against p4b-base): the Battle Tower lobby, the contest lobby,
+  // Mt Pyre 1F (never in 4b or 4c: a dungeon), the Trade Center (never: link only)
+  { name: 'i_frontier', q: 'map=26.5&actors=1' }, { name: 'i_contest', q: 'map=13.4&actors=1' },
+  { name: 'i_mtpyre', q: 'map=24.15&actors=1' }, { name: 'i_link', q: 'map=25.25&actors=1' },
+  // Puzzle edit entries (Phase 4b Task 1: the decomp's edits through preview.setCells, recorded). i_pz_th3: Trick House 3's
+  // button 1 pressed and the doors swapped (blue closed, red open: 75 cells, as pz_th3's two frames)
+  { name: 'i_pz_th3', q: 'map=29.5&actors=1', puzzle: recordStructure(1), edits: {
+    script: ['Route110_TrickHousePuzzle3', 'Route110_TrickHousePuzzle3_EventScript_SetDoorsState1'],
+    cells: [[4, 14, 'METATILE_TrickHousePuzzle_Button_Pressed', false]] } },
+  // i_pz_petalburg: room 5's two doors (1,52 and 7,52; two rows each, blocked) through the slide frames 1-4 two frames
+  // apart (field_specials.c PetalburgGymSetDoorMetatiles; frame 0, 0x218, is the closed door the map holds), the last
+  // frame shot
+  { name: 'i_pz_petalburg', q: 'map=8.1&actors=1&x=4.5&y=54', puzzle: RECORD, edits: [1, 2, 3, 4].map((f) => ({
+    cells: [1, 7].flatMap((x): [number, number, string, boolean][] => [[x, 52, `METATILE_PetalburgGym_SlidingDoor_Frame${f}`, true],
+      [x, 53, `METATILE_PetalburgGym_SlidingDoor_Frame${f}+8`, true]]),
+    after: f < 4 ? 2 : 30 })) },
+  // i_pz_sootopolis: the first ice field cracked under three steps (7,19 8,19 8,18 → Ice_Cracked) and one cell broken
+  // (9,18 → Ice_Broken), then the first hidden stairs (8,15-16: OpenFirstStairs)
+  { name: 'i_pz_sootopolis', q: 'map=15.0&actors=1&x=8.5&y=17.5', puzzle: RECORD, edits: [
+    { cells: [[7, 19, 'METATILE_SootopolisGym_Ice_Cracked', false], [8, 19, 'METATILE_SootopolisGym_Ice_Cracked', false],
+      [8, 18, 'METATILE_SootopolisGym_Ice_Cracked', false], [9, 18, 'METATILE_SootopolisGym_Ice_Broken', false]] },
+    { script: ['SootopolisCity_Gym_1F', 'SootopolisCity_Gym_1F_EventScript_OpenFirstStairs'] }] },
+  // i_pz_mauville: the barriers' alternate state (SetAltBarriers) with switch 1 (0,15) pressed — as pz_switch's 27 cells
+  { name: 'i_pz_mauville', q: 'map=10.0&actors=1', puzzle: recordStructure(1), edits: {
+    script: ['MauvilleCity_Gym', 'MauvilleCity_Gym_EventScript_SetAltBarriers'],
+    cells: [[0, 15, 'METATILE_MauvilleGym_PressedSwitch', false]] } },
+  // i_pz_e4: Sidney's entrance closed behind the player (the cells pz_e4_door's probe saw: the shared door script is not in
+  // the decomp copy, data/scripts/ is missing)
+  { name: 'i_pz_e4', q: 'map=16.0&actors=1', puzzle: recordStructure(1), edits: {
+    cells: [5, 6, 7].flatMap((x): [number, number, string, boolean][] => [[x, 12, 'METATILE_EliteFour_EntryDoor_ClosedTop', true],
+      [x, 13, 'METATILE_EliteFour_EntryDoor_ClosedBottom', true]]) } },
+  // i_pz_lily: Lilycove Museum 2F's cool painting hung (10-11,6; the legacy / decor path)
+  { name: 'i_pz_lily', q: 'map=13.3&actors=1', puzzle: RECORD, edits: {
+    script: ['LilycoveCity_LilycoveMuseum_2F', 'LilycoveCity_LilycoveMuseum_2F_EventScript_SetCoolPainting'] } },
 ];
 
-/** The interior entries Phase 4 leaves alone in both styles (out of scope: Modern 0.00 % against p4-base for ever). */
-const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'i_dept_roof', 'truck_inside']);
+/** The interior entries Phases 4 and 4b leave alone in both styles (out of scope: Modern 0.00 % against p4-base / p4b-base
+ *  for ever): the secret base, the rooftop, the truck, and Phase 4c's controls (the Frontier, the contest lobby; Mt Pyre and
+ *  the link rooms never). (Phase 4b: Petalburg's gym, i_gym and i_gym_night, came into scope.) */
+const OUT_OF_SCOPE_INTERIOR = new Set(['i_secret', 'i_dept_roof', 'truck_inside', 'i_frontier', 'i_contest', 'i_mtpyre', 'i_link']);
+
+/** Phase 4's interior entries (their rooms are done: Modern 0.00 % against p4b-base, --expect-same's controls): its i_*
+ *  previews but the Petalburg gym's (i_gym, i_gym_night: Phase 4b's), and its live indoor entries. */
+const PHASE4_INTERIOR = new Set(['i_house_1f', 'i_house_2f', 'i_may_1f', 'i_lab', 'i_oldale_house', 'i_pc_1f', 'i_pc_2f', 'i_mart',
+  'i_flat', 'i_fortree_house', 'i_sootopolis_house', 'i_dept_1f', 'i_dept_roof', 'i_league', 'i_weather', 'i_trickhouse', 'i_gate',
+  'i_pc_yaw', 'i_house_back', 'i_house_low', 'i_pc_night', 'i_house_night', 'i_lab_night', 'i_mart_night', 'i_pc_dusk',
+  'i_house_dusk', 'i_pc_nurse', 'i_house_fail', 'i_secret', 'vigoroth', 'vigoroth_switch', 'vigoroth_v', 'item_indoor',
+  'truck_inside', 'door_enter', 'door_exit']);
+
+/** The 45 maps Phase 4b models (plan D1): an interior entry on one of them (interiorMap) is a Phase 4b entry. */
+const PHASE4B_MAPS = new Set(['3.3', '4.1', '4.2', '8.1', '10.0', '11.3', '12.1', '14.0', '15.0', '15.1',
+  '16.0', '16.1', '16.2', '16.3', '16.4', '16.5', '16.6', '16.7', '16.8', '16.9', '16.11',
+  '9.6', '9.7', '9.8', '10.1', '10.3', '11.0', '11.2', '11.4', '13.2', '13.3', '14.11', '15.13', '15.14', '17.1', '22.0', '28.0',
+  '29.3', '29.4', '29.5', '29.6', '29.7', '29.8', '29.9', '29.10']);
+/** Whether the look gates (D8's night twins, the day actor luminance) judge the Phase 4b entries. Off until Task 7 switches
+ *  the 4b scope on: until then those rooms render as today (the legacy room under today's fixed indoor light: roomLuma ≈
+ *  1.0) and are measured, not gated; Task 7 sets it true. */
+const PHASE4B_LOOK_GATES = false;
+/** A Phase 4b entry whose look gates wait for PHASE4B_LOOK_GATES. */
+const lookPending = (e: Entry): boolean => !PHASE4B_LOOK_GATES && PHASE4B_MAPS.has(interiorMap(e) ?? '');
+/** The same for an entry named `name` (the night gate's twins). */
+const lookPendingName = (name: string): boolean => {
+  const e = ALL_ENTRIES.find((x) => x.name === name);
+  return !!e && lookPending(e);
+};
 
 /**
  * D8's night twins: night entry → its day entry (the same map and camera at hour 11). After a run with Modern, each pair
@@ -392,7 +590,15 @@ const OUT_OF_SCOPE_INTERIOR = new Set(['i_gym', 'i_gym_night', 'i_secret', 'i_de
 const NIGHT_TWINS: Record<string, string> = {
   i_pc_night: 'i_pc_1f', i_house_night: 'i_house_1f', i_lab_night: 'i_lab', i_mart_night: 'i_mart', i_gym_night: 'i_gym',
   i_pc_dusk: 'i_pc_1f', i_house_dusk: 'i_house_1f',   // dusk, hour 19 (Task 12): the same gate
+  // Phase 4b's rooms (night hour 21, dusk 19); i_g_dewford_night_dark: the dark gym at night, its room band exempt
+  // (NIGHT_ROOM_EXEMPT: its light is the flash rule, D10), its actors gated
+  i_g_mauville_night: 'i_g_mauville', i_e4_drake_night: 'i_e4_drake', i_s_ocean_night: 'i_s_ocean_1f', i_th3_night: 'i_th3',
+  i_g_sootopolis_dusk: 'i_g_sootopolis', i_e4_champion_dusk: 'i_e4_champion', i_g_dewford_night_dark: 'i_g_dewford_dark',
 };
+/** Night twins whose room luma is reported, not gated: Dewford's darkness keeps its own light (D10). */
+const NIGHT_ROOM_EXEMPT = new Set(['i_g_dewford_night_dark']);
+/** Whether a night twin's pair is gated: in scope, and not a Phase 4b pair whose look gates wait (lookPending). */
+const nightGated = (night: string): boolean => !OUT_OF_SCOPE_INTERIOR.has(night) && !lookPendingName(night);
 /** The room's night / day luma an in-scope pair must read, two-sided (a room that stopped following the clock reads
  *  1.000 and fails, as one gone too dark does): night (hour 21, nightFactor 1) 0.45-0.8, dusk (the `_dusk` twins, hour
  *  19, nightFactor ≈ 0.47) 0.7-0.95. Measured at 7f5e0b9: night 0.607-0.629, dusk 0.829-0.841 — each bound keeps ≥ 0.1
@@ -453,6 +659,10 @@ const STATIC_BATTLE: StaticEntry[] = [   // species: internal ids (include/const
 
 type Entry = (LiveEntry & { kind: 'live' }) | (StaticEntry & { kind: 'static' });
 
+/** Every entry, live then static (map previews, interiors, battles). */
+const ALL_ENTRIES: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
+  ...[...STATIC, ...STATIC_INTERIOR, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
+
 /** A static battle entry (STATIC_BATTLE: the battle preview) rather than a map preview. */
 const isStaticBattle = (e: Entry): boolean => e.kind === 'static' && e.q.startsWith('battle=');
 
@@ -462,11 +672,12 @@ const isBattleEntry = (e: Entry): boolean => (e.kind === 'live' && e.name.starts
 /** The entries --interiors runs: the static interior previews (i_*) and the live ones in INTERIOR_LIVE. */
 const isInteriorEntry = (e: Entry): boolean => (e.kind === 'static' && e.name.startsWith('i_')) || (e.kind === 'live' && e.name in INTERIOR_LIVE);
 
-/** --expect-same's controls (Phase 4): the shots its interior work must leave pixel-identical — every Retro shot, every
- *  Modern entry that is no interior entry (outdoors, battles, the Phase 2 / 3 entries), the out-of-scope interiors
- *  (OUT_OF_SCOPE_INTERIOR) and door_exit (it ends outdoors, 47 frames after the fade-in). */
+/** --expect-same's controls (Phases 4, 4b): the shots the interior work must leave pixel-identical — every Retro shot, every
+ *  Modern entry that is no interior entry (outdoors, battles, the Phase 2 / 3 entries, the o_* outdoor edits), the
+ *  out-of-scope interiors (OUT_OF_SCOPE_INTERIOR), door_exit (it ends outdoors, 47 frames after the fade-in) and, since
+ *  Phase 4b, Phase 4's interior entries (PHASE4_INTERIOR): only the 45 new maps' Modern entries change. */
 const isSameControl = (e: Entry, style: string): boolean => style === 'retro' || !isInteriorEntry(e) || OUT_OF_SCOPE_INTERIOR.has(e.name)
-  || e.name === 'door_exit';
+  || e.name === 'door_exit' || PHASE4_INTERIOR.has(e.name);
 
 /** An interior entry's map, "group.num" (the interior review's GBA map column): a preview's map=, a live entry's
  *  INTERIOR_LIVE map; null for others. */
@@ -474,9 +685,10 @@ const interiorMap = (e: Entry): string | null => (e.kind === 'live' ? INTERIOR_L
   : /(?:^|&)map=(\d+\.\d+)/.exec(e.q)?.[1] ?? null);
 
 /** The day actor-luminance gate's entries (Phase 4): interior entries ending indoors (map group 0 is the towns and routes:
- *  door_exit ends outside), in scope (not OUT_OF_SCOPE_INTERIOR), and not a night / dusk twin (NIGHT_TWINS gates those). */
+ *  door_exit ends outside), in scope (not OUT_OF_SCOPE_INTERIOR), not a night / dusk twin (NIGHT_TWINS gates those), and
+ *  not a Phase 4b entry while its look gates wait (lookPending: measured, not gated). */
 const dayActorGated = (e: Entry): boolean => isInteriorEntry(e) && !OUT_OF_SCOPE_INTERIOR.has(e.name) && !(e.name in NIGHT_TWINS)
-  && !(interiorMap(e)?.startsWith('0.') ?? true);
+  && !(interiorMap(e)?.startsWith('0.') ?? true) && !lookPending(e);
 /** In-scope day interiors' actors against Retro: each within the band, their median at least this (Phase 4: the inflated
  *  actors lit as in Retro, the room's light round them). */
 const DAY_ACTOR_BAND: [number, number] = [0.9, 1.15];
@@ -586,6 +798,31 @@ interface EntryStats {
   crossing?: CrossingStats;
   /** Scene-change entries: the walk's frames (SCENE_CHANGE_MS). */
   sceneChange?: CrossingStats;
+  /** Puzzle walks and edit entries: their runtime cell changes (PuzzleStats). */
+  puzzle?: PuzzleStats;
+}
+
+/**
+ * One runtime cell change of a puzzle entry: `at` = a walk's frame from the state's load, or a static entry's step (from
+ * 1); `frameMs` = the renderer CPU ms of the frame that took it (drained; a static step: setCells plus its first frame);
+ * the world builds and patches it made (patches null: no patch counter yet — Task 3 adds it); `buildMs` = the rebuild's ms
+ * (lastBuildMs, when it built); `firstFrameMs` (static) = the first frame after setCells, drained; `patchMs` = lastPatchMs
+ * when it patched; `cells` = the cells it changed and `collision` those it made blocked or passable (collision bits zero ↔
+ * non-zero: analyze's Floor ↔ Block, the 'structure' refusals to expect: PuzzleGate); `result` (static) = setCells' path.
+ */
+interface PuzzleChange {
+  at: number; frameMs: number; builds: number; patches: number | null; buildMs: number | null; firstFrameMs?: number;
+  patchMs: number | null; cells?: number; collision?: number; result?: string;
+}
+/** A puzzle entry's record: its gate (path, this style's mode), the frames after the settle (drained), the median of those
+ *  that took no change, the grid changes, builds, patches and programs after the settle → at the end, and the changes;
+ *  `broken`: the gate's failures ('gate' mode). */
+interface PuzzleStats {
+  path: 'live' | 'legacy'; mode: 'record' | 'gate'; frames: number; settle: number; medianMs: number;
+  gridChanges: [number | null, number | null]; builds: [number | null, number | null]; patches: [number | null, number | null];
+  programs: [number, number]; changes: PuzzleChange[]; broken?: string[];
+  /** The refusals after the settle, by reason (null: no refusal counter — before Task 3); `expect`: the gate's for the style. */
+  refusals: RefusalCounts | null; expect: RefusalCounts;
 }
 
 /** A crossing or scene-change entry's walk (the steps after the settle): frame CPU ms with the GPU drained (`maxAt` and
@@ -600,11 +837,82 @@ interface CrossingStats {
   settle: number; firstBuildAt: number | null;
 }
 
-/** The renderer's stats() fields a walk reads. */
-interface WalkPoint { programs: number; builds?: number; lastBuildMs?: number }
+/** The renderer's (or the preview's) stats() fields a walk reads; gridChanges, patches and lastPatchMs: the puzzle
+ *  entries' (patches and lastPatchMs from Phase 4b Task 3 on). */
+interface WalkPoint {
+  programs: number; builds?: number; lastBuildMs?: number; gridChanges?: number; patches?: number; lastPatchMs?: number;
+  refusals?: RefusalCounts;
+}
 
-/** The walk an entry makes (crossings, sceneChange), or null. */
-const walkOf = (e: LiveEntry): 'crossing' | 'sceneChange' | null => (e.crossings ? 'crossing' : e.sceneChange ? 'sceneChange' : null);
+/** The walk an entry makes (crossings, sceneChange, puzzle), or null. */
+const walkOf = (e: LiveEntry): 'crossing' | 'sceneChange' | 'puzzle' | null => (e.crossings ? 'crossing' : e.sceneChange ? 'sceneChange'
+  : e.puzzle ? 'puzzle' : null);
+
+/** A puzzle entry's PuzzleStats from its changes and the frames that took none (`quiet`), the stats after the settle and
+ *  at the end, judged by `gate` for `style` (see PuzzleGate). */
+function puzzleStats(gate: PuzzleGate, style: string, settle: number, frames: number, quiet: number[], changes: PuzzleChange[],
+  settled: WalkPoint, end: WalkPoint): PuzzleStats {
+  const n = (v: number | undefined) => v ?? null;
+  // (the refusals after the settle, by reason: the end's counts less the settle's)
+  let refusals: RefusalCounts | null = null;
+  if (end.refusals) {
+    refusals = {};
+    for (const [r, c] of Object.entries(end.refusals)) {
+      const k = (c ?? 0) - (settled.refusals?.[r] ?? 0);
+      if (k) refusals[r] = k;
+    }
+  }
+  const expect = (style === 'retro' ? gate.expect?.retro : gate.expect?.modern) ?? {};
+  const p: PuzzleStats = {
+    path: gate.path, mode: style === 'retro' ? gate.retro : gate.modern, frames, settle,
+    medianMs: quiet.length ? round(median(quiet), 2) : 0, gridChanges: [n(settled.gridChanges), n(end.gridChanges)],
+    builds: [n(settled.builds), n(end.builds)], patches: [n(settled.patches), n(end.patches)],
+    programs: [settled.programs, end.programs], changes, refusals, expect,
+  };
+  if (p.mode === 'gate') {
+    const broken: string[] = [];
+    const d = (a: [number | null, number | null]) => (a[0] !== null && a[1] !== null ? a[1] - a[0] : null);
+    const grid = d(p.gridChanges), builds = d(p.builds), patches = d(p.patches);
+    if (refusals === null) broken.push('no refusal counter (stats().refusals)');
+    const got = refusals ?? {};
+    for (const r of new Set([...Object.keys(expect), ...Object.keys(got)])) {
+      if ((got[r] ?? 0) !== (expect[r] ?? 0)) broken.push(`refusals '${r}' ${got[r] ?? 0}, expected ${expect[r] ?? 0}`);
+    }
+    const refused = Object.values(got).reduce((a: number, b) => a + (b ?? 0), 0);
+    if (builds !== refused) broken.push(`${builds ?? '?'} world build(s) after the settle for ${refused} refusal(s)`);
+    if (p.programs[1] !== p.programs[0]) broken.push(`programs ${p.programs[0]} → ${p.programs[1]}`);
+    if (grid === null || grid < 1) broken.push(`${grid ?? '?'} grid changes (≥ 1 needed)`);
+    if (patches === null || grid === null || patches + refused !== grid) {
+      broken.push(`patches ${patches ?? '? (no patch counter)'} + refusals ${refused} ≠ grid changes ${grid ?? '?'}`);
+    }
+    const budget = PATCH_BUDGET_MS[gate.path], margin = PATCH_FRAME_MARGIN_MS[gate.path];
+    for (const c of changes) {
+      if (c.builds > 0) {
+        // a refused change: rebuilt within a crossing's frame budget
+        const limit = c.buildMs !== null ? round(c.buildMs + crossingMargin(c.buildMs), 2) : null;
+        if (limit === null || !(c.frameMs <= limit)) broken.push(`@${c.at}: rebuilt, frame ${c.frameMs} ms > ${limit ?? '?'} ms (build + margin)`);
+        continue;
+      }
+      if (c.patchMs === null || !(c.patchMs <= budget)) broken.push(`@${c.at}: patch ${c.patchMs ?? '-'} ms > ${budget} ms`);
+      if (!(c.frameMs <= p.medianMs + margin)) broken.push(`@${c.at}: frame ${c.frameMs} ms > median ${p.medianMs} + ${margin} ms`);
+    }
+    if (broken.length) p.broken = broken;
+  }
+  return p;
+}
+
+/** A puzzle entry's report line. */
+function puzzleLine(p: PuzzleStats): string {
+  const d = (a: [number | null, number | null]) => (a[0] !== null && a[1] !== null ? String(a[1] - a[0]) : '?');
+  const ch = p.changes.map((c) => `@${c.at}${c.cells !== undefined ? ` (${c.cells} cells, ${c.collision ?? '?'} collision)` : ''}: frame ${c.frameMs} ms`
+    + (c.buildMs !== null ? `, build ${c.buildMs} ms` : '') + (c.firstFrameMs !== undefined ? `, first frame ${c.firstFrameMs} ms` : '')
+    + (c.patchMs !== null ? `, patch ${c.patchMs} ms` : '')).join('; ');
+  const refusals = (r: RefusalCounts | null) => (r === null ? '?' : Object.entries(r).map(([k, v]) => `${k} ${v}`).join(', ') || '0');
+  return ` | puzzle (${p.path}, ${p.mode}): ${d(p.gridChanges)} grid change(s), builds ${d(p.builds)}, patches ${d(p.patches)}, refusals`
+    + ` ${refusals(p.refusals)} (expected ${refusals(p.expect)}), programs`
+    + ` ${p.programs.join(' → ')}, median frame ${p.medianMs} ms over ${p.frames} frames${ch ? `; ${ch}` : ''}`
+    + (p.mode === 'gate' ? (p.broken ? ` PUZZLE GATES FAILED: ${p.broken.join('; ')}` : ' (gated: passed)') : ' (recorded)');
+}
 
 /** A walk's CrossingStats from its frames' ms and the session's builds after each, the settle's length and the renderer's
  *  stats after the settle and at the end; `evaluated`: its stats right after the entry's eval (a scene change's programs
@@ -650,17 +958,100 @@ function walkReport(e: LiveEntry, c: CrossingStats): { line: string; broken: str
   return { line, broken };
 }
 
-/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms and the
- *  session's world builds after each (stats().builds). */
-const drainedStep = (keys: string, frames: number) => `(() => {
-  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), ms = [], builds = [];
+/** Steps `frames` frames holding `keys`, draining the GPU after each (untimed): the frames' renderer CPU ms, the
+ *  session's world builds after each (stats().builds) and the renderer's stats after each (`points`: the puzzle walks'); with
+ *  `diff`, the emulated grid's [cells, collision] changes against the frame before (window.__pzGrid, set at the settle). */
+const drainedStep = (keys: string, frames: number, diff = false) => `(() => {
+  const gl = emu.renderer.webgl.getContext(), px = new Uint8Array(4), ms = [], builds = [], points = [], diffs = [];
   for (let i = 0; i < ${frames}; i++) {
     ms.push(emu.step(${JSON.stringify(keys)}, 1)[0]);
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    builds.push(emu.renderer.stats().builds);
+    const s = emu.renderer.stats();
+    builds.push(s.builds);
+    points.push(s);
+    ${diff ? `// (the emulated grid against the frame before: cells changed, those blocked that were not or back)
+    const g = emu.renderer.state.readBackupGrid(), prev = window.__pzGrid;
+    let cells = 0, collision = 0;
+    if (prev && prev.length === g.length) {
+      for (let k = 0; k < g.length; k++) if (g[k] !== prev[k]) { cells++; if (!(g[k] & 0xc00) !== !(prev[k] & 0xc00)) collision++; }
+    }
+    window.__pzGrid = g;
+    diffs.push([cells, collision]);` : ''}
   }
-  return { ms, builds };
+  return { ms, builds, points, diffs };
 })()`;
+
+/** Frames a static puzzle entry renders before its first edit. */
+const EDIT_SETTLE = 30;
+
+/** A static puzzle entry's frames in the preview (one call): EDIT_SETTLE frames, then per step its setCells (timed) and its
+ *  `after` frames, every frame drained (a 1-pixel readPixels) and timed; the preview's stats after the settle, around each
+ *  setCells and at the end; `quiet`: the frames that took no change. */
+const staticPuzzleScript = (steps: { edits: [number, number, number][]; after: number }[]) => `(() => {
+  const gl = preview.webgl.getContext(), px = new Uint8Array(4);
+  const one = () => { const t = performance.now(); preview.frames(1); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return performance.now() - t; };
+  const quiet = [], out = [];
+  for (let i = 0; i < ${EDIT_SETTLE}; i++) one();
+  const settled = preview.stats();
+  for (const [edits, after] of ${JSON.stringify(steps.map((x) => [x.edits, x.after]))}) {
+    const before = preview.stats();
+    const t0 = performance.now();
+    const result = preview.setCells(edits);
+    const setMs = performance.now() - t0;
+    const first = one();
+    out.push({ result, setMs, first, before, after: preview.stats() });
+    for (let i = 1; i < after; i++) quiet.push(one());
+  }
+  return { settled, out, quiet, end: preview.stats() };
+})()`;
+/** What staticPuzzleScript returns. */
+interface StaticPuzzleRun {
+  settled: WalkPoint; quiet: number[]; end: WalkPoint;
+  out: { result: string; setMs: number; first: number; before: WalkPoint; after: WalkPoint }[];
+}
+
+/** The ROM's map grids (the edit entries' cells before their edits), loaded on first use. */
+let romReader: RomReader | null = null;
+function mapGrid(root: string, key: string): { width: number; height: number; cells: Uint16Array } {
+  if (!romReader) {
+    const rom = fs.readdirSync(root).find((f) => f.toLowerCase().endsWith('.gba'));
+    if (!rom) throw new Error('no ROM (*.gba) in the repository root: the edit entries read their maps from it');
+    romReader = new RomReader(new Uint8Array(fs.readFileSync(path.join(root, rom))));
+  }
+  const [g, n] = key.split('.').map(Number);
+  const l = loadMap(romReader, g, n).layout;
+  return { width: l.width, height: l.height, cells: l.grid.slice() };
+}
+
+/** A static entry's edit steps resolved to setCells lists ([x, y, raw]: editRaw on the cell's value before the step, the
+ *  steps applied in order) and the cells each changes; a step that changes no cell, or a cell outside the map, throws. */
+function resolveEdits(root: string, e: StaticEntry): { edits: [number, number, number][]; after: number; cells: number; collision: number }[] {
+  const key = /(?:^|&)map=(\d+\.\d+)/.exec(e.q)?.[1];
+  if (!key) throw new Error('an edit entry needs map=');
+  const grid = mapGrid(root, key);
+  const steps = Array.isArray(e.edits) ? e.edits : [e.edits!];
+  return steps.map((spec, k) => {
+    const list: DecompEdit[] = [...(spec.script ? scriptEdits(spec.script[0], spec.script[1]) : []),
+      ...(spec.cells ?? []).map(([x, y, label, blocked]) => ({ x, y, metatile: metatileId(label), blocked, label }))];
+    const edits: [number, number, number][] = [];
+    const before = new Map<number, number>();
+    for (const c of list) {
+      if (c.x < 0 || c.y < 0 || c.x >= grid.width || c.y >= grid.height) throw new Error(`edit step ${k + 1}: ${c.x},${c.y} is outside the map`);
+      const i = c.y * grid.width + c.x;
+      if (!before.has(i)) before.set(i, grid.cells[i]);
+      grid.cells[i] = editRaw(grid.cells[i], c);
+      edits.push([c.x, c.y, grid.cells[i]]);
+    }
+    // (the step's changed cells and those blocked that were not or back — analyze's Floor / Block — against the grid before)
+    let cells = 0, collision = 0;
+    for (const [i, old] of before) {
+      if (grid.cells[i] !== old) cells++;
+      if (!(grid.cells[i] & 0xc00) !== !(old & 0xc00)) collision++;
+    }
+    if (!cells) throw new Error(`edit step ${k + 1} changes no cell (${list.length} edits): it would measure nothing`);
+    return { edits, after: spec.after ?? 30, cells, collision };
+  });
+}
 
 function arg(name: string, def: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -833,12 +1224,13 @@ async function nightLum(page: Page, night: string, day: string, files: [string, 
   const n: NightLum = {
     day, roomLuma: r.roomDay > 0 ? round(r.roomNight / r.roomDay, 3) : 0, actorLum: actorOk ? round(r.actorNight / r.actorDay, 3) : null,
     room: [round(r.roomNight, 1), round(r.roomDay, 1)], actor: actorOk ? [round(r.actorNight, 1), round(r.actorDay, 1)] : null,
-    actorPx: r.actorPx, gated: !OUT_OF_SCOPE_INTERIOR.has(night),
+    actorPx: r.actorPx, gated: nightGated(night),
   };
   if (n.gated) {
     const broken: string[] = [];
     const [lo, hi] = roomBand(night);
-    if (!(n.roomLuma >= lo && n.roomLuma <= hi)) broken.push(`roomLuma ${n.roomLuma} outside ${lo}-${hi}`);
+    // (Dewford's dark gym: its light is the flash rule, D10 — the room's luma is reported only)
+    if (!NIGHT_ROOM_EXEMPT.has(night) && !(n.roomLuma >= lo && n.roomLuma <= hi)) broken.push(`roomLuma ${n.roomLuma} outside ${lo}-${hi}`);
     // (no actor measure is a failure, not a pass: D8's actor rule cannot be judged on an entry whose actors vanished)
     if (n.actorLum === null) broken.push(`actorLum unmeasured (${n.actorPx} actor px visible in both masks < ${ACTOR_LUM_MIN_PX})`);
     else if (!(n.actorLum >= NIGHT_ACTOR_BAND[0] && n.actorLum <= NIGHT_ACTOR_BAND[1])) {
@@ -1178,15 +1570,14 @@ async function main(): Promise<void> {
   const nightRows: { name: string; n: NightLum }[] = [];
   const nightFailures: string[] = []; // in-scope night twins outside D8's bounds, or not measurable
   const shotThisRun = new Set<string>(); // the entry_style keys this run shot (and kept)
-  const all: Entry[] = [...LIVE.map((e) => ({ ...e, kind: 'live' as const })),
-    ...[...STATIC, ...STATIC_INTERIOR, ...STATIC_BATTLE].map((e) => ({ ...e, kind: 'static' as const }))];
+  const all = ALL_ENTRIES;
   for (const n of only) {
     if (!all.some((e) => e.name === n)) throw new Error(`unknown entry: ${n}`);
   }
   // (a misspelt name in the interior tables would drop an entry from --interiors or a pair from the night gate unseen;
   // the night twins are map previews: NIGHT_FN compares renderStill frames, with no mask-mismatch check as LUM_FN's)
   const known = (n: string, kind?: 'static') => all.some((e) => e.name === n && (!kind || e.kind === kind));
-  for (const n of [...Object.keys(INTERIOR_LIVE), ...OUT_OF_SCOPE_INTERIOR]) if (!known(n)) throw new Error(`unknown interior entry: ${n}`);
+  for (const n of [...Object.keys(INTERIOR_LIVE), ...OUT_OF_SCOPE_INTERIOR, ...PHASE4_INTERIOR]) if (!known(n)) throw new Error(`unknown interior entry: ${n}`);
   for (const n of Object.entries(NIGHT_TWINS).flat()) if (!known(n, 'static')) throw new Error(`NIGHT_TWINS names no static entry: ${n}`);
   // --only picks entries of both kinds by name; otherwise --static picks every entry, --battles the battle entries,
   // --interiors the interior entries (both flags: either), and none of these every live entry. With Modern, a selected
@@ -1232,6 +1623,8 @@ async function main(): Promise<void> {
   const missingRefs: string[] = [];
   const selftestFailures: string[] = [];
   const walkFailures: string[] = []; // crossing and scene-change gates
+  const puzzleFailures: string[] = []; // puzzle gates (PuzzleGate 'gate')
+  const editSteps = new Map<string, ReturnType<typeof resolveEdits>>(); // static edit entries' resolved steps (both styles)
   const gbaShots = new Set<string>(); // entries whose GBA picture (gba_ / ref_<entry>.png) this run wrote
   let pageErrors = 0;
   const diffs: string[] = [];
@@ -1277,8 +1670,9 @@ async function main(): Promise<void> {
             console.log(`GPU: ${gpuName}`);
           }
           let stepMsMax: number | undefined;
-          // (crossing and scene-change entries: their walk's stats)
+          // (crossing and scene-change entries: their walk's stats; puzzle walks and edit entries: their changes)
           let walked: CrossingStats | undefined;
+          let puzzled: PuzzleStats | undefined;
           const selfTests = selftest && e.selftest === true && style === 'modern';
           let mid: { result: SelfTest; ok: boolean; text: string } | undefined;
           if (e.kind === 'live') {
@@ -1299,21 +1693,50 @@ async function main(): Promise<void> {
             stepMsMax = 0;
             // (a walk: the renderer's stats after the settle, and the walk's frames with the session's builds after each)
             let settled: WalkPoint | undefined;
-            const walk: number[] = [], walkBuilds: (number | undefined)[] = [];
+            const walk: number[] = [], walkBuilds: (number | undefined)[] = [], walkPoints: WalkPoint[] = [];
+            const walkDiffs: [number, number][] = [];
             for (const [n, [keys, frames, before]] of e.steps.entries()) {
               if (before) await page.evaluate(before);
-              const { ms: times, builds } = walkKind ? await page.evaluate(drainedStep(keys, frames)) as { ms: number[]; builds: (number | undefined)[] }
-                : { ms: await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[], builds: [] };
+              const { ms: times, builds, points, diffs } = walkKind
+                ? await page.evaluate(drainedStep(keys, frames, walkKind === 'puzzle')) as
+                  { ms: number[]; builds: (number | undefined)[]; points: WalkPoint[]; diffs: [number, number][] }
+                : { ms: await page.evaluate(`emu.step(${JSON.stringify(keys)}, ${frames})`) as number[], builds: [], points: [], diffs: [] };
               for (const t of n === 0 ? times.slice(1) : times) stepMsMax = Math.max(stepMsMax, t);
               if (selfTests && e.selftestAfter === n) mid = await selfTestPoint(page, api, outDir, `${e.name}_mid`);
-              if (walkKind && n === 0) settled = await page.evaluate('emu.renderer.stats()') as WalkPoint;
+              if (walkKind && n === 0) {
+                settled = await page.evaluate('emu.renderer.stats()') as WalkPoint;
+                if (walkKind === 'puzzle') await page.evaluate('window.__pzGrid = emu.renderer.state.readBackupGrid()');
+              }
               if (n > 0) {
                 walk.push(...times);
                 walkBuilds.push(...builds);
+                walkPoints.push(...points);
+                walkDiffs.push(...diffs);
               }
             }
-            if (walkKind) {
-              walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, await page.evaluate('emu.renderer.stats()') as WalkPoint, evaluated);
+            const endPoint = walkKind ? await page.evaluate('emu.renderer.stats()') as WalkPoint : undefined;
+            if (walkKind === 'puzzle') {
+              // each frame whose sync saw a grid change (gridChanges went up): its ms, the build or patch it made
+              // (the emulated grid's changes since the last change taken: a deferred sync takes them later)
+              const settle = e.steps[0][1], changes: PuzzleChange[] = [], quiet: number[] = [];
+              let prev = settled!, cells = 0, collision = 0;
+              walkPoints.forEach((p, i) => {
+                cells += walkDiffs[i]?.[0] ?? 0;
+                collision += walkDiffs[i]?.[1] ?? 0;
+                const grid = (p.gridChanges ?? 0) - (prev.gridChanges ?? 0);
+                if (grid > 0) {
+                  const builds = (p.builds ?? 0) - (prev.builds ?? 0);
+                  const patches = p.patches !== undefined ? p.patches - (prev.patches ?? 0) : null;
+                  changes.push({ at: settle + i + 1, frameMs: round(walk[i], 2), builds, patches,
+                    buildMs: builds > 0 && p.lastBuildMs !== undefined ? round(p.lastBuildMs, 2) : null,
+                    patchMs: patches && p.lastPatchMs !== undefined ? round(p.lastPatchMs, 3) : null, cells, collision });
+                  cells = collision = 0;
+                } else quiet.push(walk[i]);
+                prev = p;
+              });
+              puzzled = puzzleStats(e.puzzle!, style, settle, walk.length, quiet, changes, settled!, endPoint!);
+            } else if (walkKind) {
+              walked = walkStats(walk, walkBuilds, e.steps[0][1], settled!, endPoint!, evaluated);
             }
             // the GBA's own frame of a battle entry (the review's reference column)
             if (isBattleEntry(e)) {
@@ -1325,7 +1748,25 @@ async function main(): Promise<void> {
             // a focus naming no template would frame the map centre instead: never a baseline
             const focusError = await page.evaluate('preview.focusError') as string | null;
             if (focusError) throw new Error(`preview: ${focusError}`);
-            await page.evaluate(`preview.frames(${isStaticBattle(e) ? BATTLE_FRAMES : 60})`);
+            if (e.edits) {
+              // EDIT_SETTLE frames, then each step's setCells and frames, every frame drained and timed
+              const steps = editSteps.get(e.name) ?? resolveEdits(root, e);
+              editSteps.set(e.name, steps);
+              const r = await page.evaluate(staticPuzzleScript(steps)) as StaticPuzzleRun;
+              const changes: PuzzleChange[] = r.out.map((o, k) => {
+                const builds = (o.after.builds ?? 0) - (o.before.builds ?? 0);
+                const patches = o.after.patches !== undefined ? o.after.patches - (o.before.patches ?? 0) : null;
+                const grid = (o.after.gridChanges ?? 0) - (o.before.gridChanges ?? 0);
+                if (grid !== 1) throw new Error(`edit step ${k + 1}: setCells took ${grid} grid changes (1 expected)`);
+                return { at: k + 1, frameMs: round(o.setMs + o.first, 2), builds, patches,
+                  buildMs: builds > 0 && o.after.lastBuildMs !== undefined ? round(o.after.lastBuildMs, 2) : null,
+                  firstFrameMs: round(o.first, 2), patchMs: patches && o.after.lastPatchMs !== undefined ? round(o.after.lastPatchMs, 3) : null,
+                  cells: steps[k].cells, collision: steps[k].collision, result: o.result };
+              });
+              puzzled = puzzleStats(e.puzzle ?? RECORD, style, EDIT_SETTLE, r.quiet.length + r.out.length, r.quiet, changes, r.settled, r.end);
+            } else {
+              await page.evaluate(`preview.frames(${isStaticBattle(e) ? BATTLE_FRAMES : 60})`);
+            }
             // the GBA's own picture of a battle preview's hardware (the review's reference column)
             if (isStaticBattle(e)) {
               const png = await page.evaluate('preview.referencePng()') as string;
@@ -1348,6 +1789,11 @@ async function main(): Promise<void> {
             const r = walkReport(e, walked);
             walkLine = r.line;
             if (r.broken.length) walkFailures.push(`${key} (${r.broken.join('; ')})`);
+          }
+          if (puzzled) {
+            entry.puzzle = puzzled;
+            walkLine += puzzleLine(puzzled);
+            if (puzzled.broken) puzzleFailures.push(`${key} (${puzzled.broken.join('; ')})`);
           }
           // the actor mask of this frame: drawn again without advancing time, actors flat magenta
           // (live: both views' actors — a battle entry's battlers too)
@@ -1496,7 +1942,7 @@ async function main(): Promise<void> {
           .map((f) => path.join(outDir, f)) as [string, string, string, string];
         if (!shotThisRun.has(`${night}_modern`) || !shotThisRun.has(`${day}_modern`) || !files.every((f) => fs.existsSync(f))) {
           if (st) delete st.nightLum;
-          if (!OUT_OF_SCOPE_INTERIOR.has(night)) nightFailures.push(`${night} (no Modern shot of it and of ${day} in this run to compare)`);
+          if (nightGated(night)) nightFailures.push(`${night} (no Modern shot of it and of ${day} in this run to compare)`);
           continue;
         }
         const n = st.nightLum = await nightLum(page, night, day, files);
@@ -1553,7 +1999,7 @@ async function main(): Promise<void> {
     console.log('|---|---|---|---|---|---|---|---|');
     for (const { name, n } of nightRows) {
       console.log(`| ${name} | ${n.day} | ${n.roomLuma.toFixed(3)} | ${n.room.join(' / ')} | ${n.actorLum?.toFixed(3) ?? '-'} | `
-        + `${n.actor?.join(' / ') ?? '-'} | ${n.actorPx} | ${!n.gated ? 'out of scope' : n.broken ? `FAILED: ${n.broken.join('; ')}` : 'passed'} |`);
+        + `${n.actor?.join(' / ') ?? '-'} | ${n.actorPx} | ${!n.gated ? (OUT_OF_SCOPE_INTERIOR.has(name) ? 'out of scope' : 'not gated (Phase 4b looks pending)') : n.broken ? `FAILED: ${n.broken.join('; ')}` : 'passed'} |`);
     }
   }
   if (abRows.length) {
@@ -1574,10 +2020,12 @@ async function main(): Promise<void> {
       + `> ${XBR_BAKED_VS_LIVE} bytes off the live one) in: ${selftestFailures.join(', ')}`);
   }
   if (walkFailures.length) console.log(`crossing / scene-change gates failed in: ${walkFailures.join(', ')}`);
+  if (puzzleFailures.length) console.log(`puzzle gates failed in: ${puzzleFailures.join(', ')}`);
   if (nightFailures.length) console.log(`night-twin gates (D8) failed in: ${nightFailures.join(', ')}`);
   if (dayActorFailures.length) console.log(`day actor-luminance gate (in-scope interiors vs Retro) failed: ${dayActorFailures.join(', ')}`);
   if (sameFailures.length) console.log(`--expect-same: controls that differ from ${compare}: ${sameFailures.join(', ')}`);
   if (pageErrors || missingRefs.length || failures.length || gbaDiffFailures.length || selftestFailures.length || walkFailures.length
+    || puzzleFailures.length
     || nightFailures.length || dayActorFailures.length || sameFailures.length) {
     process.exitCode = 1;
   }

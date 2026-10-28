@@ -281,13 +281,15 @@ export class Renderer {
     this.lastTime = performance.now();
   }
 
-  /** Render statistics of the last render() call, all passes together; the session's world builds, the last one's ms
-   *  and the syncs deferred during map loads. */
-  stats(): { calls: number; triangles: number; programs: number; builds: number; lastBuildMs: number; deferredSyncs: number } {
+  /** Render statistics of the last render() call, all passes together; the session's world builds, the last one's ms,
+   *  the syncs deferred during map loads and the runtime grid changes the overworld saw (OverworldView.gridChanges). */
+  stats(): { calls: number; triangles: number; programs: number; builds: number; lastBuildMs: number; deferredSyncs: number;
+    gridChanges: number } {
     const info = this.webgl.info;
     return {
       calls: info.render.calls, triangles: info.render.triangles, programs: info.programs?.length ?? 0,
       builds: this.overworld.builds, lastBuildMs: this.overworld.lastBuildMs, deferredSyncs: this.syncGate.deferred,
+      gridChanges: this.overworld.gridChanges,
     };
   }
 

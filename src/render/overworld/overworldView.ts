@@ -89,6 +89,8 @@ export class OverworldView {
 
   private gridKey = '';
   private lastGrid: Uint16Array | null = null;
+  /** See gridChanges. */
+  private gridChangeCount = 0;
   private haveWorld = false;
   private style: WorldStyle = 'modern';
   /** The interior kit on in-scope interiors (Modern; false: today's legacy rooms and light, the A/B baseline). */
@@ -413,6 +415,8 @@ export class OverworldView {
     const grid = this.readGrid(state);
     if (this.rebuildPending(state, tsChanged, grid)) {
       const mapChanged = key !== this.gridKey;
+      // (same map key and tilesets: a runtime cell change — a gym switch, thin ice, a door's frame)
+      if (!mapChanged && !tsChanged) this.gridChangeCount++;
       const palOff = (SYM.gPlttBufferUnfaded & 0x3ffff) >>> 1;
       this.buildWorld(grid, m.bus, m.bus.ewram16.subarray(palOff, palOff + 256), state.layout.primaryTileset, this.liveEvents(state),
         state.layout.secondaryTileset, `${state.mapGroup}.${state.mapNum}`);
@@ -440,6 +444,13 @@ export class OverworldView {
     if (!state.layout || !state.header) return false;
     const tsChanged = this.atlas.tilesetsDiffer(state.layout.primaryTileset, state.layout.secondaryTileset);
     return this.rebuildPending(state, tsChanged, this.readGrid(state));
+  }
+
+  /** Syncs whose grid differed from the last one built with the same map key and tilesets (a runtime cell change: today
+   *  each one rebuilds the world; Phase 4b's incremental update patches them). Live play only: the preview counts its
+   *  own (PreviewApp.setCells). */
+  get gridChanges(): number {
+    return this.gridChangeCount;
   }
 
   /** World builds so far (live and preview) and the last one's ms. */

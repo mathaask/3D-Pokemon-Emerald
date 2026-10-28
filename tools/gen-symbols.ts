@@ -68,6 +68,9 @@ const WANTED = [
   'gOverworldTilemapBuffer_Bg2', 'gOverworldTilemapBuffer_Bg3', 'gMonIconTable', 'gBattlerSpriteIds',
   'gRngValue', 'gStringVar1', 'gStringVar4', 'gTextFlags', 'gWindows', 'gSpecialVar_Result',
   'gLocalTime', 'gRtcLocation', 'sRtc',
+  // the warp the game is about to make (WarpData: s8 mapGroup, s8 mapNum, s8 warpId, s16 x, s16 y): Phase 4b's fixture tool
+  // (tools/puzzle-states.ts) redirects a door warp through it — test fixtures only, the app never writes game memory
+  'sWarpDestination',
 ];
 
 const root = path.resolve(import.meta.dirname, '..');
