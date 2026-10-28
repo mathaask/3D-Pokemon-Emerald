@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import type { GameState, ObjectEventSnap, SpriteSnap } from '../../game/state';
-import { SpriteKind, type SpriteClassifier } from '../../game/spriteKinds';
+import { SpriteKind, isRotatingGate, type SpriteClassifier } from '../../game/spriteKinds';
 import type { WorldStyle } from '../overworld/world';
 import { Billboards, BlobShadows, type BillboardSpec } from '../overworld/billboards';
 import type { FadeFoot, KitUniforms } from '../kit/materials';
@@ -16,9 +16,11 @@ import { InflatedActors, CONTACT, instanceUniformsFailed, type ProgramInfo } fro
 import { SLOT, SLOT_COLS, SLOT_ROWS } from '../spriteAtlas';
 import { inflateMax } from './inflateMath';
 import { modelImageHeight, objectModelFor, type ObjectModelKind, type ObjectModelRef } from './objectMap';
-import { SpriteColorCache, type SpritePixelSource, type SpriteSample } from './spriteColors';
+import { SpriteColorCache, decodeSpriteIndices, type SpritePixelSource, type SpriteSample } from './spriteColors';
 import { ObjectModels, type ModelInstance } from './objectModels';
 import { aoPrepassMaterial } from '../aoPrepass';
+import { GateModels, gateArms, gateColors, gatePlacement, gateYaw, type GateArms, type GateInstance } from './rotatingGate';
+import type { Quality } from '../post';
 
 export type ActorRoute = 'card' | 'inflated' | 'model' | 'skip';
 /** Sprite edges of the Modern actors: HD smooth (xBR) or Pixel (the nearest texels). Retro ignores it. The saved
@@ -83,6 +85,8 @@ export interface ActorFrame {
   /** The light the inflated actors' and object models' floor follows (they stay ≥ LIGHT_FLOOR × it; default
    *  charLight): an in-scope room at night keeps its actors near their day light with it (D8, OverworldView). */
   lightFloor?: THREE.Color;
+  /** The render quality (the rotating gates' hub roundness; default medium). */
+  quality?: Quality;
 }
 
 /** Inputs of the inflated actors (field; `instanceUniforms`: their instance data from a uniform array, default true —
@@ -192,6 +196,12 @@ export class ActorLayer {
   private contact: BlobShadows | null = null;
   /** Modern's object models (null without kit uniforms: mapped objects stay sprites). */
   private models: ObjectModels | null = null;
+  /** Modern's rotating gates (rotatingGate.ts: Fortree Gym, Trick House 6; null without kit uniforms: cards / inflated). */
+  private gates: GateModels | null = null;
+  /** Each gate image's arms, by its tiles (cleared on a frame without gates: another map's tiles may take its place). */
+  private gateArmsCache = new Map<string, GateArms>();
+  private gatePool: GateInstance[] = [];
+  private gateList: GateInstance[] = [];
   /** Where the models' colours are sampled (null: their default tints). */
   private pixels: SpritePixelSource | null = null;
   private colorCache = new SpriteColorCache();
@@ -230,6 +240,14 @@ export class ActorLayer {
       this.models = new ObjectModels(opts.kit);
       this.models.group.visible = false;
       this.group.add(this.models.group);
+      // the gates draw with the cracked rock's material: the object models' program (their vertex colours are TINT.fixed,
+      // so its tints never touch them), compiled with the models — no program of their own
+      const rock = this.models.group.getObjectByName('crackedRock') as THREE.InstancedMesh | undefined;
+      if (rock) {
+        this.gates = new GateModels(rock.material as THREE.Material, rock.customDepthMaterial);
+        this.gates.group.visible = false;
+        this.group.add(this.gates.group);
+      }
     }
   }
 
@@ -310,7 +328,8 @@ export class ActorLayer {
 
   /** Instances drawn by each renderer the layer owns (last update). */
   counts(): { cards: number; inflated: number; models: number } {
-    return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: this.models?.count ?? 0 };
+    // (the rotating gates count as models)
+    return { cards: this.billboards.count, inflated: this.inflated?.count ?? 0, models: (this.models?.count ?? 0) + (this.gates?.count ?? 0) };
   }
 
   /** The feet of the last update's inflated object events (the player among them), with their sprites' half-widths, in
@@ -337,10 +356,19 @@ export class ActorLayer {
       this.bySprite.clear();
       for (const o of state.objects ?? []) this.bySprite.set(o.spriteId, o);
     }
-    let n = 0, c = 0, a = 0, m = 0, k = 0, q = 0;
+    const gates = phase2 && this.pixels ? this.gates : null;
+    let n = 0, c = 0, a = 0, m = 0, k = 0, q = 0, g = 0;
     for (let i = 0; i < sprites.length; i++) {
       const s = sprites[i];
       if (!s.coordOffset || s.invisible) continue;
+      // a rotating gate (a sprite, not an object event): its turnstile model, before any classification (Modern)
+      if (gates && isRotatingGate(s)) {
+        const gate = this.placeGate(this.gatePool[g] ??= blankGate(), s, f.heightAt);
+        if (gate) {
+          this.gateList[g++] = gate;
+          continue;
+        }
+      }
       const kind = f.classifier ? f.classifier.kind(s) : SpriteKind.Upright;
       const o = models && kind === SpriteKind.Upright ? this.bySprite.get(s.index) : undefined;
       const ref = o ? this.modelOf(o, s, models!) : null;
@@ -378,6 +406,7 @@ export class ActorLayer {
     this.cards.length = c;
     this.actors.length = a;
     this.modelList.length = k;
+    this.gateList.length = g;
     this.feet.length = m;
     this.npcs.length = q;
     this.billboards.set(this.cards, f.cameraRight, f.charLight);
@@ -386,6 +415,13 @@ export class ActorLayer {
       this.inflated.set(this.actors, f.cameraRight, f.cameraPosition);
       this.inflated.setLightFloor(f.lightFloor ?? f.charLight);
       this.inflated.mesh.visible = this.contact.mesh.visible = inflate;
+    }
+    if (this.gates) {
+      // Retro (or Phase 2 off): no gate models (empty and hidden: the gates are cards / inflated as before)
+      this.gates.quality = f.quality ?? 'medium';
+      this.gates.set(this.gateList);
+      this.gates.group.visible = gates !== null;
+      if (g === 0) this.gateArmsCache.clear();
     }
     if (this.models) {
       // Retro (or Phase 2 off): no models (empty and hidden)
@@ -399,6 +435,28 @@ export class ActorLayer {
       } else this.seen.clear();
     }
     return this.feet;
+  }
+
+  /**
+   * A rotating gate's model (rotatingGate.ts): on its pivot, turned by the sprite's rotation, its arms read from the
+   * sprite's unrotated image (OBJ VRAM; cached by its tiles), its woods from its palette. Null when the image is still
+   * blank (its tiles not loaded yet): the sprite is then drawn as before.
+   */
+  private placeGate(out: GateInstance, s: SpriteSnap, heightAt: (x: number, y: number) => number): GateInstance | null {
+    const px = this.pixels!;
+    const key = `${s.tileNum}:${s.width}x${s.height}:${s.bpp8 ? 8 : 4}`;
+    let arms = this.gateArmsCache.get(key);
+    if (!arms) {
+      const idx = decodeSpriteIndices(px.vram, s, px.map2d), w = s.width;
+      arms = gateArms({ w, h: s.height, opaque: (x, y) => idx[y * w + x] !== 0 });
+      if (!arms.n && !arms.e && !arms.s && !arms.w) return null;
+      this.gateArmsCache.set(key, arms);
+    }
+    out.arms = arms;
+    out.colors = gateColors(this.colorCache.sample(s, px));
+    gatePlacement(s, heightAt, out);
+    out.yaw = gateYaw(s.rotation);
+    return out;
   }
 
   /** The model drawing object `o` (its sprite `s`), or null: drawn as its sprite (an invisible object, a VAR or
@@ -456,5 +514,8 @@ export class ActorLayer {
     return this.colorCache.sample(snap, this.pixels, { store: frame > t.since });
   }
 }
+
+const blankGate = (): GateInstance =>
+  ({ arms: { n: 0, e: 0, s: 0, w: 0 }, colors: { main: [0, 0, 0], dark: [0, 0, 0] }, x: 0, y: 0, z: 0, yaw: 0 });
 
 const blankInstance = (): ModelInstance => ({ kind: 'pokeball', stage: 0, x: 0, y: 0, z: 0, colors: NO_SAMPLE.colors });

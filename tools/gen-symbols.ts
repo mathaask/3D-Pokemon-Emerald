@@ -76,6 +76,8 @@ const WANTED = [
   // the warp the game is about to make (WarpData: s8 mapGroup, s8 mapNum, s8 warpId, s16 x, s16 y): Phase 4b's fixture tool
   // (tools/puzzle-states.ts) redirects a door warp through it — test fixtures only, the app never writes game memory
   'sWarpDestination',
+  // Phase 4b: the Fortree Gym / Trick House 6 rotating gates (rotating_gate.c), CreateSprite sprites known by their callback
+  'SpriteCallback_RotatingGate',
 ];
 
 const root = path.resolve(import.meta.dirname, '..');

@@ -21,6 +21,13 @@ const WEATHER_TEMPLATES = new Set<number>([
   SYM.sAshSpriteTemplate, SYM.sFogDiagonalSpriteTemplate, SYM.sSandstormSpriteTemplate, SYM.sBubbleSpriteTemplate,
 ]);
 
+/** A rotating gate of the Fortree Gym / Trick House 6 (rotating_gate.c): a CreateSprite sprite, not an object event,
+ *  known by its callback SpriteCallback_RotatingGate (compared without the Thumb bit). Its OAM is affine: the hardware
+ *  turns the unrotated image in OBJ VRAM by the sprite's matrix (SpriteSnap.rotation). */
+export function isRotatingGate(s: Pick<SpriteSnap, 'callback'>): boolean {
+  return (s.callback & ~1) === (SYM.SpriteCallback_RotatingGate & ~1);
+}
+
 export class SpriteClassifier {
   private flat = new Set<number>();
   private grass = new Set<number>();
