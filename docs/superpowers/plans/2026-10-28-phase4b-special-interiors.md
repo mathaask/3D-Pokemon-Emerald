@@ -1327,3 +1327,14 @@ budgets are proposed and ruled in Task 15 (as Phase 4's GPU budget was).
 3. **Save states inside the gyms made by a test tool?** No existing state stands in a gym; `tools/puzzle-states.ts`
    redirects a door warp by writing the game's warp destination in RAM (test fixtures only, gitignored; the app never
    writes game memory). The alternative is save states you make by playing there. **Recommended: the test tool.**
+
+**User answers (2026-10-28):** 1 — **yes**, Retro also gets the incremental cell-change update (same pixels as a full
+rebuild; a deliberate change to the Retro code path, gated by "patched == rebuilt" digests and Retro 0.00 % vs
+`p4b-base` on every static shot). 2 — **real raised platforms** (NOT the recommendation): gym tiers/ledges stand at their
+real height from the game's per-cell elevation (the overworld's existing height model: grid (x, y) at height h →
+world (X = x, Y = h, Z = y + h)); actors already follow cell height; the Phase 4 "flat indoor floors" ruling does not
+apply to the tier cells of these maps. The preflight must carry this through the room layout (Task 5), floors (Task 12),
+integration (Task 7), cutaway/camera checks and the fitting smoke (Task 14): actors on tiers, stairs/ramps between
+tiers, no furniture or wall over a walkable tier cell, cutaway with height. 3 — yes, a test tool may write the game's
+warp destination in RAM to create gym save-state fixtures (test fixtures only; the app never writes game memory).
+Plan approved ("Godkjenn og kjør"), subagent-driven with parallel groups.
