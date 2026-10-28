@@ -58,3 +58,11 @@ describe('interior id tables', () => {
     expect(interiorScope(o, null)).toBe(false);                    // (no map key: fails closed — the exclusion always holds)
   });
 });
+
+describe('BrendansMaysHouse runtime-only ids', () => {
+  it('labels the intro moving boxes (set at runtime, absent from the static maps) as crates', async () => {
+    const { BRENDANS_MAYS_HOUSE } = await import('../src/render/kit/tables/interior/brendansMaysHouse');
+    expect(BRENDANS_MAYS_HOUSE.ids.get(0x268)).toBe('crate');
+    expect(BRENDANS_MAYS_HOUSE.ids.get(0x270)).toBe('crate');
+  });
+});

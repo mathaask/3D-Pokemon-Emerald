@@ -278,9 +278,7 @@ rest stays modelled, and one warning is logged.
     the GBA's bushy pots.
   - The Weather Institute's desks lose the papers drawn on them.
   - Low shelves are drawn as full-height bookcases: the Pokémon Center's magazine shelf, and a
-    small shelf standing next to a bookcase, which merges into it. Furniture of one kind side by
-    side becomes one model in the same way: a small drawer cabinet joins the cabinet next to it,
-    and the chest and sideboard in Oldale's house become one long cabinet.
+    small shelf standing next to a bookcase (now its own piece, but still bookcase-tall).
 - Code-level open items with no visible effect today (the order of equal-priority sprites in the
   battle preview, the height of the overworld's flat ground decals, rock walls modelled taller
   than any view shows) are tracked in the progress log.

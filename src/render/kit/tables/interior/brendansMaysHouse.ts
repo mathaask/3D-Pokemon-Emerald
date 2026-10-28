@@ -61,6 +61,9 @@ put('pc', 0x252, 0x25a, 0x25b, 0x251, 0x259, 0x258);                      // the
 put('bed', 0x284, 0x28c, 0x289, 0x291);                                   // head (IMPASSABLE_SOUTH_AND_NORTH) and foot
 put('stairsUp', 0x211);                                                   // 1F → 2F (NON_ANIMATED_DOOR)
 put('stairsDown', 0x214);                                                 // 2F → 1F (NON_ANIMATED_DOOR)
+// The intro's moving boxes, set at runtime (not on the static maps, so no pin): left unlabelled they dropped column 5's
+// back line a row and turned the wide 1F window into a decal in live play (final fix-wave re-review).
+put('crate', 0x268, 0x270);                                               // closed box (blocked), open box
 
 export const BRENDANS_MAYS_HOUSE: InteriorTable = {
   name: 'BrendansMaysHouse',

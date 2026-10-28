@@ -58,7 +58,7 @@ Pokémon Emerald running unmodified in a custom GBA emulator (`src/gba`), with a
   `i_gym`/`i_gym_night`/`i_secret`/`i_dept_roof`) + the indoor live entries (`INTERIOR_LIVE`: `vigoroth`,
   `vigoroth_switch` (style toggle, samePrograms), `vigoroth_v` (V and back), `item_indoor`, `truck_inside`, the door walks
   `door_enter`/`door_exit`, crossing-gated); `--review` → `_review_interior.png` (GBA map from `out/atlas/` | before |
-  Modern | Retro). Gated: `NIGHT_TWINS` (`nightLum`: night/dusk vs its day twin, room ≥ 0.45, actors 0.9–1.15) and the
+  Modern | Retro). Gated: `NIGHT_TWINS` (`nightLum`: night/dusk vs its day twin — room 0.45–0.8 at night, 0.7–0.95 at dusk (two-sided: D8 switched off fails), actors 0.9–1.15) and the
   in-scope day rooms' actorLum vs Retro (0.9–1.15, median ≥ 0.95). Phase 4 gate: `--static --compare p4-base` → Retro
   0.00 % everywhere, Modern 0.00 % except the in-scope interior entries and the in-scope live entries (`item_indoor`,
   `vigoroth`, `vigoroth_v`, `door_enter`). Fitting: `tests/smoke/interiorFitting.test.ts` (furniture over walkable cells
